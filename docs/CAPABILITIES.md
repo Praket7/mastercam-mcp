@@ -15,6 +15,6 @@ This table is deliberately conservative.
 | Live Mastercam reads | Unverified | Mastercam absent on preflight machine |
 | Live Mastercam writes | Unverified | Mastercam absent on preflight machine |
 | Codex live client | Unverified | No live backend available |
-| ChatGPT web client | Unavailable in this release | No remote Streamable HTTP listener enabled |
+| ChatGPT web client | Transport implemented and mock verified | Live ChatGPT web connection remains unverified |
 | Posting | Disabled | High risk tool is denied by policy |
 | Machine execution | Not implemented | Deliberately outside project scope |

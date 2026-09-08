@@ -6,7 +6,7 @@ The public project contains the bridge, the add in source, the shared contract, 
 
 ## Current state
 
-The mock path is ready for development and automated tests. The live path needs a Windows workstation with Mastercam, its NET Hook assemblies, and the .NET SDK. This repository does not claim live support until those checks pass.
+The mock path and authenticated Streamable HTTP path are ready for development and automated tests. The live path needs a Windows workstation with Mastercam, its NET Hook assemblies, and the .NET SDK. This repository does not claim live support until those checks pass.
 
 ## Design
 
