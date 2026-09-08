@@ -6,7 +6,7 @@ import { dirname, resolve } from "node:path";
 
 const command = process.argv[2] ?? "serve";
 if (command === "version" || command === "--version" || command === "-v") {
-  console.log("mastercam-mcp 0.1.2");
+  console.log("mastercam-mcp 0.1.3");
 } else if (command === "serve") {
   await import("./server.js");
 } else if (command === "install") {

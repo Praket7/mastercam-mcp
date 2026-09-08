@@ -1,5 +1,6 @@
 import http from "node:http";
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { MockBackend, PipeBackend } from "./backend.js";
 import { createMcpServer } from "./mcp.js";
@@ -7,7 +8,8 @@ import { createMcpServer } from "./mcp.js";
 const profile = process.env.MASTERCAM_MCP_PROFILE ?? "read";
 const hardReadOnly = process.env.MASTERCAM_MCP_HARD_READ_ONLY !== "0";
 const pipe = process.env.MASTERCAM_MCP_PIPE ?? "\\\\.\\pipe\\mastercam-mcp-default";
-const backend = process.env.MASTERCAM_MCP_BACKEND === "mock" ? new MockBackend() : new PipeBackend(pipe);
+const fixture = process.env.MASTERCAM_MCP_FIXTURE ? JSON.parse(readFileSync(process.env.MASTERCAM_MCP_FIXTURE, "utf8")) : undefined;
+const backend = process.env.MASTERCAM_MCP_BACKEND === "mock" ? new MockBackend(fixture) : new PipeBackend(pipe);
 const token = process.env.MASTERCAM_MCP_HTTP_TOKEN;
 const host = process.env.MASTERCAM_MCP_HTTP_HOST ?? "127.0.0.1";
 const port = Number(process.env.MASTERCAM_MCP_HTTP_PORT ?? 8787);

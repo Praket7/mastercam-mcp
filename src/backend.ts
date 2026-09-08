@@ -25,11 +25,20 @@ export class PipeBackend implements Backend {
 
 export class MockBackend implements Backend {
   private feed = 35;
+  private operations: Array<Record<string, unknown>> = [{ id: 4, name: "Facing", type: "mill", feed: 35 }];
+  constructor(fixture?: { feed?: number; operations?: Array<Record<string, unknown>> }) {
+    if (fixture?.feed !== undefined && Number.isFinite(fixture.feed) && fixture.feed > 0) this.feed = fixture.feed;
+    if (fixture?.operations?.length) { const initialFeed = this.feed; this.operations = fixture.operations.map(operation => ({ ...operation, feed: Number(operation.feed ?? initialFeed) })); }
+  }
   async call(request: Request): Promise<ToolResult> {
     const a = request.arguments ?? {};
     if (request.tool === "mastercam_status") return { ok: true, tool: request.tool, data: { connected: true, backend: "mock", version: "fixture" } };
-    if (request.tool === "list_operations") return { ok: true, tool: request.tool, data: [{ id: 4, name: "Facing", type: "mill", feed: this.feed }] };
-    if (request.tool === "get_operation") return { ok: true, tool: request.tool, data: { id: a.operationId ?? 4, name: "Facing", feed: this.feed } };
+    if (request.tool === "mastercam_capabilities") return { ok: true, tool: request.tool, data: { profile: "mock", live: false, fixture: true } };
+    if (request.tool === "list_operations") return { ok: true, tool: request.tool, data: this.operations.map(operation => ({ ...operation, feed: this.feed })) };
+    if (["get_operation", "inspect"].includes(request.tool)) return { ok: true, tool: request.tool, data: { ...this.operations[0], id: a.operationId ?? 4, feed: this.feed } };
+    if (request.tool === "measure") return { ok: true, tool: request.tool, data: { path: a.path ?? "operation.feed", value: this.feed, unit: "units/min" } };
+    if (request.tool === "assert") { const pass = Number(a.equals) === this.feed; return { ok: pass, tool: request.tool, data: { pass, path: a.path ?? "operation.feed", actual: this.feed, expected: a.equals } }; }
+    if (request.tool === "capture_view") return { ok: true, tool: request.tool, data: { format: "svg", placeholder: true, image: "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='320' height='180'><rect width='100%25' height='100%25' fill='%23222'/><text x='16' y='95' fill='white'>Mock Mastercam view</text></svg>" } };
     if (request.tool === "set_feed_speed") {
       const before = { feed: this.feed }; const value = Number(a.feed ?? this.feed);
       if (!Number.isFinite(value) || value <= 0) return { ok: false, tool: request.tool, error: { code: "INVALID_FEED", message: "feed must be a finite positive number" } };
@@ -37,7 +46,8 @@ export class MockBackend implements Backend {
       if (!a.dryRun) this.feed = after.feed;
       return { ok: true, tool: request.tool, data: { applied: !a.dryRun }, receipt: { before, after, dryRun: Boolean(a.dryRun) } };
     }
-    if (request.tool === "mastercam_capabilities") return { ok: true, tool: request.tool, data: { profile: "mock", live: false } };
+    if (request.tool === "preview_change") return { ok: true, tool: request.tool, data: { operation: "set_feed_speed", before: { feed: this.feed }, after: { feed: Number(a.feed ?? this.feed) }, requiresRegeneration: true, rollbackAvailable: true } };
+    if (request.tool === "rollback_change") { const value = Number(a.beforeFeed); if (!Number.isFinite(value) || value <= 0) return { ok: false, tool: request.tool, error: { code: "INVALID_ROLLBACK", message: "beforeFeed must be a finite positive number" } }; const before = { feed: this.feed }; this.feed = value; return { ok: true, tool: request.tool, data: { applied: true }, receipt: { before, after: { feed: value }, rollback: true } }; }
     return { ok: true, tool: request.tool, data: { fixture: true, request: a } };
   }
 }

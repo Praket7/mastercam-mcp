@@ -1,6 +1,6 @@
 {
   "name": "mastercam-mcp",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "A secure local MCP bridge for a live Mastercam session",
   "repository": { "type": "git", "url": "https://github.com/Praket7/mastercam-mcp.git" },
   "homepage": "https://github.com/Praket7/mastercam-mcp#readme",
