@@ -66,6 +66,46 @@ npx -y mastercam-mcp@latest doctor
 
 Live operation mappings depend on the installed Mastercam release and its available API. The compatibility report shows what the add in can prove. A fixture pass is not a substitute for licensed live acceptance testing.
 
+## macOS setup
+
+Install Node.js 22 or newer and pnpm. Open Terminal in the project folder and run the following commands.
+
+```text
+pnpm install
+pnpm run build
+pnpm test
+npx -y mastercam-mcp@latest serve
+```
+
+macOS starts in portable fixture mode by default. You can set `MASTERCAM_MCP_BACKEND=mock` explicitly when using a client configuration. Live Mastercam NET Hook access is not available on macOS.
+
+## Linux setup
+
+Install Node.js 22 or newer and pnpm. Open a shell in the project folder and run the following commands.
+
+```text
+pnpm install
+pnpm run build
+pnpm test
+npx -y mastercam-mcp@latest serve
+```
+
+Linux starts in portable fixture mode by default. The setup sheet, JSON comparison, NC comparison, machine validation, fixture replay, stdio transport, and local HTTP transport work without a Windows dependency.
+
+## Windows setup without Mastercam
+
+Install Node.js 22 or newer and pnpm. Open PowerShell in the project folder and run the following commands.
+
+```text
+pnpm install
+pnpm run build
+$env:MASTERCAM_MCP_BACKEND = "mock"
+pnpm test
+npx -y mastercam-mcp@latest serve
+```
+
+Use this mode when developing without a license. It uses the same MCP contract as the live server and clearly marks synthetic results.
+
 ## Development checks
 
 ```text

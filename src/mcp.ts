@@ -7,6 +7,7 @@ import { doctor } from "./diagnostics.js";
 import { VERSION } from "./version.js";
 import { compatibilityReport } from "./compatibility.js";
 import { compareJson, compareNc, setupSheet, validateMachine } from "./shop.js";
+import { defaultPipe, selectedBackend } from "./platform.js";
 
 const common: z.ZodRawShape = {
   operationId: z.unknown().optional(), operationIds: z.array(z.unknown()).optional(), feed: z.number().optional(), speed: z.number().optional(),
@@ -19,7 +20,7 @@ export function createMcpServer(backend: Backend, profile: string, hardReadOnly:
   for (const [name, uri, tool] of [["active-part", "mastercam://active-part", "get_active_part"], ["operations", "mastercam://operations", "list_operations"], ["diagnostics", "mastercam://diagnostics", "mastercam_doctor"]] as const) {
     server.registerResource(name, uri, { description: `Live ${name} information from Mastercam`, mimeType: "application/json" }, async () => {
       const data = tool === "mastercam_doctor"
-        ? await doctor(process.env.MASTERCAM_MCP_PIPE ?? "\\\\.\\pipe\\mastercam-mcp-default", process.env.MASTERCAM_MCP_BACKEND ?? "pipe")
+        ? await doctor(process.env.MASTERCAM_MCP_PIPE ?? defaultPipe(), selectedBackend())
         : await backend.call({ id: randomUUID(), tool, arguments: {} });
       return { contents: [{ uri, mimeType: "application/json", text: JSON.stringify(data) }] };
     });
@@ -32,7 +33,7 @@ export function createMcpServer(backend: Backend, profile: string, hardReadOnly:
       if (WRITE_TOOLS.includes(name as never) && !dryRun && args?.confirmed !== true) return { isError: true, content: [{ type: "text" as const, text: JSON.stringify({ ok: false, error: { code: "CONFIRMATION_REQUIRED", message: `Tool ${name} requires confirmed: true after preview and reread planning` } }) }] };
       try {
         await progress(extra, name, 1, 3, "started");
-        if (name === "mastercam_doctor") return completed(extra, name, await doctor(process.env.MASTERCAM_MCP_PIPE ?? "\\\\.\\pipe\\mastercam-mcp-default", process.env.MASTERCAM_MCP_BACKEND ?? "pipe"));
+        if (name === "mastercam_doctor") return completed(extra, name, await doctor(process.env.MASTERCAM_MCP_PIPE ?? defaultPipe(), selectedBackend()));
         if (name === "mastercam_help") return completed(extra, name, { ok: true, tool: name, data: descriptions });
         if (name === "list_tool_categories") return completed(extra, name, { ok: true, tool: name, data: { read: READ_TOOLS, write: WRITE_TOOLS, advanced: ADVANCED_TOOLS, highRisk: HIGH_RISK_TOOLS } });
         if (name === "get_compatibility_matrix") return completed(extra, name, { ok: true, tool: name, data: compatibilityReport() });
