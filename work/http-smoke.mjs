@@ -1,0 +1,8 @@
+import { spawn } from 'node:child_process';
+const env = { ...process.env, MASTERCAM_MCP_BACKEND: 'mock', MASTERCAM_MCP_HTTP_TOKEN: 'smoke-token', MASTERCAM_MCP_HTTP_PORT: '8799' };
+const child = spawn(process.execPath, ['node_modules/tsx/dist/cli.mjs', 'src/http.ts'], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+await new Promise(resolve => setTimeout(resolve, 2500));
+const response = await fetch('http://127.0.0.1:8799/mcp', { method: 'POST', headers: { authorization: 'Bearer smoke-token', 'content-type': 'application/json', accept: 'application/json, text/event-stream' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'http-smoke', version: '1' } } }) });
+const body = await response.text();
+console.log(JSON.stringify({ status: response.status, session: response.headers.get('mcp-session-id'), body: body.slice(0, 300) }, null, 2));
+child.kill();
