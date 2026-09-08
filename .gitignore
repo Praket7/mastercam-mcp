@@ -27,6 +27,7 @@ user-data/
 credentials.json
 cookies.sqlite
 work/*.exe
+work/*.tgz
 work/dotnet-sdk/
 work/dotnet-install.ps1
 **/bin/
