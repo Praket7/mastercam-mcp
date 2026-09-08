@@ -5,7 +5,9 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
 const command = process.argv[2] ?? "serve";
-if (command === "serve") {
+if (command === "version" || command === "--version" || command === "-v") {
+  console.log("mastercam-mcp 0.1.2");
+} else if (command === "serve") {
   await import("./server.js");
 } else if (command === "install") {
   if (process.platform !== "win32") throw new Error("The Mastercam add in installer requires Windows");

@@ -1,6 +1,6 @@
 # Distribution and client setup
 
-The intended user path is a package download, not a source checkout.
+The published user path is `mastercam-mcp@0.1.2` through npm. Users do not need a source checkout.
 
 ## Codex
 

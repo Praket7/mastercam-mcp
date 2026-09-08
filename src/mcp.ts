@@ -10,7 +10,7 @@ const common: z.ZodRawShape = {
 };
 
 export function createMcpServer(backend: Backend, profile: string, hardReadOnly: boolean) {
-  const server = new McpServer({ name: "mastercam-mcp", version: "0.1.0" });
+  const server = new McpServer({ name: "mastercam-mcp", version: "0.1.2" });
   const names = [...READ_TOOLS, ...WRITE_TOOLS, ...ADVANCED_TOOLS, ...HIGH_RISK_TOOLS];
   for (const name of names) {
     server.registerTool(name, { description: `Mastercam ${name.replaceAll("_", " ")}`, inputSchema: z.object(common).passthrough() }, async (args: Record<string, unknown>) => {

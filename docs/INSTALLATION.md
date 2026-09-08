@@ -2,6 +2,8 @@
 
 Install Node.js 22 or newer and the .NET SDK supported by the installed Mastercam release.
 
+For end users, run `npx -y mastercam-mcp@latest install -ConfigureClients`. This detects Mastercam, builds against its local NET Hook assembly, requests Windows administrator approval, copies both the add in DLL and its function table into `chooks`, and adds safe read only entries to Codex and Claude Desktop.
+
 Build the external server with `npm install` followed by `npm run build`.
 
 Build the add in from `native/MastercamMcp.Addin` after setting `MASTERCAM_ROOT` to the user supplied Mastercam installation. The project deliberately references the local NET Hook assembly and never copies it into the repository.
