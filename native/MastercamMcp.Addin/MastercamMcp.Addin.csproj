@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <PlatformTarget>x64</PlatformTarget>
+    <AssemblyName>MastercamMcp.Addin</AssemblyName>
+    <RootNamespace>MastercamMcp.Addin</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="NETHook3_0"><HintPath>$(MASTERCAM_ROOT)\NETHook3_0.dll</HintPath><Private>False</Private></Reference>
+  </ItemGroup>
+</Project>
