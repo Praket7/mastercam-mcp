@@ -13,7 +13,7 @@ export function createMcpServer(backend: Backend, profile: string, hardReadOnly:
   const server = new McpServer({ name: "mastercam-mcp", version: "0.1.0" });
   const names = [...READ_TOOLS, ...WRITE_TOOLS, ...ADVANCED_TOOLS, ...HIGH_RISK_TOOLS];
   for (const name of names) {
-    server.registerTool(name, { description: `Mastercam ${name.replaceAll("_", " ")}`, inputSchema: common }, async (args: Record<string, unknown>) => {
+    server.registerTool(name, { description: `Mastercam ${name.replaceAll("_", " ")}`, inputSchema: z.object(common).passthrough() }, async (args: Record<string, unknown>) => {
       const dryRun = Boolean(args?.dryRun);
       if (!allowed(name, profile as never, hardReadOnly, dryRun)) return { isError: true, content: [{ type: "text", text: JSON.stringify({ ok: false, error: { code: "PROFILE_DENIED", message: `Tool ${name} is not enabled by the server profile` } }) }] };
       try {

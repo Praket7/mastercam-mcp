@@ -7,5 +7,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Reference Include="NETHook3_0"><HintPath>$(MASTERCAM_ROOT)\NETHook3_0.dll</HintPath><Private>False</Private></Reference>
+    <Reference Include="System.Web.Extensions" />
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="All" />
   </ItemGroup>
 </Project>

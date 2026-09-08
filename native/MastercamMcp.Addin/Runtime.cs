@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Reflection;
-using System.Text.Json;
+using System.Web.Script.Serialization;
 
 namespace MastercamMcp.Addin
 {
@@ -9,13 +9,15 @@ namespace MastercamMcp.Addin
     {
         public static string Dispatch(string json)
         {
-            var request = JsonDocument.Parse(json).RootElement;
-            var tool = request.GetProperty("tool").GetString() ?? "";
+            var serializer = new JavaScriptSerializer();
+            var request = serializer.DeserializeObject(json) as Dictionary<string, object>;
+            var tool = request != null && request.TryGetValue("tool", out var toolValue) ? Convert.ToString(toolValue) ?? "" : "";
             var result = new Dictionary<string, object> { ["ok"] = true, ["tool"] = tool, ["live"] = true };
             if (tool == "mastercam_status") result["data"] = new { connected = true, adapter = "NET Hook" };
             else if (tool == "mastercam_capabilities") result["data"] = CatalogCapabilities();
             else result["data"] = new { status = "adapter requires verified local API mapping", tool };
-            return JsonSerializer.Serialize(new { id = request.GetProperty("id").GetString(), result });
+            var id = request != null && request.TryGetValue("id", out var idValue) ? Convert.ToString(idValue) : null;
+            return serializer.Serialize(new { id, result });
         }
 
         private static object CatalogCapabilities()

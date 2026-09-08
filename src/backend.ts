@@ -10,11 +10,15 @@ export class PipeBackend implements Backend {
     return new Promise((resolve, reject) => {
       const socket = net.createConnection(this.pipeName);
       let buffer = "";
-      const timer = setTimeout(() => { socket.destroy(); reject(new Error("Mastercam named pipe timeout")); }, 15000);
+      let settled = false;
+      let timer: NodeJS.Timeout;
+      const finish = (error?: Error, result?: ToolResult) => { if (settled) return; settled = true; clearTimeout(timer); socket.destroy(); error ? reject(error) : resolve(result!); };
+      timer = setTimeout(() => finish(new Error("Mastercam named pipe timeout")), 15000);
       socket.setEncoding("utf8");
       socket.on("connect", () => socket.write(JSON.stringify(request) + "\n"));
-      socket.on("data", chunk => { buffer += chunk; const line = buffer.split("\n")[0]; if (!line) return; clearTimeout(timer); socket.end(); try { resolve((JSON.parse(line) as Response).result); } catch (e) { reject(e); } });
-      socket.on("error", e => { clearTimeout(timer); reject(e); });
+      socket.on("data", chunk => { buffer += chunk; if (buffer.length > 4 * 1024 * 1024) return finish(new Error("Mastercam named pipe response exceeded 4 MiB")); const line = buffer.split("\n")[0]; if (!line) return; try { const response = JSON.parse(line) as Response; if (response.id !== request.id) return finish(new Error("Mastercam named pipe response id mismatch")); finish(undefined, response.result); } catch (e) { finish(e instanceof Error ? e : new Error(String(e))); } });
+      socket.on("error", e => finish(e));
+      socket.on("close", () => { if (!settled) finish(new Error("Mastercam named pipe closed before a response")); });
     });
   }
 }
@@ -27,7 +31,9 @@ export class MockBackend implements Backend {
     if (request.tool === "list_operations") return { ok: true, tool: request.tool, data: [{ id: 4, name: "Facing", type: "mill", feed: this.feed }] };
     if (request.tool === "get_operation") return { ok: true, tool: request.tool, data: { id: a.operationId ?? 4, name: "Facing", feed: this.feed } };
     if (request.tool === "set_feed_speed") {
-      const before = { feed: this.feed }; const after = { feed: Number(a.feed ?? this.feed) };
+      const before = { feed: this.feed }; const value = Number(a.feed ?? this.feed);
+      if (!Number.isFinite(value) || value <= 0) return { ok: false, tool: request.tool, error: { code: "INVALID_FEED", message: "feed must be a finite positive number" } };
+      const after = { feed: value };
       if (!a.dryRun) this.feed = after.feed;
       return { ok: true, tool: request.tool, data: { applied: !a.dryRun }, receipt: { before, after, dryRun: Boolean(a.dryRun) } };
     }
