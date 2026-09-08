@@ -44,6 +44,11 @@ export class MockBackend implements Backend {
     const feed = Number(operation.feed);
     if (request.tool === "mastercam_status") return { ok: true, tool: request.tool, data: { connected: true, backend: "mock", version: "fixture" } };
     if (request.tool === "mastercam_capabilities") return { ok: true, tool: request.tool, data: { profile: "mock", live: false, fixture: true, supported: ["inspection", "targeting", "feedSpeed", "preview", "rollback", "regeneration", "simulation", "visualContext"] } };
+    if (request.tool === "discover_capabilities") {
+      const groups = { connection: ["mastercam_status", "mastercam_capabilities"], inspection: ["get_active_part", "list_operations", "get_operation", "get_operation_parameters", "get_stock", "get_wcs", "list_tools"], planning: ["mastercam_plan", "preview_change", "verify_change"], safety: ["get_operation_risks", "run_simulation", "detect_collisions"], targeting: ["find_operations", "get_selection"], administration: ["mastercam_doctor", "get_version_report", "get_fixture_info"] };
+      const category = String(a.category ?? "");
+      return this.result(request, category && groups[category as keyof typeof groups] ? { category, tools: groups[category as keyof typeof groups], nextAction: "Inspect the active part before planning a change" } : { groups, nextAction: "Inspect the active part before planning a change", safeDefaults: { liveWrites: false, posting: false } });
+    }
     if (request.tool === "get_active_part") return this.result(request, { name: "fixture-part", path: "fixture://active-part", units: "mm", modified: false });
     if (request.tool === "get_geometry_summary") return this.result(request, { solids: 1, surfaces: 6, curves: 12, boundingBox: { x: 100, y: 80, z: 25 }, units: "mm" });
     if (request.tool === "get_selection") return this.result(request, { operationIds: this.selected, count: this.selected.length });
@@ -54,6 +59,8 @@ export class MockBackend implements Backend {
       return this.result(request, this.operations.filter(item => !query || Object.values(item).some(value => String(value).toLowerCase().includes(query))));
     }
     if (["get_operation", "inspect"].includes(request.tool)) return { ok: true, tool: request.tool, data: { ...operation } };
+    if (request.tool === "explain_operation") return this.result(request, { operationId: operation.id, summary: `${operation.name ?? "Unnamed operation"} uses a ${operation.type ?? "machine"} strategy`, inputs: { name: operation.name, type: operation.type, feed, tool: operation.tool ?? 1 }, verification: { toolpath: "generated", collisions: "not_checked", live: false }, nextActions: ["Review operation parameters", "Preview any feed or speed change", "Confirm only after rereading the target"] });
+    if (request.tool === "get_operation_risks") return this.result(request, { operationId: operation.id, riskLevel: "review_required", checks: [{ name: "toolpath", state: "generated" }, { name: "collision", state: "not_checked" }, { name: "holder clearance", state: "not_verified" }, { name: "machine kinematics", state: "not_verified" }], warnings: ["Fixture data cannot prove live Mastercam or machine safety"], requiresConfirmation: true });
     if (request.tool === "get_operation_parameters") return this.result(request, { operationId: operation.id, parameters: { feed: feed, speed: 12000, stepdown: 2 } });
     if (request.tool === "get_stock") return this.result(request, { dimensions: { x: 110, y: 90, z: 30 }, units: "mm" });
     if (request.tool === "get_wcs") return this.result(request, { name: "WCS 1", origin: [0, 0, 0], axes: { x: [1, 0, 0], y: [0, 1, 0], z: [0, 0, 1] } });
@@ -74,11 +81,14 @@ export class MockBackend implements Backend {
       return { ok: true, tool: request.tool, data: { applied: !a.dryRun }, receipt: { before, after, dryRun: Boolean(a.dryRun) } };
     }
     if (request.tool === "preview_change") return { ok: true, tool: request.tool, data: { operation: "set_feed_speed", before: { feed }, after: { feed: Number(a.feed ?? feed) }, requiresRegeneration: true, rollbackAvailable: true } };
+    if (request.tool === "verify_change") { const expected = Number(a.expectedFeed ?? a.feed); const actual = Number(operation.feed); const pass = Number.isFinite(expected) && actual === expected; return { ok: pass, tool: request.tool, data: { pass, operationId: operation.id, expectedFeed: expected, actualFeed: actual, reread: true, verification: pass ? "verified_fixture_state" : "mismatch" } }; }
     if (request.tool === "rollback_change") { const value = Number(a.beforeFeed); if (!Number.isFinite(value) || value <= 0) return { ok: false, tool: request.tool, error: { code: "INVALID_ROLLBACK", message: "beforeFeed must be a finite positive number" } }; const before = { feed }; operation.feed = value; this.record({ timestamp: new Date().toISOString(), tool: request.tool, operationId: operation.id, before, after: { feed: value }, rollback: true }); return { ok: true, tool: request.tool, data: { applied: true }, receipt: { before, after: { feed: value }, rollback: true } }; }
     if (request.tool === "regenerate_toolpath") return this.result(request, { operationIds: a.operationIds ?? [operation.id], regenerated: true, progress: ["queued", "generating", "complete"] });
     if (request.tool === "run_simulation") return this.result(request, { state: "complete", seconds: 3, collisions: 0, warnings: [] });
     if (request.tool === "detect_collisions") return this.result(request, { collisions: [], checkedOperations: a.operationIds ?? [operation.id] });
     if (request.tool === "get_version_report") return this.result(request, { mastercam: "fixture", netHook: "fixture", supported: ["mock"], liveMappingsVerified: false });
+    if (request.tool === "get_machine_context") return this.result(request, { machine: { name: "fixture mill", type: "mill", axes: 3 }, stock: { x: 110, y: 90, z: 30, units: "mm" }, workholding: { state: "fixture_placeholder", verified: false }, wcs: "WCS 1", safety: "not_verified" });
+    if (request.tool === "get_fixture_info") return this.result(request, { backend: "mock", fixture: true, replayable: true, liveMastercamRequired: false, limitations: ["Geometry and kinematics are synthetic", "Collision results are not evidence of machine safety"] });
     if (request.tool === "client_setup_check") return this.result(request, { codex: "not_checked", claude: "not_checked", http: "available", guidance: "Run the installer with ConfigureClients on Windows" });
     if (request.tool === "get_audit_history") return this.result(request, this.history);
     return { ok: true, tool: request.tool, data: { fixture: true, request: a } };

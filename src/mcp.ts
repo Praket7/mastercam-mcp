@@ -51,7 +51,13 @@ const descriptions: Record<string, string> = {
   mastercam_help: "Explain the available Mastercam MCP tools and safety levels",
   list_tool_categories: "List tools by read, write, advanced, and high risk category",
   mastercam_plan: "Create a safe inspect, preview, confirm, apply, and verify plan",
+  discover_capabilities: "Show the available capabilities and the next safe action",
   find_operations: "Search operations by name, type, tool, or machine group",
+  explain_operation: "Explain an operation in plain language with its inputs and risks",
+  get_operation_risks: "Report verification scope and risks for an operation",
+  verify_change: "Reread an operation and verify a requested change",
+  get_machine_context: "Return machine, stock, workholding, and coordinate context",
+  get_fixture_info: "Describe the active fixture and replay capabilities",
   get_version_report: "Report detected Mastercam and NET Hook compatibility",
   client_setup_check: "Validate client configuration readiness",
   get_audit_history: "Show local change receipts and rollback history",
@@ -69,6 +75,12 @@ const schemas: Record<string, z.ZodTypeAny> = {
   preview_change: z.object({ operationId: z.union([z.string(), z.number()]).optional(), feed: z.number().finite().positive() }),
   rollback_change: z.object({ operationId: z.union([z.string(), z.number()]).optional(), beforeFeed: z.number().finite().positive(), confirmed: z.boolean().optional() })
   , find_operations: z.object({ query: z.string().optional(), category: z.string().optional() })
+  , discover_capabilities: z.object({ category: z.string().optional() })
+  , explain_operation: z.object({ operationId: z.union([z.string(), z.number()]).optional() })
+  , get_operation_risks: z.object({ operationId: z.union([z.string(), z.number()]).optional() })
+  , verify_change: z.object({ operationId: z.union([z.string(), z.number()]).optional(), feed: z.number().finite().positive().optional(), expectedFeed: z.number().finite().positive().optional() })
+  , get_machine_context: z.object({})
+  , get_fixture_info: z.object({})
 };
 
 function completed(extra: { _meta?: { progressToken?: string | number }; sendNotification: (notification: never) => Promise<void> }, name: string, value: unknown) {

@@ -1,30 +1,85 @@
-# mastercam mcp
+# Mastercam MCP
 
-mastercam mcp connects an MCP client to a live Mastercam session through a local Windows named pipe.
+Mastercam MCP connects an MCP client with a local Mastercam session through a protected Windows named pipe. It gives an assistant a careful workflow for inspection, planning, confirmation, verification, and recovery.
 
-The public project contains the bridge, the add in source, the shared contract, a safe mock backend, an API catalog utility, tests, and installation guidance. It does not contain Mastercam SDK files or customer data. Each user supplies a legitimate local Mastercam installation.
+The project includes a safe fixture backend so contributors can run the complete workflow without Mastercam or a license. The live adapter reports only capabilities that are actually mapped and verified. It never pretends that an unimplemented Mastercam action succeeded.
 
-## Current state
+## Start without Mastercam
 
-The mock path and authenticated Streamable HTTP path are ready for development and automated tests. The live path needs a Windows workstation with Mastercam, its NET Hook assemblies, and the .NET SDK. This repository does not claim live support until those checks pass.
+Install Node.js 22 or newer. From this repository run the following commands.
 
-## Design
+```text
+pnpm install
+pnpm run build
+$env:MASTERCAM_MCP_BACKEND = "mock"
+pnpm run mock
+pnpm test
+node work\feature-smoke.mjs
+```
 
-The client speaks MCP over stdio to the external server. The server sends typed requests over a user protected named pipe. The add in runs inside Mastercam and is the only component allowed to use local Mastercam APIs.
+The fixture supports active part inspection, operation search, operation explanation, risk reporting, machine context, feed and speed previews, confirmation gates, reread verification, rollback, regeneration, simulation, collision reporting, visual context, audit history, and diagnostics.
 
-The default profile is read only. Every write accepts dryRun and returns a before and after receipt. Posting creates only a local file after a separate in Mastercam confirmation dialog. There is no arbitrary code execution, machine transfer, DNC, FTP, cycle start, or controller access.
+## Connect a client
 
-## Quick start
+The published package can be started by any local MCP client.
 
-The published package is `mastercam-mcp@0.1.5`. Install Node.js 22 or newer, then use `npx -y mastercam-mcp@latest serve` as the MCP server command in Codex or Claude. No repository checkout is needed.
+```text
+npx -y mastercam-mcp@latest serve
+```
 
-On Windows, install the Mastercam add in with `npx -y mastercam-mcp@latest install -ConfigureClients`. The installer finds Mastercam automatically, requests one normal Windows administrator approval, copies the add in into `chooks`, and adds safe read only entries to Codex and Claude Desktop when those config files exist.
+On Windows the installer detects supported Mastercam folders and copies the add in into the selected chooks folder. Administrator approval is required because Program Files is protected.
 
-For source development run npm install, npm run build, npm test, and npm run mock. Set MASTERCAM_MCP_BACKEND to mock before starting the server with npm start.
+```text
+npx -y mastercam-mcp@latest install -ConfigureClients
+```
 
-The package also includes guided diagnostics, tool categories, read only inspection, operation search, typed measurements, progress notifications, preview and confirmation gates, rollback receipts, regeneration and simulation result models, MCP resources, audit history, fixture loading, and mock visual verification.
+The installer makes a backup before changing client configuration. It supports installation listing, repair through a repeat install, and uninstall through the PowerShell script.
 
-For a real session follow docs/INSTALLATION.md and provide the local Mastercam reference path through the installer. Never copy proprietary assemblies into this repository.
+## Safe workflow
+
+Start with `discover_capabilities` and `mastercam_doctor`. Inspect the active part and operations. Search for the intended operation. Explain it and review its risks. Preview any change. Request explicit confirmation. Apply the change. Regenerate only the affected operations. Reread the result and keep the receipt.
+
+The default server profile is read only. Writes require a write enabled profile and explicit confirmation. Posting, controller communication, DNC, FTP, cycle start, and arbitrary code execution are not provided.
+
+## Main capabilities
+
+Read only inspection includes the active part, geometry, selection, machine groups, operations, tools, stock, WCS, post processor, toolpath state, and cycle estimate.
+
+Planning includes operation targeting, plain language explanations, risk reports, feed and speed previews, change verification, audit history, and fixture replay.
+
+Advanced workflows include regeneration progress, simulation results, collision result models, visual context, and machine context. Fixture results are clearly marked as synthetic and cannot prove live machine safety.
+
+## Live Mastercam setup
+
+Live use requires a legitimate Windows Mastercam installation, its matching NET Hook assemblies, the .NET SDK, and an enabled add in. Run the installer from an Administrator PowerShell window if automatic elevation is not available.
+
+```text
+.\install.ps1 -ListInstallations
+.\install.ps1 -MastercamRoot "C:\Program Files\Mastercam 2026" -ConfigureClients
+```
+
+After starting Mastercam run the diagnostic command.
+
+```text
+npx -y mastercam-mcp@latest doctor
+```
+
+Live operation mappings depend on the installed Mastercam release and its available API. The compatibility report shows what the add in can prove. A fixture pass is not a substitute for licensed live acceptance testing.
+
+## Development checks
+
+```text
+pnpm install --frozen-lockfile
+pnpm run build
+pnpm test
+pnpm pack --dry-run
+```
+
+Use `MASTERCAM_MCP_FIXTURE` to load a JSON fixture containing a feed value and an operations array. Use `MASTERCAM_MCP_AUDIT_PATH` to select a local audit file.
+
+## Documentation
+
+Installation guidance is in `docs/INSTALLATION.md`. Environment settings are in `docs/ENVIRONMENT.md`. Capability details are in `docs/CAPABILITIES.md`. API evidence and the boundary around proprietary SDK files are in `docs/API-EVIDENCE.md`.
 
 ## License
 

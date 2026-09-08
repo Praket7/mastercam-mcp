@@ -7,7 +7,7 @@ export const READ_TOOLS = [
   "mastercam_status", "mastercam_capabilities", "get_active_part", "get_geometry_summary", "get_selection",
   "list_machine_groups", "list_operations", "get_operation", "get_operation_parameters", "get_stock", "get_wcs",
   "list_tools", "get_toolpath_status", "get_post_processor", "capture_view", "estimate_cycle_time", "compare_toolpaths"
-  , "mastercam_doctor", "mastercam_help", "list_tool_categories", "mastercam_plan", "inspect", "measure", "assert", "preview_change", "find_operations", "get_version_report", "client_setup_check", "get_audit_history"
+  , "mastercam_doctor", "mastercam_help", "list_tool_categories", "discover_capabilities", "mastercam_plan", "inspect", "explain_operation", "get_operation_risks", "measure", "assert", "preview_change", "verify_change", "find_operations", "get_version_report", "client_setup_check", "get_audit_history", "get_machine_context", "get_fixture_info"
 ] as const;
 
 export const WRITE_TOOLS = [
