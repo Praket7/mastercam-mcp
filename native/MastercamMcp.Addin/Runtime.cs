@@ -10,14 +10,21 @@ namespace MastercamMcp.Addin
         public static string Dispatch(string json)
         {
             var serializer = new JavaScriptSerializer();
-            var request = serializer.DeserializeObject(json) as Dictionary<string, object>;
+            Dictionary<string, object> request;
+            try
+            {
+                request = serializer.DeserializeObject(json) as Dictionary<string, object>;
+            }
+            catch (Exception ex)
+            {
+                return serializer.Serialize(new { id = (string)null, result = new { ok = false, error = new { code = "INVALID_JSON", message = ex.Message } } });
+            }
+            if (request == null) return serializer.Serialize(new { id = (string)null, result = new { ok = false, error = new { code = "INVALID_REQUEST", message = "A JSON object is required" } } });
             var tool = request != null && request.TryGetValue("tool", out var toolValue) ? Convert.ToString(toolValue) ?? "" : "";
-            var result = new Dictionary<string, object> { ["ok"] = true, ["tool"] = tool, ["live"] = true };
-            if (tool == "mastercam_status") result["data"] = new { connected = true, adapter = "NET Hook" };
-            else if (tool == "mastercam_capabilities") result["data"] = CatalogCapabilities();
-            else result["data"] = new { status = "adapter requires verified local API mapping", tool };
-            var id = request != null && request.TryGetValue("id", out var idValue) ? Convert.ToString(idValue) : null;
-            return serializer.Serialize(new { id, result });
+            var id = request.TryGetValue("id", out var idValue) ? Convert.ToString(idValue) : null;
+            if (tool == "mastercam_status") return serializer.Serialize(new { id, result = new { ok = true, tool, live = true, data = new { connected = true, adapter = "NET Hook" } } });
+            if (tool == "mastercam_capabilities") return serializer.Serialize(new { id, result = new { ok = true, tool, live = true, data = CatalogCapabilities() } });
+            return serializer.Serialize(new { id, result = new { ok = false, tool, live = false, error = new { code = "UNSUPPORTED_CAPABILITY", message = "This live Mastercam tool has no verified NET Hook mapping yet" } } });
         }
 
         private static object CatalogCapabilities()

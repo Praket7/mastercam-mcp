@@ -16,3 +16,10 @@ test("doctor reports mock prerequisites without a Mastercam license", async () =
   assert.equal(result.ok, true);
   assert.equal((result.data as any).checks.pipe.ok, true);
 });
+
+test("fixture feed changes stay scoped to the selected operation", async () => {
+  const backend = new MockBackend({ operations: [{ id: 1, name: "Facing", feed: 30 }, { id: 2, name: "Pocket", feed: 60 }] });
+  await backend.call({ id: "5", tool: "set_feed_speed", arguments: { operationId: 1, feed: 45 } });
+  const result = await backend.call({ id: "6", tool: "list_operations", arguments: {} });
+  assert.deepEqual((result as any).data.map((operation: any) => operation.feed), [45, 60]);
+});

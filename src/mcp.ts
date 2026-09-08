@@ -4,6 +4,7 @@ import { z } from "zod";
 import { allowed, READ_TOOLS, WRITE_TOOLS, ADVANCED_TOOLS, HIGH_RISK_TOOLS } from "./contracts.js";
 import type { Backend } from "./backend.js";
 import { doctor } from "./diagnostics.js";
+import { VERSION } from "./version.js";
 
 const common: z.ZodRawShape = {
   operationId: z.unknown().optional(), operationIds: z.array(z.unknown()).optional(), feed: z.number().optional(), speed: z.number().optional(),
@@ -12,23 +13,24 @@ const common: z.ZodRawShape = {
 };
 
 export function createMcpServer(backend: Backend, profile: string, hardReadOnly: boolean) {
-  const server = new McpServer({ name: "mastercam-mcp", version: "0.1.3" });
+  const server = new McpServer({ name: "mastercam-mcp", version: VERSION });
   const names = [...READ_TOOLS, ...WRITE_TOOLS, ...ADVANCED_TOOLS, ...HIGH_RISK_TOOLS];
   for (const name of names) {
-    server.registerTool(name, { description: descriptions[name] ?? `Mastercam ${name.replaceAll("_", " ")}`, inputSchema: z.object(common).passthrough() }, async (args: Record<string, unknown>, extra) => {
+    server.registerTool(name, { description: descriptions[name] ?? `Mastercam ${name.replaceAll("_", " ")}`, inputSchema: schemas[name] ?? z.object(common).passthrough() }, async (args: Record<string, unknown>, extra) => {
       const dryRun = Boolean(args?.dryRun);
-      if (!allowed(name, profile as never, hardReadOnly, dryRun)) return { isError: true, content: [{ type: "text", text: JSON.stringify({ ok: false, error: { code: "PROFILE_DENIED", message: `Tool ${name} is not enabled by the server profile` } }) }] };
+      if (!allowed(name, profile as never, hardReadOnly, dryRun)) return { isError: true, content: [{ type: "text" as const, text: JSON.stringify({ ok: false, error: { code: "PROFILE_DENIED", message: `Tool ${name} is not enabled by the server profile` } }) }] };
       try {
         await progress(extra, name, 1, 3, "started");
-        if (name === "mastercam_doctor") return { content: [{ type: "text", text: JSON.stringify(await doctor(process.env.MASTERCAM_MCP_PIPE ?? "\\\\.\\pipe\\mastercam-mcp-default", process.env.MASTERCAM_MCP_BACKEND ?? "pipe")) }] };
-        if (name === "mastercam_help") return { content: [{ type: "text", text: JSON.stringify({ ok: true, tool: name, data: descriptions }) }] };
-        if (name === "list_tool_categories") return { content: [{ type: "text", text: JSON.stringify({ ok: true, tool: name, data: { read: READ_TOOLS, write: WRITE_TOOLS, advanced: ADVANCED_TOOLS, highRisk: HIGH_RISK_TOOLS } }) }] };
-        if (name === "mastercam_plan") return { content: [{ type: "text", text: JSON.stringify({ ok: true, tool: name, data: { steps: ["inspect target", "preview requested change", "request confirmation", "apply change", "verify result"], safeDefault: "read only" } }) }] };
+        if (name === "mastercam_doctor") return completed(extra, name, await doctor(process.env.MASTERCAM_MCP_PIPE ?? "\\\\.\\pipe\\mastercam-mcp-default", process.env.MASTERCAM_MCP_BACKEND ?? "pipe"));
+        if (name === "mastercam_help") return completed(extra, name, { ok: true, tool: name, data: descriptions });
+        if (name === "list_tool_categories") return completed(extra, name, { ok: true, tool: name, data: { read: READ_TOOLS, write: WRITE_TOOLS, advanced: ADVANCED_TOOLS, highRisk: HIGH_RISK_TOOLS } });
+        if (name === "mastercam_plan") return completed(extra, name, { ok: true, tool: name, data: { steps: ["inspect target", "preview requested change", "request confirmation", "apply change", "verify result"], safeDefault: "read only" } });
         const result = await backend.call({ id: randomUUID(), tool: name, arguments: args ?? {} });
         await progress(extra, name, 3, 3, "completed");
-        return { content: [{ type: "text", text: JSON.stringify(result) }] };
+        return { content: [{ type: "text" as const, text: JSON.stringify(result) }] };
       } catch (error) {
-        return { isError: true, content: [{ type: "text", text: JSON.stringify({ ok: false, error: { code: "BACKEND_UNAVAILABLE", message: String(error) } }) }] };
+        await progress(extra, name, 3, 3, "failed");
+        return { isError: true, content: [{ type: "text" as const, text: JSON.stringify({ ok: false, error: { code: "BACKEND_UNAVAILABLE", message: String(error) } }) }] };
       }
     });
   }
@@ -45,6 +47,19 @@ const descriptions: Record<string, string> = {
   assert: "Verify that a measured value matches an expected value",
   preview_change: "Preview a change with before, after, regeneration, and rollback information"
 };
+
+const schemas: Record<string, z.ZodTypeAny> = {
+  inspect: z.object({ operationId: z.union([z.string(), z.number()]).optional(), path: z.string().optional() }),
+  measure: z.object({ operationId: z.union([z.string(), z.number()]).optional(), path: z.string().min(1).default("operation.feed") }),
+  assert: z.object({ operationId: z.union([z.string(), z.number()]).optional(), path: z.string().min(1).default("operation.feed"), equals: z.unknown() }),
+  set_feed_speed: z.object({ operationId: z.union([z.string(), z.number()]).optional(), feed: z.number().finite().positive(), dryRun: z.boolean().optional(), confirmed: z.boolean().optional() }),
+  preview_change: z.object({ operationId: z.union([z.string(), z.number()]).optional(), feed: z.number().finite().positive() }),
+  rollback_change: z.object({ operationId: z.union([z.string(), z.number()]).optional(), beforeFeed: z.number().finite().positive(), confirmed: z.boolean().optional() })
+};
+
+function completed(extra: { _meta?: { progressToken?: string | number }; sendNotification: (notification: never) => Promise<void> }, name: string, value: unknown) {
+  return progress(extra, name, 3, 3, "completed").then(() => ({ content: [{ type: "text" as const, text: JSON.stringify(value) }] }));
+}
 
 async function progress(extra: { _meta?: { progressToken?: string | number }; sendNotification: (notification: never) => Promise<void> }, tool: string, progressValue: number, total: number, message: string) {
   const token = extra._meta?.progressToken;

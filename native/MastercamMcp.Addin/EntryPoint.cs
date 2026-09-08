@@ -22,6 +22,7 @@ namespace MastercamMcp.Addin
 
     internal static class BridgeHost
     {
+        private const int MaxRequestBytes = 1024 * 1024;
         private static int started;
         public static void Start(string pipeName)
         {
@@ -44,12 +45,30 @@ namespace MastercamMcp.Addin
                         using (var writer = new StreamWriter(server, new UTF8Encoding(false), 4096, true) { AutoFlush = true })
                         {
                             var request = reader.ReadLine();
-                            if (request != null) writer.WriteLine(Runtime.Dispatch(request));
+                            if (request == null) continue;
+                            if (Encoding.UTF8.GetByteCount(request) > MaxRequestBytes)
+                                writer.WriteLine("{\"id\":null,\"result\":{\"ok\":false,\"error\":{\"code\":\"REQUEST_TOO_LARGE\",\"message\":\"Request exceeds 1 MiB\"}}}");
+                            else writer.WriteLine(Runtime.Dispatch(request));
                         }
                     }
                 }
-                catch { System.Threading.Thread.Sleep(250); }
+                catch (Exception ex)
+                {
+                    Log(ex);
+                    System.Threading.Thread.Sleep(250);
+                }
             }
+        }
+
+        private static void Log(Exception ex)
+        {
+            try
+            {
+                var directory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "mastercam-mcp");
+                Directory.CreateDirectory(directory);
+                File.AppendAllText(Path.Combine(directory, "native.log"), DateTime.UtcNow.ToString("O") + " " + ex + Environment.NewLine);
+            }
+            catch { }
         }
 
         private static string NormalizePipeName(string value)

@@ -6,7 +6,7 @@ export async function doctor(pipe: string, backend: string) {
   const pipeReachable = backend === "mock" ? true : await probePipe(pipe);
   const checks = {
     node: { ok: Number(process.versions.node.split(".")[0]) >= 22, value: process.version },
-    platform: { ok: process.platform === "win32", value: process.platform },
+    platform: { ok: backend === "mock" || process.platform === "win32", value: process.platform, required: backend === "mock" ? "informational" : "windows" },
     pipe: { ok: pipeReachable, value: backend === "mock" ? "mock" : pipe },
     dotnet: { ok: backend === "mock" || Boolean(dotnet), value: dotnet ?? "not found" }
   };

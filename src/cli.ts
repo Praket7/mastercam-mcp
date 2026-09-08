@@ -3,10 +3,11 @@ import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
+import { VERSION } from "./version.js";
 
 const command = process.argv[2] ?? "serve";
 if (command === "version" || command === "--version" || command === "-v") {
-  console.log("mastercam-mcp 0.1.3");
+  console.log(`mastercam-mcp ${VERSION}`);
 } else if (command === "serve") {
   await import("./server.js");
 } else if (command === "install") {

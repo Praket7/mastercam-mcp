@@ -8,10 +8,10 @@ param(
 $ErrorActionPreference = "Stop"
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 if (-not $isAdmin) {
-  $args = @('-NoProfile','-ExecutionPolicy','Bypass','-File',("`"{0}`"" -f $PSCommandPath))
-  if ($MastercamRoot) { $args += @('-MastercamRoot',("`"{0}`"" -f $MastercamRoot)) }
-  if ($Configuration -ne 'Release') { $args += @('-Configuration',("`"{0}`"" -f $Configuration)) }
-  if ($DotnetPath) { $args += @('-DotnetPath',("`"{0}`"" -f $DotnetPath)) }
+  $args = @('-NoProfile','-ExecutionPolicy','Bypass','-File',(Quote-ProcessArgument $PSCommandPath))
+  if ($MastercamRoot) { $args += @('-MastercamRoot',(Quote-ProcessArgument $MastercamRoot)) }
+  if ($Configuration -ne 'Release') { $args += @('-Configuration',(Quote-ProcessArgument $Configuration)) }
+  if ($DotnetPath) { $args += @('-DotnetPath',(Quote-ProcessArgument $DotnetPath)) }
   if ($ConfigureClients) { $args += '-ConfigureClients' }
   $elevated = Start-Process -FilePath 'powershell.exe' -Verb RunAs -Wait -PassThru -ArgumentList ($args -join ' ')
   exit $elevated.ExitCode
@@ -61,7 +61,7 @@ enabled = true
 [mcp_servers.mastercam.env]
 MASTERCAM_MCP_PROFILE = 'read'
 "@
-    Add-Content $codexConfig $codexEntry
+    Write-AtomicText $codexConfig ($codexText + $codexEntry)
     Write-Output "Added the Mastercam MCP server to the Codex configuration"
   }
   $claudeConfig = Join-Path $env:APPDATA "Claude\claude_desktop_config.json"
@@ -71,7 +71,28 @@ MASTERCAM_MCP_PROFILE = 'read'
   if (-not $claude.PSObject.Properties['mcpServers']) { $claude | Add-Member -NotePropertyName mcpServers -NotePropertyValue ([pscustomobject]@{}) }
   if (-not $claude.mcpServers.PSObject.Properties['mastercam']) {
     $claude.mcpServers | Add-Member -NotePropertyName mastercam -NotePropertyValue ([pscustomobject]@{ command = 'npx.cmd'; args = @('-y','mastercam-mcp@latest','serve'); env = [pscustomobject]@{ MASTERCAM_MCP_PROFILE = 'read' } })
-    $claude | ConvertTo-Json -Depth 20 | Set-Content $claudeConfig -Encoding UTF8
+    Write-AtomicText $claudeConfig ($claude | ConvertTo-Json -Depth 20)
     Write-Output "Added the Mastercam MCP server to the Claude Desktop configuration"
+  }
+}
+
+function Quote-ProcessArgument([string]$Value) {
+  if ($Value -notmatch '[\s"]') { return $Value }
+  return '"' + ($Value -replace '(\\*)"', '$1$1\"' -replace '(\\+)$', '$1$1') + '"'
+}
+
+function Write-AtomicText([string]$Path, [string]$Content) {
+  if (Test-Path $Path) {
+    $backup = "$Path.$(Get-Date -Format yyyyMMdd-HHmmss).bak"
+    Copy-Item $Path $backup -Force
+    Write-Output "Backed up $Path to $backup"
+  }
+  $temporary = "$Path.$([guid]::NewGuid().ToString('N')).tmp"
+  try {
+    [System.IO.File]::WriteAllText($temporary, $Content, (New-Object System.Text.UTF8Encoding($false)))
+    Move-Item $temporary $Path -Force
+  } catch {
+    if (Test-Path $temporary) { Remove-Item $temporary -Force }
+    throw "Could not update $Path atomically: $($_.Exception.Message)"
   }
 }

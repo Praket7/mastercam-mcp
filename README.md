@@ -16,7 +16,7 @@ The default profile is read only. Every write accepts dryRun and returns a befor
 
 ## Quick start
 
-The published package is `mastercam-mcp@0.1.3`. Install Node.js 22 or newer, then use `npx -y mastercam-mcp@latest serve` as the MCP server command in Codex or Claude. No repository checkout is needed.
+The published package is `mastercam-mcp@0.1.4`. Install Node.js 22 or newer, then use `npx -y mastercam-mcp@latest serve` as the MCP server command in Codex or Claude. No repository checkout is needed.
 
 On Windows, install the Mastercam add in with `npx -y mastercam-mcp@latest install -ConfigureClients`. The installer finds Mastercam automatically, requests one normal Windows administrator approval, copies the add in into `chooks`, and adds safe read only entries to Codex and Claude Desktop when those config files exist.
 

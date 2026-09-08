@@ -1,0 +1,42 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - v*
+
+jobs:
+  verify-and-publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.19.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run build
+      - run: pnpm test
+      - name: Verify package contents
+        shell: bash
+        run: |
+          archive=$(pnpm pack --pack-destination . | tail -n 1)
+          tar -tzf "$archive" | grep -q 'package/dist/cli.js'
+          tar -tzf "$archive" | grep -q 'package/install.ps1'
+          tar -tzf "$archive" | grep -q 'package/native/MastercamMcp.Addin/MastercamMcp.Addin.ft'
+          if tar -tzf "$archive" | grep -Eiq 'package/(native/.*/(bin|obj)|node_modules)/'; then exit 1; fi
+      - name: Publish package
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: pnpm publish --access public --no-git-checks --provenance
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" --generate-notes
