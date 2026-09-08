@@ -6,6 +6,7 @@ import type { Backend } from "./backend.js";
 import { doctor } from "./diagnostics.js";
 import { VERSION } from "./version.js";
 import { compatibilityReport } from "./compatibility.js";
+import { compareJson, compareNc, setupSheet, validateMachine } from "./shop.js";
 
 const common: z.ZodRawShape = {
   operationId: z.unknown().optional(), operationIds: z.array(z.unknown()).optional(), feed: z.number().optional(), speed: z.number().optional(),
@@ -35,6 +36,10 @@ export function createMcpServer(backend: Backend, profile: string, hardReadOnly:
         if (name === "mastercam_help") return completed(extra, name, { ok: true, tool: name, data: descriptions });
         if (name === "list_tool_categories") return completed(extra, name, { ok: true, tool: name, data: { read: READ_TOOLS, write: WRITE_TOOLS, advanced: ADVANCED_TOOLS, highRisk: HIGH_RISK_TOOLS } });
         if (name === "get_compatibility_matrix") return completed(extra, name, { ok: true, tool: name, data: compatibilityReport() });
+        if (name === "generate_setup_sheet") return completed(extra, name, { ok: true, tool: name, data: setupSheet(args as never) });
+        if (name === "compare_tool_databases") return completed(extra, name, { ok: true, tool: name, data: compareJson(args.left, args.right) });
+        if (name === "compare_nc_files") return completed(extra, name, { ok: true, tool: name, data: compareNc(String(args.before ?? ""), String(args.after ?? "")) });
+        if (name === "validate_machine_profile") return completed(extra, name, { ok: true, tool: name, data: validateMachine((args.operation ?? {}) as Record<string, unknown>, (args.profile ?? {}) as Record<string, unknown>) });
         if (name === "mastercam_plan") return completed(extra, name, { ok: true, tool: name, data: { steps: ["inspect target", "preview requested change", "request confirmation", "apply change", "verify result"], safeDefault: "read only" } });
         const result = await backend.call({ id: randomUUID(), tool: name, arguments: args ?? {} });
         await progress(extra, name, 3, 3, "completed");
@@ -61,6 +66,10 @@ const descriptions: Record<string, string> = {
   verify_change: "Reread an operation and verify a requested change",
   get_machine_context: "Return machine, stock, workholding, and coordinate context",
   get_fixture_info: "Describe the active fixture and replay capabilities",
+  generate_setup_sheet: "Create a revision ready setup sheet from inspection data",
+  compare_tool_databases: "Compare two tool database snapshots without changing either file",
+  compare_nc_files: "Compare two NC text files and summarize safety relevant changes",
+  validate_machine_profile: "Validate an operation against a declared machine profile",
   get_version_report: "Report detected Mastercam and NET Hook compatibility",
   client_setup_check: "Validate client configuration readiness",
   get_audit_history: "Show local change receipts and rollback history",
@@ -85,6 +94,10 @@ const schemas: Record<string, z.ZodTypeAny> = {
   , verify_change: z.object({ operationId: z.union([z.string(), z.number()]).optional(), feed: z.number().finite().positive().optional(), expectedFeed: z.number().finite().positive().optional() })
   , get_machine_context: z.object({})
   , get_fixture_info: z.object({})
+  , generate_setup_sheet: z.object({ part: z.record(z.unknown()).optional(), machine: z.record(z.unknown()).optional(), stock: z.record(z.unknown()).optional(), wcs: z.record(z.unknown()).optional(), operations: z.array(z.record(z.unknown())).optional(), tools: z.array(z.record(z.unknown())).optional(), notes: z.array(z.string()).optional() })
+  , compare_tool_databases: z.object({ left: z.unknown(), right: z.unknown() })
+  , compare_nc_files: z.object({ before: z.string(), after: z.string() })
+  , validate_machine_profile: z.object({ operation: z.record(z.unknown()), profile: z.record(z.unknown()) })
 };
 
 function completed(extra: { _meta?: { progressToken?: string | number }; sendNotification: (notification: never) => Promise<void> }, name: string, value: unknown) {

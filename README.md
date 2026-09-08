@@ -81,6 +81,20 @@ Use `MASTERCAM_MCP_FIXTURE` to load a JSON fixture containing a feed value and a
 
 Installation guidance is in `docs/INSTALLATION.md`. Environment settings are in `docs/ENVIRONMENT.md`. Capability details are in `docs/CAPABILITIES.md`. API evidence and the boundary around proprietary SDK files are in `docs/API-EVIDENCE.md`.
 
+## Shop floor workflows
+
+The server can generate a setup sheet from inspection data, compare tool database snapshots, compare NC text files, and validate an operation against a declared machine profile. These workflows are portable and can run with the fixture backend on Windows, macOS, and Linux.
+
+```text
+MASTERCAM_MCP_BACKEND=mock pnpm test
+```
+
+On PowerShell use `$env:MASTERCAM_MCP_BACKEND = "mock"` before starting the server. The generated setup sheet is a review document and requires approval. NC comparison is read only. Machine validation reports warnings when controller or holder information is missing.
+
+## Path policy
+
+The live Windows installer checks the selected Mastercam root and its `chooks` folder. Exa verified the standard installation family under `C:\Program Files` and the shared data family under `C:\Users\Public\Documents`. Custom paths are supported through `MastercamRoot`. macOS and Linux use fixture and file workflows because the native Mastercam add in is Windows only.
+
 ## License
 
 Apache License 2.0
