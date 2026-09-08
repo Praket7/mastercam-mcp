@@ -16,13 +16,13 @@ The default profile is read only. Every write accepts dryRun and returns a befor
 
 ## Quick start
 
-The published package is `mastercam-mcp@0.1.4`. Install Node.js 22 or newer, then use `npx -y mastercam-mcp@latest serve` as the MCP server command in Codex or Claude. No repository checkout is needed.
+The published package is `mastercam-mcp@0.1.5`. Install Node.js 22 or newer, then use `npx -y mastercam-mcp@latest serve` as the MCP server command in Codex or Claude. No repository checkout is needed.
 
 On Windows, install the Mastercam add in with `npx -y mastercam-mcp@latest install -ConfigureClients`. The installer finds Mastercam automatically, requests one normal Windows administrator approval, copies the add in into `chooks`, and adds safe read only entries to Codex and Claude Desktop when those config files exist.
 
 For source development run npm install, npm run build, npm test, and npm run mock. Set MASTERCAM_MCP_BACKEND to mock before starting the server with npm start.
 
-The package also includes guided diagnostics, tool categories, inspect and measure checks, progress notifications, change previews, rollback receipts, fixture loading, and mock visual verification.
+The package also includes guided diagnostics, tool categories, read only inspection, operation search, typed measurements, progress notifications, preview and confirmation gates, rollback receipts, regeneration and simulation result models, MCP resources, audit history, fixture loading, and mock visual verification.
 
 For a real session follow docs/INSTALLATION.md and provide the local Mastercam reference path through the installer. Never copy proprietary assemblies into this repository.
 

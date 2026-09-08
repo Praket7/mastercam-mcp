@@ -12,8 +12,8 @@ child.stdin.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initia
 const tools = await call(2, 'tools/list', {});
 const status = await call(3, 'tools/call', { name: 'mastercam_status', arguments: {} });
 const dry = await call(4, 'tools/call', { name: 'set_feed_speed', arguments: { operationId: 4, feed: 42, dryRun: true } });
-const apply = await call(5, 'tools/call', { name: 'set_feed_speed', arguments: { operationId: 4, feed: 42, dryRun: false } });
+const apply = await call(5, 'tools/call', { name: 'set_feed_speed', arguments: { operationId: 4, feed: 42, dryRun: false, confirmed: true } });
 const reread = await call(6, 'tools/call', { name: 'get_operation', arguments: { operationId: 4 } });
-const restore = await call(7, 'tools/call', { name: 'set_feed_speed', arguments: { operationId: 4, feed: 35, dryRun: false } });
+const restore = await call(7, 'tools/call', { name: 'set_feed_speed', arguments: { operationId: 4, feed: 35, dryRun: false, confirmed: true } });
 console.log(JSON.stringify({ initialized: Boolean(init.result), toolCount: tools.result.tools.length, hasStatus: tools.result.tools.some(t => t.name === 'mastercam_status'), status, dry, apply, reread, restore }, null, 2));
 child.kill();

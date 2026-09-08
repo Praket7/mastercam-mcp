@@ -3,9 +3,18 @@ param(
   [Parameter(Mandatory = $false)][string]$MastercamRoot = "",
   [string]$Configuration = "Release",
   [string]$DotnetPath = "",
-  [switch]$ConfigureClients
+  [switch]$ConfigureClients,
+  [switch]$ListInstallations,
+  [switch]$Uninstall
 )
 $ErrorActionPreference = "Stop"
+if ($ListInstallations) {
+  Get-ChildItem 'C:\Program Files' -Directory -Filter 'Mastercam *' -ErrorAction SilentlyContinue |
+    Select-Object @{Name='Version';Expression={$_.Name -replace '^Mastercam\s+', ''}}, FullName,
+      @{Name='HasExecutable';Expression={Test-Path (Join-Path $_.FullName 'Mastercam.exe')}},
+      @{Name='HasChooks';Expression={Test-Path (Join-Path $_.FullName 'chooks')}} | Format-Table -AutoSize
+  exit 0
+}
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 if (-not $isAdmin) {
   $args = @('-NoProfile','-ExecutionPolicy','Bypass','-File',(Quote-ProcessArgument $PSCommandPath))
@@ -13,6 +22,7 @@ if (-not $isAdmin) {
   if ($Configuration -ne 'Release') { $args += @('-Configuration',(Quote-ProcessArgument $Configuration)) }
   if ($DotnetPath) { $args += @('-DotnetPath',(Quote-ProcessArgument $DotnetPath)) }
   if ($ConfigureClients) { $args += '-ConfigureClients' }
+  if ($Uninstall) { $args += '-Uninstall' }
   $elevated = Start-Process -FilePath 'powershell.exe' -Verb RunAs -Wait -PassThru -ArgumentList ($args -join ' ')
   exit $elevated.ExitCode
 }
@@ -39,6 +49,14 @@ if (-not $DotnetPath) {
 $output = Join-Path $PSScriptRoot "native\MastercamMcp.Addin\bin\$Configuration\net48"
 $chooks = Join-Path $env:MASTERCAM_ROOT "chooks"
 if (-not (Test-Path $chooks)) { throw "The selected Mastercam root has no chooks directory" }
+if ($Uninstall) {
+  foreach ($file in @('MastercamMcp.Addin.dll', 'MastercamMcp.Addin.ft')) {
+    $target = Join-Path $chooks $file
+    if (Test-Path $target) { Remove-Item $target -Force; Write-Output "Removed $target" }
+  }
+  Write-Output "Removed the Mastercam MCP add in from the selected chooks directory"
+  exit 0
+}
 try { Copy-Item (Join-Path $output "MastercamMcp.Addin.dll") $chooks -Force }
 catch [System.UnauthorizedAccessException] {
   throw "Mastercam is installed under a protected folder. Re-run this script from an administrator PowerShell window to copy the add in into chooks."

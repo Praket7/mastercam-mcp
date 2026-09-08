@@ -14,11 +14,20 @@ const common: z.ZodRawShape = {
 
 export function createMcpServer(backend: Backend, profile: string, hardReadOnly: boolean) {
   const server = new McpServer({ name: "mastercam-mcp", version: VERSION });
+  for (const [name, uri, tool] of [["active-part", "mastercam://active-part", "get_active_part"], ["operations", "mastercam://operations", "list_operations"], ["diagnostics", "mastercam://diagnostics", "mastercam_doctor"]] as const) {
+    server.registerResource(name, uri, { description: `Live ${name} information from Mastercam`, mimeType: "application/json" }, async () => {
+      const data = tool === "mastercam_doctor"
+        ? await doctor(process.env.MASTERCAM_MCP_PIPE ?? "\\\\.\\pipe\\mastercam-mcp-default", process.env.MASTERCAM_MCP_BACKEND ?? "pipe")
+        : await backend.call({ id: randomUUID(), tool, arguments: {} });
+      return { contents: [{ uri, mimeType: "application/json", text: JSON.stringify(data) }] };
+    });
+  }
   const names = [...READ_TOOLS, ...WRITE_TOOLS, ...ADVANCED_TOOLS, ...HIGH_RISK_TOOLS];
   for (const name of names) {
     server.registerTool(name, { description: descriptions[name] ?? `Mastercam ${name.replaceAll("_", " ")}`, inputSchema: schemas[name] ?? z.object(common).passthrough() }, async (args: Record<string, unknown>, extra) => {
       const dryRun = Boolean(args?.dryRun);
       if (!allowed(name, profile as never, hardReadOnly, dryRun)) return { isError: true, content: [{ type: "text" as const, text: JSON.stringify({ ok: false, error: { code: "PROFILE_DENIED", message: `Tool ${name} is not enabled by the server profile` } }) }] };
+      if (WRITE_TOOLS.includes(name as never) && !dryRun && args?.confirmed !== true) return { isError: true, content: [{ type: "text" as const, text: JSON.stringify({ ok: false, error: { code: "CONFIRMATION_REQUIRED", message: `Tool ${name} requires confirmed: true after preview and reread planning` } }) }] };
       try {
         await progress(extra, name, 1, 3, "started");
         if (name === "mastercam_doctor") return completed(extra, name, await doctor(process.env.MASTERCAM_MCP_PIPE ?? "\\\\.\\pipe\\mastercam-mcp-default", process.env.MASTERCAM_MCP_BACKEND ?? "pipe"));
@@ -42,6 +51,10 @@ const descriptions: Record<string, string> = {
   mastercam_help: "Explain the available Mastercam MCP tools and safety levels",
   list_tool_categories: "List tools by read, write, advanced, and high risk category",
   mastercam_plan: "Create a safe inspect, preview, confirm, apply, and verify plan",
+  find_operations: "Search operations by name, type, tool, or machine group",
+  get_version_report: "Report detected Mastercam and NET Hook compatibility",
+  client_setup_check: "Validate client configuration readiness",
+  get_audit_history: "Show local change receipts and rollback history",
   inspect: "Inspect a target and return its current values",
   measure: "Measure one named value on a Mastercam target",
   assert: "Verify that a measured value matches an expected value",
@@ -55,6 +68,7 @@ const schemas: Record<string, z.ZodTypeAny> = {
   set_feed_speed: z.object({ operationId: z.union([z.string(), z.number()]).optional(), feed: z.number().finite().positive(), dryRun: z.boolean().optional(), confirmed: z.boolean().optional() }),
   preview_change: z.object({ operationId: z.union([z.string(), z.number()]).optional(), feed: z.number().finite().positive() }),
   rollback_change: z.object({ operationId: z.union([z.string(), z.number()]).optional(), beforeFeed: z.number().finite().positive(), confirmed: z.boolean().optional() })
+  , find_operations: z.object({ query: z.string().optional(), category: z.string().optional() })
 };
 
 function completed(extra: { _meta?: { progressToken?: string | number }; sendNotification: (notification: never) => Promise<void> }, name: string, value: unknown) {

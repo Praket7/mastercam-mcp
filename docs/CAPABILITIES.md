@@ -5,7 +5,12 @@ This table is deliberately conservative.
 | Area | Status | Evidence |
 | --- | --- | --- |
 | MCP initialization | Supported | Automated stdio smoke test |
-| Tool discovery | Supported | 36 tools discovered in feature smoke test |
+| Tool discovery | Supported | 40 tools discovered in feature smoke test |
+| Read only inspection | Mock tested | Active part, geometry, selection, operations, tools, stock, WCS, status, and post metadata |
+| Operation targeting | Mock tested | Search by operation name, type, tool, or machine group |
+| Regeneration and simulation | Mock tested | Progress-shaped regeneration, simulation, and collision result models |
+| MCP resources | Mock tested | Active part, operations, and diagnostics resources |
+| Audit history | Mock tested | Local in-process before and after receipts for changes and rollback |
 | Read only profile | Supported | Unit tests and smoke test |
 | Dry run receipt | Supported | Mock feed change test |
 | Diagnostics and guided plan | Supported | Feature smoke test |
