@@ -1,12 +1,11 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, readdirSync } from "node:fs";
-import { join } from "node:path";
 import net from "node:net";
+import { detectInstallations, compatibilityReport } from "./compatibility.js";
 
 export async function doctor(pipe: string, backend: string) {
   const dotnet = findDotnet();
   const pipeReachable = backend === "mock" ? true : await probePipe(pipe);
-  const installations = findMastercamInstallations();
+  const installations = detectInstallations();
   const checks = {
     node: { ok: Number(process.versions.node.split(".")[0]) >= 22, value: process.version },
     platform: { ok: backend === "mock" || process.platform === "win32", value: process.platform, required: backend === "mock" ? "informational" : "windows" },
@@ -14,17 +13,7 @@ export async function doctor(pipe: string, backend: string) {
     dotnet: { ok: backend === "mock" || Boolean(dotnet), value: dotnet ?? "not found" },
     mastercam: { ok: backend === "mock" || installations.length > 0, value: installations.map(item => item.version) }
   };
-  return { ok: Object.values(checks).every(check => check.ok), tool: "mastercam_doctor", data: { checks, backend, installations, guidance: "Run the installer as administrator, restart Mastercam, and invoke the Mastercam MCP NET-Hook entry before testing the live pipe." } };
-}
-
-export function findMastercamInstallations() {
-  if (process.platform !== "win32") return [];
-  const root = "C:\\Program Files";
-  if (!existsSync(root)) return [];
-  return readdirSync(root, { withFileTypes: true })
-    .filter(entry => entry.isDirectory() && /^Mastercam /i.test(entry.name))
-    .map(entry => ({ version: entry.name.replace(/^Mastercam /i, ""), root: join(root, entry.name), hasExecutable: existsSync(join(root, entry.name, "Mastercam.exe")), hasChooks: existsSync(join(root, entry.name, "chooks")) }))
-    .filter(item => item.hasExecutable && item.hasChooks);
+  return { ok: Object.values(checks).every(check => check.ok), tool: "mastercam_doctor", data: { checks, backend, installations, compatibility: compatibilityReport(installations), guidance: "Run the installer as administrator, restart Mastercam, and invoke the Mastercam MCP NET-Hook entry before testing the live pipe." } };
 }
 
 function probePipe(pipe: string) {

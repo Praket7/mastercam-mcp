@@ -5,6 +5,7 @@ import { allowed, READ_TOOLS, WRITE_TOOLS, ADVANCED_TOOLS, HIGH_RISK_TOOLS } fro
 import type { Backend } from "./backend.js";
 import { doctor } from "./diagnostics.js";
 import { VERSION } from "./version.js";
+import { compatibilityReport } from "./compatibility.js";
 
 const common: z.ZodRawShape = {
   operationId: z.unknown().optional(), operationIds: z.array(z.unknown()).optional(), feed: z.number().optional(), speed: z.number().optional(),
@@ -33,6 +34,7 @@ export function createMcpServer(backend: Backend, profile: string, hardReadOnly:
         if (name === "mastercam_doctor") return completed(extra, name, await doctor(process.env.MASTERCAM_MCP_PIPE ?? "\\\\.\\pipe\\mastercam-mcp-default", process.env.MASTERCAM_MCP_BACKEND ?? "pipe"));
         if (name === "mastercam_help") return completed(extra, name, { ok: true, tool: name, data: descriptions });
         if (name === "list_tool_categories") return completed(extra, name, { ok: true, tool: name, data: { read: READ_TOOLS, write: WRITE_TOOLS, advanced: ADVANCED_TOOLS, highRisk: HIGH_RISK_TOOLS } });
+        if (name === "get_compatibility_matrix") return completed(extra, name, { ok: true, tool: name, data: compatibilityReport() });
         if (name === "mastercam_plan") return completed(extra, name, { ok: true, tool: name, data: { steps: ["inspect target", "preview requested change", "request confirmation", "apply change", "verify result"], safeDefault: "read only" } });
         const result = await backend.call({ id: randomUUID(), tool: name, arguments: args ?? {} });
         await progress(extra, name, 3, 3, "completed");
@@ -52,6 +54,7 @@ const descriptions: Record<string, string> = {
   list_tool_categories: "List tools by read, write, advanced, and high risk category",
   mastercam_plan: "Create a safe inspect, preview, confirm, apply, and verify plan",
   discover_capabilities: "Show the available capabilities and the next safe action",
+  get_compatibility_matrix: "Show supported Mastercam releases and verification status",
   find_operations: "Search operations by name, type, tool, or machine group",
   explain_operation: "Explain an operation in plain language with its inputs and risks",
   get_operation_risks: "Report verification scope and risks for an operation",
@@ -76,6 +79,7 @@ const schemas: Record<string, z.ZodTypeAny> = {
   rollback_change: z.object({ operationId: z.union([z.string(), z.number()]).optional(), beforeFeed: z.number().finite().positive(), confirmed: z.boolean().optional() })
   , find_operations: z.object({ query: z.string().optional(), category: z.string().optional() })
   , discover_capabilities: z.object({ category: z.string().optional() })
+  , get_compatibility_matrix: z.object({})
   , explain_operation: z.object({ operationId: z.union([z.string(), z.number()]).optional() })
   , get_operation_risks: z.object({ operationId: z.union([z.string(), z.number()]).optional() })
   , verify_change: z.object({ operationId: z.union([z.string(), z.number()]).optional(), feed: z.number().finite().positive().optional(), expectedFeed: z.number().finite().positive().optional() })
