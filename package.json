@@ -1,9 +1,15 @@
 {
   "name": "mastercam-mcp",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "A secure local MCP bridge for a live Mastercam session",
+  "repository": { "type": "git", "url": "https://github.com/Praket7/mastercam-mcp.git" },
+  "homepage": "https://github.com/Praket7/mastercam-mcp#readme",
+  "bugs": { "url": "https://github.com/Praket7/mastercam-mcp/issues" },
   "type": "module",
   "packageManager": "pnpm@11.19.0",
+  "bin": { "mastercam-mcp": "dist/cli.js" },
+  "files": ["dist", "native/MastercamMcp.Addin/EntryPoint.cs", "native/MastercamMcp.Addin/Runtime.cs", "native/MastercamMcp.Addin/MastercamMcp.Addin.csproj", "native/MastercamMcp.Addin/MastercamMcp.Addin.ft", "native/MastercamMcp.ApiCatalog/Program.cs", "native/MastercamMcp.ApiCatalog/MastercamMcp.ApiCatalog.csproj", "docs", "install.ps1", "README.md", "LICENSE", "SECURITY.md"],
+  "publishConfig": { "access": "public" },
   "engines": { "node": ">=22" },
   "scripts": {
     "build": "tsc -p tsconfig.json",
@@ -11,7 +17,8 @@
     "start": "node dist/server.js",
     "start:http": "node dist/http.js",
     "mock": "node dist/mock-backend.js",
-    "catalog": "node dist/catalog.js"
+    "catalog": "node dist/catalog.js",
+    "prepack": "pnpm build"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.30.0",

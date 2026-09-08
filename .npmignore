@@ -1,0 +1,10 @@
+node_modules/
+dist/**/*.map
+native/MastercamMcp.Addin/bin
+native/MastercamMcp.Addin/obj
+native/MastercamMcp.ApiCatalog/bin
+native/MastercamMcp.ApiCatalog/obj
+test/
+work/
+tsconfig.json
+pnpm-lock.yaml

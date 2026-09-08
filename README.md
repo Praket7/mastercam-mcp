@@ -16,7 +16,11 @@ The default profile is read only. Every write accepts dryRun and returns a befor
 
 ## Quick start
 
-Install Node.js 22 or newer. Run npm install and npm run build. Run npm test for the mock contract tests. Start the mock backend with npm run mock, then set MASTERCAM_MCP_BACKEND to mock before starting the server with npm start.
+For a published release install Node.js 22 or newer, then use `npx -y mastercam-mcp@latest serve` as the MCP server command in Codex or Claude. No repository checkout is needed.
+
+On Windows, install the Mastercam add in with `npx -y mastercam-mcp@latest install -ConfigureClients`. The installer finds Mastercam automatically, requests one normal Windows administrator approval, copies the add in into `chooks`, and adds safe read only entries to Codex and Claude Desktop when those config files exist.
+
+For source development run npm install, npm run build, npm test, and npm run mock. Set MASTERCAM_MCP_BACKEND to mock before starting the server with npm start.
 
 For a real session follow docs/INSTALLATION.md and provide the local Mastercam reference path through the installer. Never copy proprietary assemblies into this repository.
 
