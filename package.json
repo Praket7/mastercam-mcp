@@ -1,23 +1,58 @@
 {
   "name": "mastercam-mcp",
-  "version": "0.1.6",
+  "version": "0.2.0",
   "description": "A secure local MCP bridge for a live Mastercam session",
-  "repository": { "type": "git", "url": "https://github.com/Praket7/mastercam-mcp.git" },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Praket7/mastercam-mcp.git"
+  },
   "homepage": "https://github.com/Praket7/mastercam-mcp#readme",
-  "bugs": { "url": "https://github.com/Praket7/mastercam-mcp/issues" },
+  "bugs": {
+    "url": "https://github.com/Praket7/mastercam-mcp/issues"
+  },
   "type": "module",
   "packageManager": "pnpm@11.19.0",
-  "bin": { "mastercam-mcp": "dist/cli.js" },
-  "files": ["dist", "native/MastercamMcp.Addin/EntryPoint.cs", "native/MastercamMcp.Addin/Runtime.cs", "native/MastercamMcp.Addin/MastercamMcp.Addin.csproj", "native/MastercamMcp.Addin/MastercamMcp.Addin.ft", "native/MastercamMcp.ApiCatalog/Program.cs", "native/MastercamMcp.ApiCatalog/MastercamMcp.ApiCatalog.csproj", "docs", "install.ps1", "README.md", "LICENSE", "SECURITY.md"],
-  "publishConfig": { "access": "public" },
-  "engines": { "node": ">=22" },
+  "bin": {
+    "mastercam-mcp": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "native/MastercamMcp.Protocol/Framing.cs",
+    "native/MastercamMcp.Protocol/MastercamMcp.Protocol.csproj",
+    "native/MastercamMcp.Core/Router.cs",
+    "native/MastercamMcp.Core/CapabilityRegistry.cs",
+    "native/MastercamMcp.Core/MastercamMcp.Core.csproj",
+    "native/MastercamMcp.Adapter.Abstractions/IMastercamAdapter.cs",
+    "native/MastercamMcp.Adapter.Abstractions/Adapter.Abstractions.csproj",
+    "native/MastercamMcp.Addin.Legacy/EntryPoint.cs",
+    "native/MastercamMcp.Addin.Legacy/EnvironmentAdapter.cs",
+    "native/MastercamMcp.Addin.Legacy/MastercamMcp.Addin.ft",
+    "native/MastercamMcp.Addin.Legacy/MastercamMcp.Addin.Legacy.csproj",
+    "native/MastercamMcp.ApiCatalog/Program.cs",
+    "native/MastercamMcp.ApiCatalog/MastercamMcp.ApiCatalog.csproj",
+    "docs",
+    "install.ps1",
+    "README.md",
+    "LICENSE",
+    "SECURITY.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "node --test --import tsx test/**/*.test.ts",
+    "test": "node --test --import tsx test/*.test.ts test/integration/*.test.ts",
+    "lint": "eslint src test",
+    "docs:capabilities": "tsx scripts/generate-capabilities.ts",
     "start": "node dist/server.js",
     "start:http": "node dist/http.js",
     "mock": "node dist/mock-backend.js",
     "catalog": "node dist/catalog.js",
+    "smoke": "node work/smoke.mjs",
+    "smoke:http": "node work/http-smoke.mjs",
     "prepack": "pnpm build"
   },
   "dependencies": {
@@ -25,9 +60,12 @@
     "zod": "3.25.76"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.5",
     "@types/node": "^22.15.0",
+    "eslint": "^9.39.5",
     "tsx": "^4.19.4",
-    "typescript": "^5.8.3"
+    "typescript": "^5.8.3",
+    "typescript-eslint": "^8.70.0"
   },
   "license": "Apache-2.0"
 }

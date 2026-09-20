@@ -2,6 +2,11 @@
   "compilerOptions": {
     "target": "ES2022", "module": "NodeNext", "moduleResolution": "NodeNext",
     "outDir": "dist", "rootDir": "src", "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noFallthroughCasesInSwitch": true,
+    "forceConsistentCasingInFileNames": true,
+    "noImplicitOverride": true,
+    "exactOptionalPropertyTypes": false,
     "esModuleInterop": true, "skipLibCheck": true
   },
   "include": ["src/**/*.ts"]

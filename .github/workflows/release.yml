@@ -6,7 +6,21 @@ on:
       - v*
 
 jobs:
+  # The npm release must not publish when the Windows/native path is broken
+  # (mission point 10): the native gate runs the protocol test suite before
+  # publish is even considered.
+  native-gate:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - run: dotnet build native/MastercamMcp.Protocol.Tests/MastercamMcp.Protocol.Tests.csproj -c Release
+      - run: dotnet test native/MastercamMcp.Protocol.Tests/MastercamMcp.Protocol.Tests.csproj -c Release --no-build
+
   verify-and-publish:
+    needs: native-gate
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -30,7 +44,9 @@ jobs:
           archive=$(pnpm pack --pack-destination . | tail -n 1)
           tar -tzf "$archive" | grep -q 'package/dist/cli.js'
           tar -tzf "$archive" | grep -q 'package/install.ps1'
-          tar -tzf "$archive" | grep -q 'package/native/MastercamMcp.Addin/MastercamMcp.Addin.ft'
+          tar -tzf "$archive" | grep -q 'package/native/MastercamMcp.Addin.Legacy/MastercamMcp.Addin.ft'
+          tar -tzf "$archive" | grep -q 'package/native/MastercamMcp.Addin.Legacy/EntryPoint.cs'
+          tar -tzf "$archive" | grep -q 'package/native/MastercamMcp.Protocol/Framing.cs'
           if tar -tzf "$archive" | grep -Eiq 'package/(native/.*/(bin|obj)|node_modules)/'; then exit 1; fi
       - name: Publish package
         env:

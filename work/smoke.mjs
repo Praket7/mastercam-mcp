@@ -1,19 +1,60 @@
-import { spawn } from 'node:child_process';
-const node = process.execPath;
-const env = { ...process.env, MASTERCAM_MCP_BACKEND: 'mock', MASTERCAM_MCP_HARD_READ_ONLY: '0', MASTERCAM_MCP_PROFILE: 'core' };
-const child = spawn(node, ['node_modules/tsx/dist/cli.mjs', 'src/server.ts'], { env, stdio: ['pipe', 'pipe', 'pipe'] });
-let buffer = '';
-const pending = new Map();
-child.stdout.setEncoding('utf8');
-child.stdout.on('data', chunk => { buffer += chunk; while (buffer.includes('\n')) { const i = buffer.indexOf('\n'); const line = buffer.slice(0, i); buffer = buffer.slice(i + 1); if (!line) continue; const message = JSON.parse(line); if (message.id) pending.get(message.id)?.(message); } });
-function call(id, method, params) { return new Promise(resolve => { pending.set(id, resolve); child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n'); }); }
-const init = await call(1, 'initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'smoke', version: '1' } });
-child.stdin.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized', params: {} }) + '\n');
-const tools = await call(2, 'tools/list', {});
-const status = await call(3, 'tools/call', { name: 'mastercam_status', arguments: {} });
-const dry = await call(4, 'tools/call', { name: 'set_feed_speed', arguments: { operationId: 4, feed: 42, dryRun: true } });
-const apply = await call(5, 'tools/call', { name: 'set_feed_speed', arguments: { operationId: 4, feed: 42, dryRun: false, confirmed: true } });
-const reread = await call(6, 'tools/call', { name: 'get_operation', arguments: { operationId: 4 } });
-const restore = await call(7, 'tools/call', { name: 'set_feed_speed', arguments: { operationId: 4, feed: 35, dryRun: false, confirmed: true } });
-console.log(JSON.stringify({ initialized: Boolean(init.result), toolCount: tools.result.tools.length, hasStatus: tools.result.tools.some(t => t.name === 'mastercam_status'), status, dry, apply, reread, restore }, null, 2));
-child.kill();
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+
+const timeout = (ms, label) => new Promise((_, reject) => {
+  const timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+  timer.unref?.();
+});
+
+const client = new Client({ name: 'smoke', version: '1.0.0' });
+const sdkTransport = new StdioClientTransport({
+  command: process.execPath,
+  args: ['node_modules/tsx/dist/cli.mjs', 'src/server.ts'],
+  env: { ...process.env, MASTERCAM_MCP_BACKEND: 'mock', MASTERCAM_MCP_AUDIT: '0', MASTERCAM_MCP_PROFILE: 'all', MASTERCAM_MCP_HARD_READ_ONLY: '0' }
+});
+await Promise.race([client.connect(sdkTransport), timeout(15000, 'connect')]);
+
+const result = { initialized: true };
+try {
+  const tools = await Promise.race([client.listTools(), timeout(10000, 'tools/list')]);
+  result.toolCount = tools.tools.length;
+  result.hasStatus = tools.tools.some(t => t.name === 'mastercam_status');
+  result.hasPreview = tools.tools.some(t => t.name === 'preview_operation_parameters');
+
+  const status = await Promise.race([client.callTool({ name: 'mastercam_status', arguments: {} }), timeout(10000, 'status')]);
+  result.status = status.structuredContent;
+
+  const preview = await Promise.race([client.callTool({
+    name: 'preview_operation_parameters',
+    arguments: { operationId: 4, changes: { feedRate: { value: 42, unit: 'mm/min' } } }
+  }), timeout(10000, 'preview')]);
+  const previewData = preview.structuredContent?.data;
+  result.preview = { ok: previewData?.ok !== false, hasToken: Boolean(previewData?.approvalToken) };
+
+  const apply = await Promise.race([client.callTool({
+    name: 'apply_operation_parameter_preview',
+    arguments: { approvalToken: previewData.approvalToken }
+  }), timeout(10000, 'apply')]);
+  const applyData = apply.structuredContent?.data;
+  result.apply = { applied: applyData?.applied === true, hasTransaction: Boolean(applyData?.transactionId) };
+
+  const verify = await Promise.race([client.callTool({
+    name: 'verify_change',
+    arguments: { operationId: 4, expectedFeed: 42 }
+  }), timeout(10000, 'verify')]);
+  result.verify = { pass: verify.structuredContent?.data?.pass === true };
+
+  const rollback = await Promise.race([client.callTool({
+    name: 'rollback_change',
+    arguments: { transactionId: applyData.rollback.transactionId }
+  }), timeout(10000, 'rollback')]);
+  const rollbackData = rollback.structuredContent?.data;
+  result.rollback = { restored: rollbackData?.restored?.feedRate?.value === 35 };
+
+  console.log(JSON.stringify({ ok: true, ...result }, null, 2));
+} catch (error) {
+  console.log(JSON.stringify({ ok: false, error: String(error), stderr: stderr.slice(-400) }, null, 2));
+  process.exitCode = 1;
+} finally {
+  await client.close().catch(() => undefined);
+}
