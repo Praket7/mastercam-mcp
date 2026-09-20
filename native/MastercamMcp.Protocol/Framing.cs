@@ -130,7 +130,7 @@ namespace MastercamMcp.Protocol
                 }
                 if (request == null)
                     return Invalid("frame parsed to null");
-                if (request.ProtocolVersion < MinSupportedProtocolVersion)
+                if (request.ProtocolVersion < BridgeRequest.MinSupportedProtocolVersion)
                     return Invalid("unsupported protocol version " + request.ProtocolVersion);
                 if (string.IsNullOrEmpty(request.RequestId))
                     return Invalid("missing requestId");
@@ -149,7 +149,7 @@ namespace MastercamMcp.Protocol
         {
             return new BridgeResponse
             {
-                ProtocolVersion = CurrentProtocolVersion,
+                ProtocolVersion = BridgeRequest.CurrentProtocolVersion,
                 RequestId = requestId,
                 Ok = false,
                 Tool = tool,

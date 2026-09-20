@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import net from "node:net";
-import { access, constants } from "node:fs/promises";
+import { access, constants, mkdir } from "node:fs/promises";
 import { detectInstallations, compatibilityReport } from "./compatibility.js";
 import { VERSION } from "./version.js";
 
@@ -39,6 +39,9 @@ async function findDotnet(): Promise<string | undefined> {
 async function auditDirectoryWritable(): Promise<boolean> {
   const path = process.env.MASTERCAM_MCP_AUDIT_PATH ?? `${process.env.LOCALAPPDATA ?? process.env.XDG_DATA_HOME ?? process.env.TMPDIR ?? "."}/mastercam-mcp`;
   try {
+    // The audit log creates the directory on demand; the doctor must not report
+    // failure just because nothing has been audited yet on a fresh machine.
+    await mkdir(path, { recursive: true });
     await access(path, constants.W_OK);
     return true;
   } catch {

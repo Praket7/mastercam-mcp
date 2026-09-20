@@ -108,6 +108,6 @@ test("capability registry never claims live verification (P0-01 contract)", asyn
 test("generated CAPABILITIES.md matches the registry", async () => {
   const { renderCapabilitiesDoc } = await import("../src/capabilities.js");
   const { readFile } = await import("node:fs/promises");
-  const checkedIn = await readFile(new URL("../docs/CAPABILITIES.md", import.meta.url), "utf8");
+  const checkedIn = (await readFile(new URL("../docs/CAPABILITIES.md", import.meta.url), "utf8")).replaceAll("\r\n", "\n");
   assert.equal(checkedIn, renderCapabilitiesDoc(), "docs/CAPABILITIES.md is stale; run pnpm run docs:capabilities");
 });
