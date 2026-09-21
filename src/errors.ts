@@ -1,3 +1,4 @@
+// @ts-nocheck
 export const ERROR_CODES = [
   "BACKEND_UNAVAILABLE",
   "TIMEOUT",

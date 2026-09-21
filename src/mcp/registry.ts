@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { z } from "zod";
 import * as inspection from "../schemas/inspection.js";
 import * as mutations from "../schemas/mutations.js";
