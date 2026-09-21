@@ -95,10 +95,7 @@ namespace MastercamMcp.Addin
                     var payload = pending.GetRange(8, (int)len).ToArray();
                     pending.RemoveRange(0, 8 + (int)len);
                     var json = Encoding.UTF8.GetString(payload);
-                    BridgeRequest? req = null;
-                    try { req = JsonSerializer.Deserialize<BridgeRequest>(json); } catch { continue; }
-                    if (req == null) continue;
-                    var outcome = router.Handle(req);
+                    var outcome = router.Handle(json);
                     if (outcome.IsCancel) continue;
                     if (outcome.ImmediateResponse != null)
                     {

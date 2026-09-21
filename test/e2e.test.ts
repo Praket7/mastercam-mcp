@@ -1,3 +1,4 @@
+import * as fs from "node:fs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import net from "node:net";
@@ -51,8 +52,8 @@ function createMockV2Server(socketPath: string, handler: (req: any) => any) {
 
 test("e2e: LiveBackend -> Bridge-v2 mock native", async () => {
   const socketPath = join(tmpdir(), `e2e-mcp-${process.pid}-${Date.now()}.sock`);
-  try { require("node:fs").unlinkSync(socketPath); } catch {}
-  const server = createMockV2Server(socketPath, (req) => {
+  try { fs.unlinkSync(socketPath); } catch {}
+  const server = createMockV2Server(socketPath, (_req) => {
     if (req.tool === "mastercam_status") return { ok: true, tool: req.tool, data: { connected: true, backend: "mock-v2" } };
     if (req.tool === "get_active_part") return { ok: true, tool: req.tool, data: { name: "e2e-part", path: "e2e://part", units: "mm", modified: false, revision: "rev-e2e", fingerprint: "abc" } };
     if (req.tool === "preview_operation_parameters") {
@@ -77,13 +78,13 @@ test("e2e: LiveBackend -> Bridge-v2 mock native", async () => {
 
   await backend.close();
   await new Promise<void>(res => server.close(() => res()));
-  try { require("node:fs").unlinkSync(socketPath); } catch {}
+  try { fs.unlinkSync(socketPath); } catch {}
 });
 
 test("e2e: BridgeClient cancellation", async () => {
   const socketPath = join(tmpdir(), `e2e-cancel-${process.pid}-${Date.now()}.sock`);
-  try { require("node:fs").unlinkSync(socketPath); } catch {}
-  const server = createMockV2Server(socketPath, (req) => {
+  try { fs.unlinkSync(socketPath); } catch {}
+  const server = createMockV2Server(socketPath, (_req) => {
     // never respond to test cancellation
     return new Promise(() => {});
   });
@@ -97,5 +98,5 @@ test("e2e: BridgeClient cancellation", async () => {
   );
   await client.close();
   await new Promise<void>(res => server.close(() => res()));
-  try { require("node:fs").unlinkSync(socketPath); } catch {}
+  try { fs.unlinkSync(socketPath); } catch {}
 });

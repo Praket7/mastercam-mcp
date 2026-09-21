@@ -64,6 +64,25 @@ namespace MastercamMcp.Protocol
 
         [JsonPropertyName("documentRevision")]
         public string? DocumentRevision { get; set; }
+
+        // Legacy/router-compatible aliases (Router.cs expects these)
+        [JsonPropertyName("ok")]
+        public bool Ok { get; set; }
+
+        [JsonPropertyName("tool")]
+        public string? Tool { get; set; }
+
+        [JsonPropertyName("data")]
+        public object? Data { get; set; }
+
+        [JsonPropertyName("receipt")]
+        public object? Receipt { get; set; }
+
+        [JsonPropertyName("live")]
+        public bool Live { get; set; }
+
+        [JsonPropertyName("durationMs")]
+        public double DurationMs { get; set; }
     }
 
     public sealed class BridgeEvent

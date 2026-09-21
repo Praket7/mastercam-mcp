@@ -469,7 +469,7 @@ export class MockBackend implements Backend {
 
   private capabilities() {
     const readTools = ["mastercam_status", "mastercam_capabilities", "get_active_part", "list_operations", "get_operation", "find_operations", "explain_operation", "get_operation_risks", "get_operation_parameters", "get_stock", "get_wcs", "list_tools", "get_machine_context", "get_programming_context", "get_dirty_toolpaths"];
-    const mutationTools = ["preview_operation_parameters", "apply_operation_parameter_preview", "rollback_change", "set_feed_speed", "regenerate_toolpath"];
+    const mutationTools = ["preview_operation_parameters", "apply_operation_parameter_preview", "rollback_change", "regenerate_toolpath"];
     return {
       profile: "mock",
       live: false,

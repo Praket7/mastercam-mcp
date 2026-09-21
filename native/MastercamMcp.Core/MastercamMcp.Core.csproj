@@ -8,6 +8,6 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\MastercamMcp.Protocol\MastercamMcp.Protocol.csproj" />
-    <ProjectReference Include="..\MastercamMcp.Adapter.Abstractions\Adapter.Abstractions.csproj" />
+    <ProjectReference Include="..\MastercamMcp.Adapter.Abstractions\MastercamMcp.Adapter.Abstractions.csproj" />
   </ItemGroup>
 </Project>

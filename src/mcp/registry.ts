@@ -1,7 +1,7 @@
 import { z } from "zod";
 import * as inspection from "../schemas/inspection.js";
 import * as mutations from "../schemas/mutations.js";
-import { emptySchema, OperationIdSchema } from "../schemas/common.js";
+import { emptySchema } from "../schemas/common.js";
 import { categoryOf } from "../contracts.js";
 
 export interface ToolAnnotations {

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { encodeFrame, decodeFrame, PROTOCOL_VERSION, MAX_FRAME_SIZE } from "../src/transport/protocol.js";
+import { encodeFrame, decodeFrame, MAX_FRAME_SIZE } from "../src/transport/protocol.js";
 import { CircuitBreaker, CircuitState } from "../src/transport/reconnect.js";
 
 test("encodeFrame creates valid frame with length prefix", () => {

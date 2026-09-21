@@ -98,7 +98,7 @@ namespace MastercamMcp.Core
                     "UNSUPPORTED_CAPABILITY",
                     "This live Mastercam tool has no verified mapping on the installed release"));
             }
-            var command = new Command(request, this.registry.IsRead(request.Tool));
+            var command = new Command(request, this.registry.IsRead(request.Tool), this);
             this.inFlight[request.RequestId] = command;
             this.queue.Add(command);
             return new HandleOutcome { Pending = AwaitCompletion(command) };
