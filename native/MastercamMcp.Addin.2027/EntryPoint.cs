@@ -7,12 +7,12 @@ using System.Security.AccessControl;
 using System.Security.Principal;
 using System.Threading;
 using System.Threading.Tasks;
-// Mastercam 2027 uses .NET 10 runtime. NETHook10_0.dll provides NetHook10App.
-// For API compatibility, this adapter targets net10.0-windows and references NETHook10_0.dll.
-// If Mastercam 2027 SDK renames the base type, update the inheritance below.
+// Mastercam 2027 uses .NET 10 runtime. Until live-verified, we keep NetHook3App
+// and document as IMPLEMENTED/unverified. Update to NetHook10App when SDK confirms.
 using Mastercam.App;
 using Mastercam.App.Types;
 using MastercamMcp.Core;
+using MastercamMcp.Protocol;
 
 namespace MastercamMcp.Addin
 {
@@ -29,7 +29,7 @@ namespace MastercamMcp.Addin
 
     internal static class BridgeHost
     {
-        private const int MaxRequestBytes = 1024 * 1024;
+        private const int MaxFrameBytes = 16 * 1024 * 1024;
         private static int _started;
         private static CancellationTokenSource? _cts;
         private static Task? _listenerTask;
@@ -53,35 +53,71 @@ namespace MastercamMcp.Addin
         private static async Task Listen(string pipeName, CancellationToken ct)
         {
             pipeName = NormalizePipeName(pipeName);
-            var router = new RequestRouter();
+            var router = new RequestRouter(new LegacyAdapter(), "2027");
 
             while (!ct.IsCancellationRequested)
             {
+                NamedPipeServerStream? server = null;
                 try
                 {
-                    using var server = new NamedPipeServerStream(pipeName, PipeDirection.InOut, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous, 4096, 4096, PipeSecurity());
+                    server = new NamedPipeServerStream(pipeName, PipeDirection.InOut, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous, 4096, 4096, PipeSecurity());
                     await server.WaitForConnectionAsync(ct);
-
-                    using var reader = new StreamReader(server, Encoding.UTF8, false, 4096, true);
-                    using var writer = new StreamWriter(server, new UTF8Encoding(false), 4096, true) { AutoFlush = true };
-
-                    var requestLine = await reader.ReadLineAsync();
-                    if (requestLine == null) continue;
-
-                    if (Encoding.UTF8.GetByteCount(requestLine) > MaxRequestBytes)
-                    {
-                        await writer.WriteLineAsync(JsonSerializer.Serialize(new { id = (string?)null, result = new { ok = false, error = new { code = "REQUEST_TOO_LARGE", message = "Request exceeds 1 MiB" } } }));
-                        continue;
-                    }
-
-                    var response = await router.DispatchAsync(requestLine, ct);
-                    await writer.WriteLineAsync(response);
+                    await HandleConnectionAsync(server, router, ct);
                 }
                 catch (OperationCanceledException) { break; }
                 catch (Exception ex)
                 {
                     Log(ex);
-                    try { await Task.Delay(250, ct); } catch { break; }
+                    try { await Task.Delay(500, ct); } catch { break; }
+                }
+                finally
+                {
+                    try { server?.Dispose(); } catch { }
+                }
+            }
+            router.Dispose();
+        }
+
+        private static async Task HandleConnectionAsync(NamedPipeServerStream pipe, RequestRouter router, CancellationToken ct)
+        {
+            var buffer = new byte[8192];
+            var pending = new System.Collections.Generic.List<byte>();
+            while (!ct.IsCancellationRequested && pipe.IsConnected)
+            {
+                int read;
+                try { read = await pipe.ReadAsync(buffer, 0, buffer.Length, ct); } catch { break; }
+                if (read == 0) break;
+                for (int i = 0; i < read; i++) pending.Add(buffer[i]);
+
+                while (pending.Count >= 8)
+                {
+                    var len = BitConverter.ToInt64(pending.ToArray(), 0);
+                    if (len < 0 || len > MaxFrameBytes) { pending.Clear(); break; }
+                    if (pending.Count < 8 + len) break;
+                    var payload = pending.GetRange(8, (int)len).ToArray();
+                    pending.RemoveRange(0, 8 + (int)len);
+                    var json = Encoding.UTF8.GetString(payload);
+                    BridgeRequest? req = null;
+                    try { req = JsonSerializer.Deserialize<BridgeRequest>(json); } catch { continue; }
+                    if (req == null) continue;
+                    var outcome = router.Handle(req);
+                    if (outcome.IsCancel) continue;
+                    if (outcome.ImmediateResponse != null)
+                    {
+                        var respBytes = Encoding.UTF8.GetBytes(outcome.ImmediateResponse);
+                        var frame = FrameCodec.EncodeFrame(respBytes);
+                        await pipe.WriteAsync(frame, 0, frame.Length, ct);
+                        await pipe.FlushAsync(ct);
+                    }
+                    else if (outcome.Pending != null)
+                    {
+                        var resp = await outcome.Pending;
+                        var respJson = JsonSerializer.Serialize(resp);
+                        var respBytes = Encoding.UTF8.GetBytes(respJson);
+                        var frame = FrameCodec.EncodeFrame(respBytes);
+                        await pipe.WriteAsync(frame, 0, frame.Length, ct);
+                        await pipe.FlushAsync(ct);
+                    }
                 }
             }
         }

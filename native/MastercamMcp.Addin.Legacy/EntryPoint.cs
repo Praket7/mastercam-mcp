@@ -2,15 +2,17 @@ using System;
 using System.IO;
 using System.IO.Pipes;
 using System.Text;
+using System.Text.Json;
 using System.Security.AccessControl;
 using System.Security.Principal;
 using System.Threading;
 using System.Threading.Tasks;
-using System.Collections.Generic;
 using Mastercam.App;
 using Mastercam.App.Types;
+using MastercamMcp.Core;
+using MastercamMcp.Protocol;
 
-namespace MastercamMcp.Addin.Legacy
+namespace MastercamMcp.Addin
 {
     public sealed class EntryPoint : NetHook3App
     {
@@ -23,158 +25,99 @@ namespace MastercamMcp.Addin.Legacy
         private static string PipeName() => Environment.GetEnvironmentVariable("MASTERCAM_MCP_PIPE") ?? "mastercam-mcp-default";
     }
 
-    /// <summary>
-    /// Owns the pipe listener lifecycle: a cancellation token stops the loop,
-    /// requests are size-bounded before allocation (audit IPC-01), and every
-    /// parsed call is routed through Core.RequestRouter, never straight into
-    /// Mastercam APIs (SAFE-02). One connection is served at a time; within a
-    /// connection, requests run concurrently at the transport layer while the
-    /// router serializes Mastercam execution (PERF-02).
-    /// </summary>
     internal static class BridgeHost
     {
-        private static int started;
-        private static CancellationTokenSource shutdown;
+        private const int MaxFrameBytes = 16 * 1024 * 1024;
+        private static int _started;
+        private static CancellationTokenSource? _cts;
+        private static Task? _listenerTask;
 
         public static void Start(string pipeName)
         {
-            if (Interlocked.Exchange(ref started, 1) != 0) return;
-            shutdown = new CancellationTokenSource();
-            RouterHost.Register(new MastercamMcp.Core.RequestRouter(
-                new EnvironmentAdapter(), EnvironmentAdapter.DetectMastercamVersion()));
-            var thread = new Thread(() => Listen(pipeName, shutdown.Token))
-            {
-                IsBackground = true,
-                Name = "Mastercam MCP named pipe"
-            };
-            thread.Start();
+            if (Interlocked.Exchange(ref _started, 1) != 0) return;
+            _cts = new CancellationTokenSource();
+            _listenerTask = Task.Run(() => Listen(pipeName, _cts.Token));
         }
 
-        /// <summary>Stops the listener; callable from a future NET-Hook unload hook (REL-05).</summary>
         public static void Stop()
         {
-            try { shutdown?.Cancel(); } catch { /* already stopped */ }
+            _cts?.Cancel();
+            try { _listenerTask?.Wait(TimeSpan.FromSeconds(5)); } catch { }
+            _cts?.Dispose();
+            _cts = null;
+            Interlocked.Exchange(ref _started, 0);
         }
 
-        private static void Listen(string pipeName, CancellationToken token)
+        private static async Task Listen(string pipeName, CancellationToken ct)
         {
             pipeName = NormalizePipeName(pipeName);
-            while (!token.IsCancellationRequested)
+            var router = new RequestRouter(new LegacyAdapter(), "2026");
+
+            while (!ct.IsCancellationRequested)
             {
-                NamedPipeServerStream server = null;
+                NamedPipeServerStream? server = null;
                 try
                 {
-                    server = new NamedPipeServerStream(
-                        pipeName, PipeDirection.InOut, 1, PipeTransmissionMode.Byte,
-                        PipeOptions.None, 4096, 4096, PipeSecurity());
-                    var wait = server.WaitForConnectionAsync(token);
-                    wait.Wait(token);
-                    ServeConnection(server, RouterHost.Router, token);
+                    server = new NamedPipeServerStream(pipeName, PipeDirection.InOut, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous, 4096, 4096, PipeSecurity());
+                    await server.WaitForConnectionAsync(ct);
+                    await HandleConnectionAsync(server, router, ct);
                 }
-                catch (OperationCanceledException)
-                {
-                    try { server?.Dispose(); } catch { }
-                    return; // clean shutdown (REL-05)
-                }
+                catch (OperationCanceledException) { break; }
                 catch (Exception ex)
                 {
                     Log(ex);
-                    try { server?.Dispose(); } catch { }
-                    if (token.WaitHandle.WaitOne(250)) return;
-                }
-            }
-        }
-
-        /// <summary>
-        /// Serves one persistent connection: frames are read until the client
-        /// closes, accepted requests run to completion and respond in place,
-        /// cancels are applied at safe boundaries, and a dropped client cancels
-        /// its in-flight work (audit IPC-03).
-        /// </summary>
-        private static void ServeConnection(NamedPipeServerStream server, MastercamMcp.Core.RequestRouter router, CancellationToken shutdownToken)
-        {
-            using (var reader = new StreamReader(server, Encoding.UTF8, false, 4096, true))
-            using (var writer = new StreamWriter(server, new UTF8Encoding(false), 4096, true) { AutoFlush = true })
-            {
-                var pending = new List<Task>();
-                try
-                {
-                    while (true)
-                    {
-                        string line;
-                        try { line = ReadBoundedLine(reader); }
-                        catch { break; }
-                        if (line == null) break; // client closed the connection
-                        if (Encoding.UTF8.GetByteCount(line) > MastercamMcp.Protocol.BridgeEnvelope.MaxRequestBytes)
-                        {
-                            Write(writer, MastercamMcp.Protocol.BridgeEnvelope.ErrorEnvelope(null, null, "REQUEST_TOO_LARGE", "Request exceeds 1 MiB"));
-                            continue;
-                        }
-                        if (router == null)
-                        {
-                            Write(writer, MastercamMcp.Protocol.BridgeEnvelope.ErrorEnvelope(null, null, "UNSUPPORTED_CAPABILITY",
-                                "No live adapter is registered in this build; inspection mappings require licensed verification"));
-                            continue;
-                        }
-                        var outcome = router.Handle(line);
-                        if (outcome.IsCancel) continue; // acknowledged silently
-                        if (outcome.ImmediateResponse != null)
-                        {
-                            Write(writer, outcome.ImmediateResponse);
-                            continue;
-                        }
-                        if (outcome.Pending != null)
-                        {
-                            var execution = outcome.Pending;
-                            pending.Add(Task.Run(() =>
-                            {
-                                try
-                                {
-                                    var response = execution.GetAwaiter().GetResult();
-                                    Write(writer, MastercamMcp.Protocol.BridgeEnvelope.SerializeResponse(response));
-                                }
-                                catch { /* connection is closing */ }
-                            }));
-                        }
-                    }
+                    try { await Task.Delay(500, ct); } catch { break; }
                 }
                 finally
                 {
-                    router?.CancelAll(); // dropped client: never leave orphaned work running
-                    try { Task.WaitAll(pending.ToArray(), 2000); } catch { }
+                    try { server?.Dispose(); } catch { }
                 }
             }
+            router.Dispose();
         }
 
-        private static void Write(StreamWriter writer, string line)
+        private static async Task HandleConnectionAsync(NamedPipeServerStream pipe, RequestRouter router, CancellationToken ct)
         {
-            lock (writer) writer.WriteLine(line);
-        }
-
-        /// <summary>Reads one line without unbounded buffering: oversized input is cut off at the limit.</summary>
-        private static string ReadBoundedLine(StreamReader reader)
-        {
-            var builder = new StringBuilder();
-            var buffer = new char[1024];
-            int total = 0;
-            int read;
-            while ((read = reader.Read(buffer, 0, buffer.Length)) > 0)
+            var buffer = new byte[8192];
+            var pending = new System.Collections.Generic.List<byte>();
+            while (!ct.IsCancellationRequested && pipe.IsConnected)
             {
-                for (int index = 0; index < read; index++)
+                int read;
+                try { read = await pipe.ReadAsync(buffer, 0, buffer.Length, ct); } catch { break; }
+                if (read == 0) break;
+                for (int i = 0; i < read; i++) pending.Add(buffer[i]);
+
+                while (pending.Count >= 8)
                 {
-                    if (buffer[index] == '\n')
+                    var len = BitConverter.ToInt64(pending.ToArray(), 0);
+                    if (len < 0 || len > MaxFrameBytes) { pending.Clear(); break; }
+                    if (pending.Count < 8 + len) break;
+                    var payload = pending.GetRange(8, (int)len).ToArray();
+                    pending.RemoveRange(0, 8 + (int)len);
+                    var json = Encoding.UTF8.GetString(payload);
+                    BridgeRequest? req = null;
+                    try { req = JsonSerializer.Deserialize<BridgeRequest>(json); } catch { continue; }
+                    if (req == null) continue;
+                    var outcome = router.Handle(req);
+                    if (outcome.IsCancel) continue;
+                    if (outcome.ImmediateResponse != null)
                     {
-                        return builder.ToString();
+                        var respBytes = Encoding.UTF8.GetBytes(outcome.ImmediateResponse);
+                        var frame = FrameCodec.EncodeFrame(respBytes);
+                        await pipe.WriteAsync(frame, 0, frame.Length, ct);
+                        await pipe.FlushAsync(ct);
                     }
-                    builder.Append(buffer[index]);
-                    total++;
-                    if (total > MastercamMcp.Protocol.BridgeEnvelope.MaxRequestBytes)
+                    else if (outcome.Pending != null)
                     {
-                        return builder.ToString(); // caller rejects with REQUEST_TOO_LARGE
+                        var resp = await outcome.Pending;
+                        var respJson = JsonSerializer.Serialize(resp);
+                        var respBytes = Encoding.UTF8.GetBytes(respJson);
+                        var frame = FrameCodec.EncodeFrame(respBytes);
+                        await pipe.WriteAsync(frame, 0, frame.Length, ct);
+                        await pipe.FlushAsync(ct);
                     }
                 }
             }
-            return builder.Length > 0 ? builder.ToString() : null;
         }
 
         private static void Log(Exception ex)
@@ -200,24 +143,6 @@ namespace MastercamMcp.Addin.Legacy
             var identity = WindowsIdentity.GetCurrent().User;
             if (identity != null) security.AddAccessRule(new PipeAccessRule(identity, PipeAccessRights.FullControl, AccessControlType.Allow));
             return security;
-        }
-    }
-
-    /// <summary>
-    /// Holds the router instance for the running session.
-    /// </summary>
-    internal static class RouterHost
-    {
-        private static MastercamMcp.Core.RequestRouter router;
-
-        public static MastercamMcp.Core.RequestRouter Router
-        {
-            get { return router; }
-        }
-
-        public static void Register(MastercamMcp.Core.RequestRouter instance)
-        {
-            router = instance;
         }
     }
 }
