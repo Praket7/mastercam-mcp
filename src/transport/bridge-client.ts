@@ -67,6 +67,14 @@ export class BridgeClient {
         const pending: Pending = { resolve, reject, timer };
         this.pending.set(requestId, pending);
 
+        const finish = (error: Error, response?: BridgeResponse) => {
+          clearTimeout(timer);
+          if (this.pending.get(requestId) === pending) this.pending.delete(requestId);
+          signal?.removeEventListener("abort", onAbort);
+          if (error && !response) reject(error);
+          else resolve(response!);
+        };
+
         const onAbort = () => {
           if (!pending.cancelSent) {
             pending.cancelSent = true;
@@ -78,14 +86,6 @@ export class BridgeClient {
           if (signal.aborted) { onAbort(); return; }
           signal.addEventListener("abort", onAbort, { once: true });
         }
-
-        const finish = (error: Error, response?: BridgeResponse) => {
-          clearTimeout(timer);
-          if (this.pending.get(requestId) === pending) this.pending.delete(requestId);
-          signal?.removeEventListener("abort", onAbort);
-          if (error && !response) reject(error);
-          else resolve(response!);
-        };
 
         pending.resolve = resolve;
         pending.reject = reject;

@@ -78,7 +78,7 @@ export class ApprovalLedger {
   }
 
   /** Returns the record and marks it used; throws ErrorInfo on any invalid state. */
-  consumePreview(token: string, expected: { operationFingerprint: string }): PreviewRecord {
+  consumePreview(token: string, expected: { operationFingerprint: string; documentRevision: string }): PreviewRecord {
     const record = this.previews.get(token);
     if (!record) throw new Error("APPROVAL_TOKEN_INVALID: unknown or already consumed approval token");
     this.previews.delete(token);
@@ -86,6 +86,9 @@ export class ApprovalLedger {
     if (Date.now() > record.expiresAt) throw new Error("APPROVAL_TOKEN_EXPIRED: request a fresh preview");
     if (record.operationFingerprint !== expected.operationFingerprint) {
       throw new Error(`STALE_PREVIEW: operation changed since preview (${record.operationFingerprint} != ${expected.operationFingerprint})`);
+    }
+    if (record.documentRevision !== expected.documentRevision) {
+      throw new Error(`STALE_PREVIEW: document changed since preview (${record.documentRevision} != ${expected.documentRevision})`);
     }
     record.used = true;
     return record;
@@ -119,22 +122,27 @@ export class ApprovalLedger {
     return record;
   }
 
-  consumeRollback(transactionId: string): RollbackRecord {
-    // Accept either the rollback receipt id or the original transaction id.
+  peekRollback(transactionId: string): RollbackRecord {
     const record = this.rollbacks.get(transactionId) ?? [...this.rollbacks.values()].find(r => r.rollbackOf === transactionId && !r.used);
     if (!record) throw new Error("APPROVAL_TOKEN_INVALID: unknown or already consumed rollback transaction");
     if (record.used) throw new Error("APPROVAL_TOKEN_INVALID: rollback was already applied");
     if (Date.now() > record.expiresAt) throw new Error("APPROVAL_TOKEN_EXPIRED: request a new rollback receipt");
+    return record;
+  }
+
+  consumeRollback(transactionId: string): RollbackRecord {
+    const record = this.peekRollback(transactionId);
     record.used = true;
     return record;
   }
 
-  /** Idempotency: repeat calls with the same key return the original outcome. */
+  /** Idempotency: repeat calls with the same key return the original outcome, bound to canonical action. */
   idempotencyKeySeen(key: string): ApplyRecord | undefined {
     return this.idempotency.get(key);
   }
 
-  rememberIdempotency(key: string, record: ApplyRecord): void {
+  rememberIdempotency(key: string, record: ApplyRecord, canonical?: string): void {
+    if (canonical) (record as unknown as { _canonical?: string })._canonical = canonical;
     if (this.idempotency.size >= MAX_LEDGER) {
       const first = this.idempotency.keys().next().value;
       if (first) this.idempotency.delete(first);

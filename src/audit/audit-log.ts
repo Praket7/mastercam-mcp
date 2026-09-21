@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { appendFile, mkdir, stat, rename, readFile } from "node:fs/promises";
+import * as fsSync from "node:fs";
 import { dirname, join } from "node:path";
 
 export interface AuditEntry {
@@ -23,7 +24,7 @@ interface ChainState {
 
 const GENESIS_HASH = "sha256:genesis";
 const MAX_REDACT_DEPTH = 6;
-const SENSITIVE_KEYS = /^(password|token|secret|authorization|apikey|api_key|credential)/i;
+const SENSITIVE_KEYS = /(password|secret|authorization|apikey|api_key|credential|approvalToken|rollbackToken|accessToken|refreshToken|idempotencyKey)/i;
 
 export function sha256Of(value: unknown): string {
   return `sha256:${createHash("sha256").update(stableStringify(value)).digest("hex")}`;
@@ -71,6 +72,26 @@ export class AuditLog {
       ?? join(process.env.LOCALAPPDATA ?? process.env.XDG_DATA_HOME ?? process.env.TMPDIR ?? ".", "mastercam-mcp", "audit.jsonl");
     this.maxFileBytes = options.maxFileBytes ?? 10 * 1024 * 1024;
     this.maxRotatedFiles = options.maxRotatedFiles ?? 5;
+    // Recover chain tail from existing log so restart does not break hash chain
+    if (this.enabled && this.path) {
+      try {
+        // Use sync read during construction to avoid race with first record()
+        if (fsSync.existsSync(this.path)) {
+          const text = fsSync.readFileSync(this.path, "utf8");
+          let lastHash = GENESIS_HASH;
+          let lastSeq = 0;
+          for (const line of text.split("\n")) {
+            if (!line.trim()) continue;
+            try {
+              const parsed = JSON.parse(line) as { sequence?: number; entryHash?: string };
+              if (typeof parsed.entryHash === "string" && parsed.entryHash) lastHash = parsed.entryHash;
+              if (typeof parsed.sequence === "number" && Number.isFinite(parsed.sequence)) lastSeq = parsed.sequence;
+            } catch { /* ignore corrupt line, keep last good */ }
+          }
+          this.chain = { sequence: lastSeq, previousEntryHash: lastHash };
+        }
+      } catch { /* recovery is best-effort; start from genesis if it fails */ }
+    }
   }
 
   get isEnabled(): boolean { return this.enabled; }

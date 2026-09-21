@@ -45,7 +45,7 @@ export class LiveBackend implements Backend {
     return this.client.breaker;
   }
 
-  async call(request: { id: string; tool: string; arguments?: Record<string, unknown> }): Promise<ToolResult> {
+  async call(request: { id: string; tool: string; arguments?: Record<string, unknown> }, options?: { signal?: AbortSignal }): Promise<ToolResult> {
     const idempotentRead = IDEMPOTENT_READS.has(request.tool);
     const deadlineMs = READ_TOOLS.has(request.tool)
       ? READ_DEADLINES_MS[request.tool] ?? DEFAULT_READ_DEADLINE_MS
@@ -57,7 +57,7 @@ export class LiveBackend implements Backend {
         documentKey: "doc:live",
         run: () => withRetry(
           { idempotent: idempotentRead, maxAttempts: 3 },
-          () => this.client.call(request.tool, request.arguments, deadlineMs)
+          () => this.client.call(request.tool, request.arguments, deadlineMs, options?.signal)
         )
       });
       return this.envelope(request, response);

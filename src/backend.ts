@@ -23,7 +23,7 @@ export interface ToolResult {
 export interface Request { id: string; tool: string; arguments?: Record<string, unknown> }
 
 export interface Backend {
-  call(request: Request): Promise<ToolResult>;
+  call(request: Request, options?: { signal?: AbortSignal }): Promise<ToolResult>;
   close?(): Promise<void>;
 }
 
@@ -320,17 +320,29 @@ export class MockBackend implements Backend {
     const idempotencyKey = typeof args.idempotencyKey === "string" ? args.idempotencyKey : undefined;
     if (idempotencyKey) {
       const seen = this.ledger.idempotencyKeySeen(idempotencyKey);
-      if (seen) return this.ok(request, this.applyReceipt(seen, true));
+      if (seen) {
+        // Bind key to canonical action: tool + operationId + changes hash
+        const probeForIdempotency = this.ledger.peekPreview(token);
+        const canonical = `${request.tool}:${probeForIdempotency.operationId}:${sha256Of(probeForIdempotency.changes)}`;
+        const seenCanonical = (seen as unknown as { _canonical?: string })._canonical;
+        if (seenCanonical && seenCanonical !== canonical) {
+          throw new MastercamErrorImpl("IDEMPOTENCY_CONFLICT", "Idempotency key reused for different action");
+        }
+        return this.ok(request, this.applyReceipt(seen, true));
+      }
     }
-    // Re-derive the live fingerprint: CAS gate. The token alone is not enough.
+    // Re-derive the live fingerprint and document revision: CAS gate. The token alone is not enough.
     const probe = this.ledger.peekPreview(token);
     const op = this.requireExactTarget(probe.operationId);
     const currentFingerprint = this.fingerprint(op);
-    const preview = this.ledger.consumePreview(token, { operationFingerprint: currentFingerprint });
+    const preview = this.ledger.consumePreview(token, { operationFingerprint: currentFingerprint, documentRevision: this.revision });
     const changed = applyQuantity(op, preview.changes);
     this.revision = documentRevision(this.operations);
     const applied = this.ledger.recordApply(preview);
-    if (idempotencyKey) this.ledger.rememberIdempotency(idempotencyKey, applied);
+    if (idempotencyKey) {
+      const canonical = `${request.tool}:${probe.operationId}:${sha256Of(probe.changes)}`;
+      this.ledger.rememberIdempotency(idempotencyKey, applied, canonical);
+    }
     const transactionId = applied.transactionId;
     const rollback = this.ledger.createRollback(transactionId);
     this.audit.record({
@@ -359,7 +371,7 @@ export class MockBackend implements Backend {
   private async rollback(request: Request, args: Record<string, unknown>): Promise<ToolResult> {
     const transactionId = String(args.transactionId ?? "");
     if (!transactionId) throw new MastercamErrorImpl("APPROVAL_TOKEN_INVALID", "transactionId is required");
-    const record = this.ledger.consumeRollback(transactionId);
+    const record = this.ledger.peekRollback(transactionId);
     const op = this.requireExactTarget(record.operationId);
     // CAS: current state must still match what the transaction produced.
     const currentFeed = operationFeed(op);
@@ -371,6 +383,8 @@ export class MockBackend implements Backend {
     if (!matchesAfter) {
       throw new MastercamErrorImpl("STALE_PREVIEW", "Operation state changed after the transaction; rollback refused");
     }
+    // Only consume after CAS passes
+    this.ledger.consumeRollback(transactionId);
     const restored = applyQuantity(op, record.restored);
     this.revision = documentRevision(this.operations);
     this.audit.record({ requestId: request.id, transactionId: record.transactionId, tool: request.tool, target: { operationId: op.id }, policy: { action: "rollback" }, verified: true });

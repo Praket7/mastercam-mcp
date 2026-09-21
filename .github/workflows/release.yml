@@ -90,7 +90,8 @@ jobs:
           npm init -y >/dev/null
           npm install "$GITHUB_WORKSPACE/$archive"
           npx mastercam-mcp --version
-          npx mastercam-mcp doctor || true
+          # doctor should succeed in mock mode (Linux without Mastercam uses mock backend)
+          npx mastercam-mcp doctor
           echo "Fresh install smoke test passed"
       - name: Publish package
         env:

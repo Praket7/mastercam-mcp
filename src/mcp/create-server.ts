@@ -16,10 +16,17 @@ const READ_DEADLINE_MS = 30_000;
 
 function envelope(result: { ok: boolean; tool: string; data?: unknown; error?: unknown; receipt?: unknown; live?: boolean; documentRevision?: string; operationFingerprint?: string }) {
   const parsed = ToolEnvelopeSchema.safeParse(result);
-  const data = parsed.success ? parsed.data : result;
+  if (!parsed.success) {
+    // Fail closed: malformed backend output is not returned, it is reported as an error
+    return {
+      isError: true as const,
+      structuredContent: { ok: false, tool: result.tool, error: { code: "BACKEND_UNAVAILABLE", message: `Malformed tool output: ${parsed.error.message}` } },
+      content: [{ type: "text" as const, text: JSON.stringify({ ok: false, tool: result.tool, error: { code: "BACKEND_UNAVAILABLE", message: `Malformed tool output: ${parsed.error.message}` } }) }]
+    };
+  }
   return {
-    structuredContent: data,
-    content: [{ type: "text" as const, text: JSON.stringify(data) }]
+    structuredContent: parsed.data,
+    content: [{ type: "text" as const, text: JSON.stringify(parsed.data) }]
   };
 }
 
@@ -53,6 +60,7 @@ export function createMcpServer(backend: Backend, profile: Profile = DEFAULT_PRO
         title: definition.title,
         description: definition.description,
         inputSchema: definition.inputSchema,
+        ...(definition.outputSchema ? { outputSchema: definition.outputSchema } : {}),
         annotations: definition.annotations
       },
       async (args: Record<string, unknown>, extra) => {
@@ -64,13 +72,17 @@ export function createMcpServer(backend: Backend, profile: Profile = DEFAULT_PRO
             ...envelope({ ok: false, tool: name, error: mastercamError("PROFILE_DENIED", `Tool ${name} is not enabled by the server profile '${profile}'`) })
           };
         }
-        // Request-scoped deadline: an AbortController fires if the call exceeds
-        // the read deadline or the client cancels, and handlers receive it.
+        // Request-scoped deadline + cancellation: signal is passed end-to-end
         const signal = extra.signal;
+        const abortController = new AbortController();
+        const onExternalAbort = () => abortController.abort();
+        signal?.addEventListener("abort", onExternalAbort, { once: true });
         let timedOut = false;
-        const deadlineTimer = setTimeout(() => { timedOut = true; }, READ_DEADLINE_MS);
+        const deadlineTimer = setTimeout(() => {
+          timedOut = true;
+          abortController.abort();
+        }, READ_DEADLINE_MS);
         deadlineTimer.unref?.();
-        signal?.addEventListener("abort", () => clearTimeout(deadlineTimer), { once: true });
         try {
           let result: { ok: boolean; tool: string; data?: unknown; error?: unknown; receipt?: unknown; live?: boolean; documentRevision?: string; operationFingerprint?: string };
           if (name === "mastercam_doctor") {
@@ -89,17 +101,16 @@ export function createMcpServer(backend: Backend, profile: Profile = DEFAULT_PRO
           } else if (name === "validate_machine_profile") {
             result = { ok: true, tool: name, data: validateMachine((args.operation ?? {}) as Record<string, unknown>, (args.profile ?? {}) as Record<string, unknown>) };
           } else {
-            result = await backend.call({ id: randomUUID(), tool: name, arguments: args ?? {} });
+            result = await backend.call({ id: randomUUID(), tool: name, arguments: args ?? {} }, { signal: abortController.signal });
           }
           if (category === "write") {
             audit?.record({ requestId: extra.requestId ?? randomUUID(), tool: name, target: (args ?? {}) as Record<string, unknown>, policy: { profile, hardReadOnly } });
           }
           return envelope(result);
         } catch (error) {
-          clearTimeout(deadlineTimer);
           const message = error instanceof Error ? error.message : String(error);
           const isTimeout = timedOut || message.startsWith("TIMEOUT");
-          const isAbort = signal?.aborted === true || message.startsWith("CANCELLED");
+          const isAbort = signal?.aborted === true || abortController.signal.aborted || message.startsWith("CANCELLED");
           return {
             isError: true,
             ...envelope({
@@ -110,8 +121,10 @@ export function createMcpServer(backend: Backend, profile: Profile = DEFAULT_PRO
                 : mastercamError(isTimeout ? "TIMEOUT" : "BACKEND_UNAVAILABLE", message)
             })
           };
+        } finally {
+          clearTimeout(deadlineTimer);
+          signal?.removeEventListener("abort", onExternalAbort);
         }
-        clearTimeout(deadlineTimer);
       }
     );
   }
