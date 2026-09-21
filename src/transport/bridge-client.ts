@@ -1,6 +1,6 @@
 import net from "node:net";
 import { randomUUID } from "node:crypto";
-import { FrameReader, encodeFrame } from "./framing.js";
+import { encodeFrame } from "./protocol.js";
 import { BRIDGE_PROTOCOL_VERSION, encodeRequest, encodeCancel, parseFrame } from "./bridge-protocol.js";
 import type { BridgeResponse } from "./bridge-protocol.js";
 import { CircuitBreaker, CircuitBreakerOpenError } from "./circuit-breaker.js";
@@ -28,7 +28,6 @@ export class BridgeClient {
   private socket: net.Socket | undefined;
   private connecting: Promise<net.Socket> | undefined;
   private pending = new Map<string, Pending>();
-  private reader = new FrameReader();
   private readonly options: Required<BridgeClientOptions>;
   readonly breaker: CircuitBreaker;
 
@@ -117,7 +116,7 @@ export class BridgeClient {
     if (socket) await new Promise<void>(resolve => socket.end(() => resolve()));
   }
 
-  private safeWrite(socket: net.Socket, payload: string): boolean {
+  private safeWrite(socket: net.Socket, payload: string | Buffer): boolean {
     if (socket.destroyed) return false;
     try { socket.write(payload); return true; } catch { return false; }
   }
@@ -127,7 +126,6 @@ export class BridgeClient {
     if (this.connecting) return this.connecting;
     this.connecting = new Promise<net.Socket>((resolve, reject) => {
       const socket = net.createConnection(this.options.endpoint);
-      socket.setEncoding("utf8");
       const timer = setTimeout(() => {
         socket.destroy();
         reject(new Error("BACKEND_UNAVAILABLE: bridge connection timed out"));
@@ -146,25 +144,28 @@ export class BridgeClient {
     return this.connecting;
   }
 
+  private buffer = Buffer.alloc(0);
   private attach(socket: net.Socket): void {
     this.socket = socket;
-    this.reader = new FrameReader(this.options.maxResponseBytes);
-    socket.on("data", (chunk: string) => {
-      let frames: string[];
-      try { frames = this.reader.push(chunk); }
-      catch (error) {
-        this.failAllPending(error instanceof Error ? error : new Error(String(error)));
-        socket.destroy();
-        return;
-      }
-      for (const frame of frames) {
+    socket.on("data", (chunk: Buffer) => {
+      this.buffer = Buffer.concat([this.buffer, chunk]);
+      while (this.buffer.length >= 8) {
+        const len = Number(this.buffer.readBigUInt64LE(0));
+        if (len < 0 || len > this.options.maxResponseBytes) {
+          this.failAllPending(new Error(`RESPONSE_TOO_LARGE: frame exceeded ${this.options.maxResponseBytes} bytes`));
+          socket.destroy();
+          return;
+        }
+        if (this.buffer.length < 8 + len) break;
+        const payload = this.buffer.subarray(8, 8 + len);
+        this.buffer = this.buffer.subarray(8 + len);
         let message: ReturnType<typeof parseFrame>;
-        try { message = parseFrame(frame); }
-        catch { continue; } // unparseable junk frame: ignore rather than fail the connection
-        if (message.kind === "event") continue; // events not yet consumed by TS layer
+        try { message = parseFrame(payload.toString("utf8")); }
+        catch { continue; }
+        if (message.kind === "event") continue;
         const response = message.response;
         const pending = this.pending.get(response.requestId);
-        if (!pending) continue; // late response after timeout/cancel
+        if (!pending) continue;
         this.pending.delete(response.requestId);
         clearTimeout(pending.timer);
         if (response.ok) pending.resolve(response);

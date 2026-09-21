@@ -65,23 +65,48 @@ if (-not $MastercamRoot) {
 }
 
 if (-not (Test-Path $MastercamRoot -PathType Container)) { throw "Mastercam root does not exist: $MastercamRoot" }
-$project = Join-Path $PSScriptRoot "native\MastercamMcp.Addin\MastercamMcp.Addin.csproj"
 $env:MASTERCAM_ROOT = (Resolve-Path $MastercamRoot).Path
+
+# Detect Mastercam version from directory name or executable version
+$mastercamVersion = "unknown"
+if ($MastercamRoot -match "Mastercam\s+(\d{4})") { $mastercamVersion = $Matches[1] }
+else {
+  $exe = Join-Path $MastercamRoot "Mastercam.exe"
+  if (Test-Path $exe) {
+    try { $mastercamVersion = (Get-Item $exe).VersionInfo.ProductVersion.Split(".")[0] } catch {}
+  }
+}
+$use2027 = $false
+if ($mastercamVersion -eq "2027" -or $mastercamVersion -eq "27") { $use2027 = $true }
+
+if ($use2027) {
+  $project = Join-Path $PSScriptRoot "native\MastercamMcp.Addin.2027\MastercamMcp.Addin.2027.csproj"
+  $expectedRuntime = "net10.0-windows"
+  Write-Output "Detected Mastercam $mastercamVersion -> using 2027 adapter ($expectedRuntime)"
+} else {
+  $project = Join-Path $PSScriptRoot "native\MastercamMcp.Addin.Legacy\MastercamMcp.Addin.Legacy.csproj"
+  $expectedRuntime = "net48"
+  Write-Output "Detected Mastercam $mastercamVersion -> using Legacy adapter (net48, 2024-2026)"
+}
+if (-not (Test-Path $project)) { throw "Adapter project not found: $project" }
+
 if (-not $DotnetPath) {
   $dotnetCommand = Get-Command dotnet -ErrorAction SilentlyContinue
   if ($dotnetCommand) { $DotnetPath = $dotnetCommand.Source }
   else { throw "dotnet was not found. Install the .NET SDK or pass -DotnetPath to dotnet.exe" }
 }
 & $DotnetPath build $project -c $Configuration -p:MASTERCAM_ROOT=$env:MASTERCAM_ROOT
-$output = Join-Path $PSScriptRoot "native\MastercamMcp.Addin\bin\$Configuration\net48"
+if ($LASTEXITCODE -ne 0) { throw "Build failed for $project" }
+$output = if ($use2027) { Join-Path $PSScriptRoot "native\MastercamMcp.Addin.2027\bin\$Configuration\net10.0-windows" } else { Join-Path $PSScriptRoot "native\MastercamMcp.Addin.Legacy\bin\$Configuration\net48" }
 $chooks = Join-Path $env:MASTERCAM_ROOT "chooks"
 if (-not (Test-Path $chooks)) { throw "The selected Mastercam root has no chooks directory" }
 try { Copy-Item (Join-Path $output "MastercamMcp.Addin.dll") $chooks -Force }
 catch [System.UnauthorizedAccessException] {
   throw "Mastercam is installed under a protected folder. Re-run this script from an administrator PowerShell window to copy the add in into chooks."
 }
-Copy-Item (Join-Path $PSScriptRoot "native\MastercamMcp.Addin\MastercamMcp.Addin.ft") $chooks -Force
-Write-Output "Installed the add in into the local Mastercam chooks directory"
+$ftSource = if ($use2027) { Join-Path $PSScriptRoot "native\MastercamMcp.Addin.2027\MastercamMcp.Addin.ft" } else { Join-Path $PSScriptRoot "native\MastercamMcp.Addin.Legacy\MastercamMcp.Addin.ft" }
+Copy-Item $ftSource $chooks -Force
+Write-Output "Installed the add in into the local Mastercam chooks directory (adapter: $(if ($use2027) { '2027' } else { 'Legacy' }), runtime: $expectedRuntime)"
 
 if ($ConfigureClients) {
   $codexConfig = Join-Path $env:USERPROFILE ".codex\config.toml"

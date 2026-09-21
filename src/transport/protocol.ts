@@ -1,7 +1,7 @@
 export const MAX_FRAME_SIZE = 16 * 1024 * 1024;
 
-export function encodeFrame(payload: Buffer | Uint8Array): Buffer {
-  const buf = Buffer.isBuffer(payload) ? payload : Buffer.from(payload);
+export function encodeFrame(payload: string | Buffer | Uint8Array): Buffer {
+  const buf = typeof payload === "string" ? Buffer.from(payload, "utf8") : Buffer.isBuffer(payload) ? payload : Buffer.from(payload);
   const frame = Buffer.alloc(8 + buf.length);
   frame.writeBigUInt64LE(BigInt(buf.length), 0);
   buf.copy(frame, 8);

@@ -73,7 +73,6 @@ jobs:
           echo "Packed: $archive"
           tar -tzf "$archive" | grep -q 'package/dist/cli.js'
           tar -tzf "$archive" | grep -q 'package/install.ps1'
-          tar -tzf "$archive" | grep -q 'package/native/MastercamMcp.Addin/MastercamMcp.Addin.ft'
           tar -tzf "$archive" | grep -q 'package/native/MastercamMcp.Addin.Legacy/MastercamMcp.Addin.ft'
           tar -tzf "$archive" | grep -q 'package/native/MastercamMcp.Addin.2027/MastercamMcp.Addin.ft'
           if tar -tzf "$archive" | grep -Eiq 'package/(native/.*/(bin|obj)|node_modules)/'; then echo "ERROR: package contains bin/obj/node_modules"; exit 1; fi

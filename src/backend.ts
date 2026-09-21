@@ -532,54 +532,5 @@ export class MockBackend implements Backend {
 
 export function request(tool: string, args: Record<string, unknown> = {}): Request { return { id: randomUUID(), tool, arguments: args }; }
 
-import net from "node:net";
-import { FrameReader, encodeFrame } from "./transport/framing.js";
-
-/**
- * Legacy per-call pipe transport retained for compatibility. New deployments
- * should use LiveBackend, which keeps one persistent connection per Mastercam
- * instance and supports cancellation and deadlines (audit PERF-01).
- */
-export class PipeBackend implements Backend {
-  constructor(private readonly pipeName: string) {}
-  call(req: Request): Promise<ToolResult> {
-    return new Promise((resolve, reject) => {
-      const socket = net.createConnection(this.pipeName);
-      let settled = false;
-      const reader = new FrameReader();
-      const finish = (error?: Error, result?: ToolResult) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        socket.destroy();
-        if (error) reject(error);
-        else resolve(result!);
-      };
-      const timer = setTimeout(() => finish(new Error("TIMEOUT: Mastercam named pipe timeout")), 15_000);
-      socket.setEncoding("utf8");
-      socket.on("connect", () => {
-        if (!socket.write(encodeFrame(JSON.stringify(req)))) finish(new Error("BACKEND_UNAVAILABLE: pipe write failed"));
-      });
-      socket.on("data", (chunk: string) => {
-        let frames: string[];
-        try { frames = reader.push(chunk); }
-        catch (error) { finish(error instanceof Error ? error : new Error(String(error))); return; }
-        for (const frame of frames) {
-          try {
-            const response = JSON.parse(frame) as { id?: string; result?: ToolResult };
-            if (response.id !== req.id) continue; // late frame from an earlier request
-            finish(undefined, response.result);
-          } catch (error) {
-            finish(error instanceof Error ? error : new Error(String(error)));
-          }
-          return;
-        }
-      });
-      socket.on("error", error => finish(error));
-      socket.on("close", () => { if (!settled) finish(new Error("BACKEND_UNAVAILABLE: Mastercam named pipe closed before a response")); });
-    });
-  }
-}
-
 // Re-export shared formatting for callers that want human summaries.
 export { formatFeed, formatSpindle, feedToMmPerMinute, newApprovalToken };
