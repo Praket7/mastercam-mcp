@@ -133,7 +133,6 @@ export default [
       "space-infix-ops": "error",
       "spaced-comment": ["error", "always", { "markers": ["/"] }],
       "switch-colon-spacing": "error",
-      "type-annotation-spacing": "error",
       "no-empty": ["error", { "allowEmptyCatch": true }]
     }
   }

@@ -33,17 +33,43 @@ export const LengthSchema = z.object({
 export type Length = z.infer<typeof LengthSchema>;
 
 export const MM_PER_INCH = 25.4;
-const LINEAR_FEED_UNITS: ReadonlySet<FeedUnit> = new Set(["mm/min", "in/min"]);
+export const LINEAR_FEED_UNITS: ReadonlySet<FeedUnit> = new Set(["mm/min", "in/min"]);
+export const PER_REV_UNITS: ReadonlySet<FeedUnit> = new Set(["mm/rev", "in/rev"]);
+export const ALL_FEED_UNITS: ReadonlySet<FeedUnit> = new Set(["mm/min", "in/min", "mm/rev", "in/rev"]);
 
-/** Millimeters-per-minute equivalent, used only for comparisons and limits. */
-export function feedToMmPerMinute(feed: FeedRate): number {
-  const perRev = !LINEAR_FEED_UNITS.has(feed.unit);
-  const mm = feed.unit.startsWith("mm") ? 1 : MM_PER_INCH;
-  return perRev ? feed.value * mm : feed.value * mm;
+/** Millimeters-per-minute equivalent. Returns null for per-rev without RPM (dimensionally invalid). */
+export function feedToMmPerMinute(feed: FeedRate, spindleRpm?: number): number | null {
+  if (LINEAR_FEED_UNITS.has(feed.unit)) {
+    const mm = feed.unit.startsWith("mm") ? 1 : MM_PER_INCH;
+    return feed.value * mm;
+  }
+  if (PER_REV_UNITS.has(feed.unit)) {
+    if (spindleRpm === undefined || !Number.isFinite(spindleRpm) || spindleRpm <= 0) {
+      return null;
+    }
+    const mm = feed.unit.startsWith("mm") ? 1 : MM_PER_INCH;
+    return feed.value * mm * spindleRpm;
+  }
+  return null;
 }
 
 export function sameFeed(a: FeedRate, b: FeedRate): boolean {
-  return feedToMmPerMinute(a) === feedToMmPerMinute(b);
+  return a.value === b.value && a.unit === b.unit;
+}
+
+export function normalizeFeedForComparison(a: FeedRate, b: FeedRate, spindleRpm?: number): { equal: boolean; reason?: string } {
+  if (a.unit === b.unit) return { equal: a.value === b.value };
+  if (LINEAR_FEED_UNITS.has(a.unit) && LINEAR_FEED_UNITS.has(b.unit)) {
+    const aMm = feedToMmPerMinute(a);
+    const bMm = feedToMmPerMinute(b);
+    if (aMm !== null && bMm !== null) return { equal: aMm === bMm };
+  }
+  if (PER_REV_UNITS.has(a.unit) && PER_REV_UNITS.has(b.unit) && spindleRpm !== undefined) {
+    const aMm = feedToMmPerMinute(a, spindleRpm);
+    const bMm = feedToMmPerMinute(b, spindleRpm);
+    if (aMm !== null && bMm !== null) return { equal: aMm === bMm };
+  }
+  return { equal: false, reason: `Cannot compare ${a.unit} vs ${b.unit} without explicit conversion` };
 }
 
 /** Human formatting that always shows the unit, e.g. "1800 mm/min". */

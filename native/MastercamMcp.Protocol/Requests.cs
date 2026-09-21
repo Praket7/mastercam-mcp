@@ -12,91 +12,91 @@ namespace MastercamMcp.Protocol
     public sealed class BridgeRequest
     {
         [JsonPropertyName("protocolVersion")]
-        public int ProtocolVersion { get; init; } = 2;
+        public int ProtocolVersion { get; set; } = 2;
 
         [JsonPropertyName("requestId")]
-        public string RequestId { get; init; } = string.Empty;
+        public string RequestId { get; set; } = string.Empty;
 
         [JsonPropertyName("type")]
-        public RequestType Type { get; init; } = RequestType.Request;
+        public RequestType Type { get; set; } = RequestType.Request;
 
         [JsonPropertyName("tool")]
-        public string Tool { get; init; } = string.Empty;
+        public string Tool { get; set; } = string.Empty;
 
         [JsonPropertyName("arguments")]
-        public System.Text.Json.Nodes.JsonObject? Arguments { get; init; }
+        public System.Text.Json.Nodes.JsonObject? Arguments { get; set; }
 
         [JsonPropertyName("deadline")]
-        public string? Deadline { get; init; }
+        public string? Deadline { get; set; }
 
         [JsonPropertyName("idempotencyKey")]
-        public string? IdempotencyKey { get; init; }
+        public string? IdempotencyKey { get; set; }
 
         [JsonPropertyName("priority")]
-        public int Priority { get; init; } = 0;
+        public int Priority { get; set; } = 0;
     }
 
     public sealed class BridgeResponse
     {
         [JsonPropertyName("protocolVersion")]
-        public int ProtocolVersion { get; init; } = 2;
+        public int ProtocolVersion { get; set; } = 2;
 
         [JsonPropertyName("requestId")]
-        public string RequestId { get; init; } = string.Empty;
+        public string RequestId { get; set; } = string.Empty;
 
         [JsonPropertyName("type")]
-        public ResponseType Type { get; init; } = ResponseType.Response;
+        public ResponseType Type { get; set; } = ResponseType.Response;
 
         [JsonPropertyName("result")]
-        public object? Result { get; init; }
+        public object? Result { get; set; }
 
         [JsonPropertyName("error")]
-        public BridgeError? Error { get; init; }
+        public BridgeError? Error { get; set; }
 
         [JsonPropertyName("executionDurationMs")]
-        public long? ExecutionDurationMs { get; init; }
+        public long? ExecutionDurationMs { get; set; }
 
         [JsonPropertyName("adapterVersion")]
-        public string? AdapterVersion { get; init; }
+        public string? AdapterVersion { get; set; }
 
         [JsonPropertyName("mastercamVersion")]
-        public string? MastercamVersion { get; init; }
+        public string? MastercamVersion { get; set; }
 
         [JsonPropertyName("documentRevision")]
-        public string? DocumentRevision { get; init; }
+        public string? DocumentRevision { get; set; }
     }
 
     public sealed class BridgeEvent
     {
         [JsonPropertyName("protocolVersion")]
-        public int ProtocolVersion { get; init; } = 2;
+        public int ProtocolVersion { get; set; } = 2;
 
         [JsonPropertyName("eventId")]
-        public string EventId { get; init; } = Guid.NewGuid().ToString();
+        public string EventId { get; set; } = Guid.NewGuid().ToString();
 
         [JsonPropertyName("event")]
-        public string EventType { get; init; } = string.Empty;
+        public string EventType { get; set; } = string.Empty;
 
         [JsonPropertyName("timestamp")]
-        public string Timestamp { get; init; } = DateTime.UtcNow.ToString("O");
+        public string Timestamp { get; set; } = DateTime.UtcNow.ToString("O");
 
         [JsonPropertyName("data")]
-        public object? Data { get; init; }
+        public object? Data { get; set; }
     }
 
     public sealed class BridgeError
     {
         [JsonPropertyName("code")]
-        public string Code { get; init; } = string.Empty;
+        public string Code { get; set; } = string.Empty;
 
         [JsonPropertyName("message")]
-        public string Message { get; init; } = string.Empty;
+        public string Message { get; set; } = string.Empty;
 
         [JsonPropertyName("retryable")]
-        public bool Retryable { get; init; }
+        public bool Retryable { get; set; }
 
         [JsonPropertyName("remediation")]
-        public string? Remediation { get; init; }
+        public string? Remediation { get; set; }
     }
 
     public static class ErrorCodes
