@@ -1,114 +1,146 @@
 import { z } from "zod";
-import { OperationIdSchema, OperationIdsSchema, ToolIdSchema, BoundedStringArray, OptionalText, emptySchema } from "./common.js";
+import { OperationIdSchema, DocumentRevisionSchema } from "./common.js";
 
-const optionalOperationId = OperationIdSchema.optional();
-const optionalOperationIds = OperationIdsSchema.optional();
+export const GetActivePartSchema = z.object({}).strict();
+export type GetActivePartInput = z.infer<typeof GetActivePartSchema>;
 
-export const mastercamStatusSchema = emptySchema;
-export const mastercamCapabilitiesSchema = z.object({ refresh: z.boolean().optional() }).strict();
-export const getActivePartSchema = emptySchema;
-export const getGeometrySummarySchema = z.object({ operationId: optionalOperationId }).strict();
-export const getSelectionSchema = emptySchema;
-export const listMachineGroupsSchema = emptySchema;
+export const ActivePartSchema = z.object({
+  name: z.string(),
+  path: z.string(),
+  units: z.enum(["mm", "in", "cm"]),
+  modified: z.boolean(),
+  revision: DocumentRevisionSchema,
+  fingerprint: z.string()
+}).strict();
+export type ActivePartOutput = z.infer<typeof ActivePartSchema>;
 
-export const listOperationsSchema = z.object({
-  limit: z.number().int().min(1).max(500).default(100),
-  offset: z.number().int().min(0).default(0),
-  operationType: OptionalText(64)
+export const GeometrySummarySchema = z.object({
+  solids: z.number().int().nonnegative(),
+  surfaces: z.number().int().nonnegative(),
+  curves: z.number().int().nonnegative(),
+  boundingBox: z.object({
+    x: z.number(),
+    y: z.number(),
+    z: z.number()
+  }),
+  units: z.enum(["mm", "in", "cm"])
+}).strict();
+export type GeometrySummaryOutput = z.infer<typeof GeometrySummarySchema>;
+
+export const SelectionSchema = z.object({
+  operationIds: z.array(OperationIdSchema),
+  count: z.number().int().nonnegative(),
+  entities: z.array(z.object({
+    type: z.string(),
+    id: z.union([z.string(), z.number()])
+  })).optional()
+}).strict();
+export type SelectionOutput = z.infer<typeof SelectionSchema>;
+
+export const MachineGroupSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  type: z.enum(["mill", "lathe", "mill_turn", "router", "wire", "other"])
 }).strict();
 
-export const getOperationSchema = z.object({ operationId: OperationIdSchema }).strict();
-export const getOperationParametersSchema = z.object({ operationId: OperationIdSchema }).strict();
+export const MachineGroupArraySchema = z.array(MachineGroupSchema);
+export const ListMachineGroupsSchema = z.object({}).strict();
+export type ListMachineGroupsInput = z.infer<typeof ListMachineGroupsSchema>;
+export type ListMachineGroupsOutput = z.infer<typeof MachineGroupArraySchema>;
 
-export const findOperationsSchema = z.object({
-  query: OptionalText(256),
-  operationType: OptionalText(64),
-  toolNumber: z.number().int().min(1).max(2_147_483_647).optional(),
-  limit: z.number().int().min(1).max(200).default(50)
+export const StockSchema = z.object({
+  dimensions: z.object({
+    x: z.number().positive(),
+    y: z.number().positive(),
+    z: z.number().positive()
+  }),
+  units: z.enum(["mm", "in", "cm"]),
+  material: z.string().optional(),
+  source: z.enum(["explicit", "inferred", "bounding_box"]).optional()
+}).strict();
+export type StockOutput = z.infer<typeof StockSchema>;
+
+export const GetStockSchema = z.object({}).strict();
+export type GetStockInput = z.infer<typeof GetStockSchema>;
+
+export const WCSSchema = z.object({
+  name: z.string(),
+  origin: z.tuple([z.number(), z.number(), z.number()]),
+  axes: z.object({
+    x: z.tuple([z.number(), z.number(), z.number()]),
+    y: z.tuple([z.number(), z.number(), z.number()]),
+    z: z.tuple([z.number(), z.number(), z.number()])
+  }),
+  active: z.boolean().optional()
+}).strict();
+export type WCSOutput = z.infer<typeof WCSSchema>;
+
+export const GetWcssSchema = z.object({}).strict();
+export type GetWcssInput = z.infer<typeof GetWcssSchema>;
+
+export const PostProcessorSchema = z.object({
+  name: z.string(),
+  extension: z.string(),
+  machine: z.string(),
+  version: z.string().optional()
 }).strict();
 
-export const explainOperationSchema = z.object({ operationId: OperationIdSchema }).strict();
-export const getOperationRisksSchema = z.object({ operationId: OperationIdSchema }).strict();
+export const GetPostProcessorSchema = z.object({}).strict();
+export type GetPostProcessorInput = z.infer<typeof GetPostProcessorSchema>;
 
-export const listToolsSchema = z.object({ limit: z.number().int().min(1).max(500).default(200) }).strict();
-export const getToolSchema = z.object({ toolId: ToolIdSchema }).strict();
-
-export const getStockSchema = emptySchema;
-export const getWcsSchema = emptySchema;
-export const getPostProcessorSchema = emptySchema;
-export const getMachineContextSchema = emptySchema;
-export const getDirtyToolpathsSchema = z.object({ operationIds: optionalOperationIds }).strict();
-export const getSelectedEntitiesSchema = emptySchema;
-
-export const getToolpathStatusSchema = z.object({ operationId: optionalOperationId }).strict();
-export const estimateCycleTimeSchema = z.object({ operationIds: optionalOperationIds }).strict();
-export const compareToolpathsSchema = z.object({
-  beforeOperationId: OperationIdSchema,
-  afterOperationId: OperationIdSchema
+export const ToolSchema = z.object({
+  number: z.number().int().positive(),
+  name: z.string(),
+  diameter: z.number().positive().optional(),
+  length: z.number().positive().optional(),
+  units: z.enum(["mm", "in"]),
+  type: z.string().optional(),
+  holder: z.string().optional(),
+  fluteCount: z.number().int().positive().optional(),
+  coolant: z.boolean().optional()
 }).strict();
 
-export const captureViewSchema = z.object({
-  width: z.number().int().min(64).max(1920).default(1024),
-  height: z.number().int().min(64).max(1080).default(768),
-  format: z.enum(["png", "jpeg"]).default("png")
+export const ToolArraySchema = z.array(ToolSchema);
+export const ListToolsSchema = z.object({}).strict();
+export type ListToolsInput = z.infer<typeof ListToolsSchema>;
+export type ListToolsOutput = z.infer<typeof ToolArraySchema>;
+
+export const ToolpathStatusSchema = z.object({
+  operationId: OperationIdSchema,
+  generated: z.boolean(),
+  valid: z.boolean(),
+  dirty: z.boolean(),
+  collisionState: z.enum(["not_checked", "checking", "clear", "collision"]),
+  lastRegenerated: z.string().datetime().optional()
 }).strict();
 
-export const getProgrammingContextSchema = z.object({
-  includeGeometry: z.boolean().default(false)
+export const GetToolpathStatusSchema = z.object({
+  operationId: OperationIdSchema
 }).strict();
+export type GetToolpathStatusInput = z.infer<typeof GetToolpathStatusSchema>;
+export type ToolpathStatusOutput = z.infer<typeof ToolpathStatusSchema>;
 
-export const getVersionReportSchema = emptySchema;
-export const mastercamDoctorSchema = emptySchema;
-export const mastercamHelpSchema = emptySchema;
-export const listToolCategoriesSchema = emptySchema;
-export const discoverCapabilitiesSchema = z.object({ category: OptionalText(64) }).strict();
-export const getCompatibilityMatrixSchema = emptySchema;
-export const clientSetupCheckSchema = emptySchema;
-export const getAuditHistorySchema = z.object({ limit: z.number().int().min(1).max(500).default(50) }).strict();
-export const getFixtureInfoSchema = emptySchema;
-export const getMachineGroupsSchema = listMachineGroupsSchema;
-
-export const inspectSchema = z.object({
-  operationId: optionalOperationId,
-  path: OptionalText(256)
+export const CaptureViewSchema = z.object({
+  operationId: OperationIdSchema.optional(),
+  view: z.enum(["iso", "top", "front", "right", "back", "left", "bottom"]).default("iso"),
+  resolution: z.object({
+    width: z.number().int().positive().max(1920).default(800),
+    height: z.number().int().positive().max(1080).default(600)
+  }).optional(),
+  format: z.enum(["png", "jpeg", "webp"]).default("png"),
+  showTool: z.boolean().default(true),
+  showStock: z.boolean().default(true),
+  showFixture: z.boolean().default(false)
 }).strict();
+export type CaptureViewInput = z.infer<typeof CaptureViewSchema>;
 
-export const measureSchema = z.object({
-  operationId: optionalOperationId,
-  path: z.string().min(1).max(256).default("operation.feed")
+export const CaptureViewOutputSchema = z.object({
+  format: z.enum(["png", "jpeg", "webp"]),
+  width: z.number().int().positive(),
+  height: z.number().int().positive(),
+  timestamp: z.string().datetime(),
+  documentRevision: DocumentRevisionSchema,
+  resourceUri: z.string().optional(),
+  data: z.string().optional()
 }).strict();
-
-export const assertSchema = z.object({
-  operationId: optionalOperationId,
-  path: z.string().min(1).max(256).default("operation.feed"),
-  equals: z.union([z.string().max(4096), z.number().finite(), z.boolean()]).optional()
-}).strict();
-
-export const compareNcFilesInput = {
-  before: z.string().min(1).max(2_000_000),
-  after: z.string().min(1).max(2_000_000)
-} as const;
-
-export const CompareToolDatabasesSchema = z.object({
-  left: z.unknown(),
-  right: z.unknown()
-}).strict();
-
-export const ValidateMachineProfileSchema = z.object({
-  operation: z.record(z.unknown()),
-  profile: z.record(z.unknown())
-}).strict();
-
-export const GenerateSetupSheetSchema = z.object({
-  part: z.record(z.unknown()).optional(),
-  machine: z.record(z.unknown()).optional(),
-  stock: z.record(z.unknown()).optional(),
-  wcs: z.record(z.unknown()).optional(),
-  operations: z.array(z.record(z.unknown())).max(500).optional(),
-  tools: z.array(z.record(z.unknown())).max(500).optional(),
-  notes: BoundedStringArray(100).optional()
-}).strict();
-
-export const SHOP_TOOLS = ["generate_setup_sheet", "compare_tool_databases", "compare_nc_files", "validate_machine_profile"] as const;
-export const Bounded = { BoundedStringArray, OptionalText };
-export const _internal = { optionalOperationId, optionalOperationIds, emptySchema };
+export type CaptureViewOutput = z.infer<typeof CaptureViewOutputSchema>;

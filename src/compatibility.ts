@@ -1,90 +1,58 @@
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import { execFileSync } from "node:child_process";
 
-export type RuntimeFamily = "net48" | "net10" | "unknown";
+export type Installation = { version: string; root: string; executable: string; chooks: string; netHookAssemblies: string[]; confidence: "detected" | "partial"; productVersion?: string; runtimeFamily?: "net48" | "net10" };
 
-export interface Installation {
-  version: string;
-  marketingRelease: string;
-  runtimeFamily: RuntimeFamily;
-  root: string;
-  executable: string;
-  chooks: string;
-  netHookAssemblies: string[];
-  verified: boolean;
-  confidence: "detected" | "partial";
-}
-
-/**
- * Release support is explicit (audit COMPAT-01/70). Mastercam 2027 runs on
- * .NET 10 and cannot load the net48 add-in; the required adapter does not
- * exist yet, so the status says exactly that.
- */
 export const COMPATIBILITY_MATRIX = [
-  { release: "2024", runtime: ".NET Framework 4.8", adapter: "MastercamMcp.Addin.Legacy", status: "adapter required", evidence: "installer path and assembly discovery" },
-  { release: "2025", runtime: ".NET Framework 4.8", adapter: "MastercamMcp.Addin.Legacy", status: "adapter required", evidence: "installer path and assembly discovery" },
-  { release: "2026", runtime: ".NET Framework 4.8", adapter: "MastercamMcp.Addin.Legacy", status: "adapter required", evidence: "NET Scripting tooling documents this release" },
-  {
-    release: "2027",
-    runtime: ".NET 10",
-    adapter: "MastercamMcp.Addin.2027",
-    status: "implementation required",
-    evidence: "public developer guidance: Mastercam 2027 moved to .NET 10; older .NET Framework add-ins must be updated"
-  }
+  { release: "2024", runtime: ".NET Framework 4.8", status: "adapter required", evidence: "installer path and assembly discovery", adapterName: "MastercamMcp.Addin.Legacy" },
+  { release: "2025", runtime: ".NET Framework 4.8", status: "adapter required", evidence: "installer path and assembly discovery", adapterName: "MastercamMcp.Addin.Legacy" },
+  { release: "2026", runtime: ".NET Framework 4.8", status: "adapter required", evidence: "NET Scripting tooling documents this release", adapterName: "MastercamMcp.Addin.Legacy" },
+  { release: "2027", runtime: ".NET 10", status: "planned verification", evidence: "public developer discussion requires live validation", adapterName: "MastercamMcp.Addin.2027" }
 ] as const;
 
-function runtimeFamilyFor(marketingRelease: string): RuntimeFamily {
-  const year = Number(marketingRelease);
-  return Number.isFinite(year) && year >= 2027 ? "net10" : "net48";
-}
-
-function inspectRoot(root: string): Installation | undefined {
-  const executable = join(root, "Mastercam.exe");
-  const chooks = join(root, "chooks");
-  const hasExecutable = existsSync(executable);
-  const hasChooks = existsSync(chooks);
-  if (!hasExecutable && !hasChooks) return undefined;
-  const marketingRelease = root.split(/[\\/]/).pop()?.replace(/^Mastercam\s+/i, "") ?? "unknown";
-  const netHookAssemblies = existsSync(root) ? readdirSync(root).filter(file => /^NETHook.*\.dll$/i.test(file)) : [];
-  return {
-    version: marketingRelease,
-    marketingRelease,
-    runtimeFamily: runtimeFamilyFor(marketingRelease),
-    root,
-    executable,
-    chooks,
-    netHookAssemblies,
-    verified: hasExecutable && hasChooks,
-    confidence: hasExecutable && hasChooks ? "detected" : "partial"
-  };
-}
-
-/**
- * INSTALL-01: discovery beyond "C:\Program Files\Mastercam *" — an explicit
- * override wins, then MASTERCAM_ROOT, then Program Files scanning.
- */
-export function detectInstallations(programFiles = process.platform === "win32" ? "C:\\Program Files" : ""): Installation[] {
+export function detectInstallations(programFiles = "C:\\Program Files"): Installation[] {
+  if (process.platform !== "win32" || !existsSync(programFiles)) return [];
   const roots: string[] = [];
-  const explicit = process.env.MASTERCAM_ROOT;
-  if (explicit && existsSync(explicit)) roots.push(explicit);
-  if (programFiles && existsSync(programFiles)) {
-    for (const entry of readdirSync(programFiles, { withFileTypes: true })) {
-      if (entry.isDirectory() && /^Mastercam\s+/i.test(entry.name)) {
-        const root = join(programFiles, entry.name);
-        if (!roots.includes(root)) roots.push(root);
+  if (process.env["MASTERCAM_ROOT"]) roots.push(process.env["MASTERCAM_ROOT"]!);
+  if (process.env["MASTERCAM_ROOTS"]) roots.push(...process.env["MASTERCAM_ROOTS"]!.split(";").map(p => p.trim()).filter(Boolean));
+  roots.push(programFiles);
+
+  const results: Installation[] = [];
+  for (const root of roots) {
+    if (!existsSync(root)) continue;
+    try {
+      const entries = readdirSync(root, { withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+        if (!/^Mastercam\s+/i.test(entry.name)) continue;
+        const installRoot = join(root, entry.name);
+        const executable = join(installRoot, "Mastercam.exe");
+        const chooks = join(installRoot, "chooks");
+        const netHookAssemblies = existsSync(installRoot) ? readdirSync(installRoot).filter(file => /^NETHook.*\.dll$/i.test(file)) : [];
+        let productVersion: string | undefined;
+        let runtimeFamily: "net48" | "net10" | undefined;
+        if (existsSync(executable)) {
+          try {
+            const versionInfo = execFileSync("powershell.exe", ["-NoProfile", "-Command", `(Get-Item '${executable}').VersionInfo.ProductVersion`], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 5000 }).trim();
+            if (versionInfo) {
+              productVersion = versionInfo;
+if (versionInfo) {
+              const major = versionInfo.split(".")[0] ?? "";
+              if (major === "27") runtimeFamily = "net10";
+              else if (["24", "25", "26"].includes(major)) runtimeFamily = "net48";
+            }
+            }
+          } catch { }
+        }
+        const confidence: Installation["confidence"] = existsSync(executable) && existsSync(chooks) ? "detected" : "partial";
+        results.push({ version: entry.name.replace(/^Mastercam\s+/i, ""), root: installRoot, executable, chooks, netHookAssemblies, confidence, productVersion: productVersion ?? "", runtimeFamily: runtimeFamily ?? "net48" });
       }
-    }
+    } catch { }
   }
-  const installations = roots.map(inspectRoot).filter((item): item is Installation => item !== undefined);
-  // Explicit roots first, verified before partial.
-  return installations.sort((a, b) => Number(b.verified) - Number(a.verified));
+  return results.filter(item => existsSync(item.executable) || existsSync(item.chooks));
 }
 
 export function compatibilityReport(installations: Installation[] = detectInstallations()) {
-  return {
-    matrix: COMPATIBILITY_MATRIX,
-    detected: installations,
-    liveMappingsVerified: false,
-    note: "Release support requires a matching native adapter and licensed live acceptance testing. Mastercam 2027 requires the .NET 10 adapter, which is not implemented yet."
-  };
+  return { matrix: COMPATIBILITY_MATRIX, detected: installations, liveMappingsVerified: false, note: "Release support requires a matching native adapter and licensed live acceptance testing" };
 }

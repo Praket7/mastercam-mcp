@@ -1,17 +1,8 @@
 # Mastercam MCP
 
-Mastercam MCP connects an MCP client with a local Mastercam session through a protected local transport. It gives an assistant a careful workflow for inspection, planning, confirmation, verification, and recovery.
+Mastercam MCP connects an MCP client with a local Mastercam session through a protected Windows named pipe. It gives an assistant a careful workflow for inspection, planning, confirmation, verification, and recovery.
 
 The project includes a safe fixture backend so contributors can run the complete workflow without Mastercam or a license. The live adapter reports only capabilities that are actually mapped and verified. It never pretends that an unimplemented Mastercam action succeeded.
-
-## Live boundary (read this first)
-
-This project maintains a hard separation between what is **mock-tested** and what is **live-verified**:
-
-- Every capability carries a tier: `UNAVAILABLE` < `DISCOVERED` < `IMPLEMENTED` < `LIVE_READ_VERIFIED` < `LIVE_WRITE_VERIFIED`. Nothing claims a live tier until the acceptance harness passes against a licensed Mastercam release (see `docs/CAPABILITIES.md`, generated from the registry in `src/capabilities.ts`).
-- The native add-in owns a capability registry. A tool that the installed release's adapter has not declared is answered with `UNSUPPORTED_CAPABILITY` before any Mastercam code runs. Mock results are always marked `live: false`; live results carry the adapter version and Mastercam version.
-- Live transport is bridge protocol v2: a persistent, size-bounded connection with request cancellation at safe boundaries, read-only retries, and a circuit breaker. The Stage A adapter reports `mastercam_status` and `mastercam_capabilities`; inspection and mutation mappings are added per release only after licensed verification.
-- Machine execution is out of scope by design: no posting, cycle start, DNC, FTP to machines, or arbitrary script execution exists in the tool surface or the native registry.
 
 ## Start without Mastercam
 
@@ -20,9 +11,10 @@ Install Node.js 22 or newer. From this repository run the following commands.
 ```text
 pnpm install
 pnpm run build
+$env:MASTERCAM_MCP_BACKEND = "mock"
+pnpm run mock
 pnpm test
-node work/smoke.mjs
-node work/http-smoke.mjs
+node work\feature-smoke.mjs
 ```
 
 The fixture supports active part inspection, operation search, operation explanation, risk reporting, machine context, feed and speed previews, confirmation gates, reread verification, rollback, regeneration, simulation, collision reporting, visual context, audit history, and diagnostics.
@@ -45,9 +37,9 @@ The installer makes a backup before changing client configuration. It supports i
 
 ## Safe workflow
 
-Start with `discover_capabilities` and `mastercam_doctor`. Inspect the active part and operations. Search for the intended operation. Explain it and review its risks. Preview any change — quantities always carry explicit units — and receive a single-use approval token. Apply the token: the server re-validates the document revision and refuses stale previews. Keep the returned receipt; it is the only thing `rollback_change` accepts. Regenerate only the affected operations, verify with `verify_change`, and audit with `get_audit_history`.
+Start with `discover_capabilities` and `mastercam_doctor`. Inspect the active part and operations. Search for the intended operation. Explain it and review its risks. Preview any change. Request explicit confirmation. Apply the change. Regenerate only the affected operations. Reread the result and keep the receipt.
 
-The default server profile is read only. Writes require a write-enabled profile and a server-issued preview token; an assistant cannot self-assert confirmation. Posting, controller communication, DNC, FTP, cycle start, and arbitrary code execution are not provided.
+The default server profile is read only. Writes require a write enabled profile and explicit confirmation. Posting, controller communication, DNC, FTP, cycle start, and arbitrary code execution are not provided.
 
 ## Main capabilities
 

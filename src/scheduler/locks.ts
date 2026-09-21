@@ -1,50 +1,44 @@
-export interface Release { (): void }
-
-/** Fair async mutex for the mutation lane. */
-export class Mutex {
-  private queue: Array<() => void> = [];
+export class AsyncLock {
   private locked = false;
+  private waiters: Array<() => void> = [];
 
-  async acquire(): Promise<Release> {
-    if (this.locked) {
-      await new Promise<void>(resolve => this.queue.push(resolve));
+  async acquire(): Promise<() => void> {
+    if (!this.locked) {
+      this.locked = true;
+      return () => this.release();
     }
-    this.locked = true;
-    let released = false;
-    return () => {
-      if (released) return;
-      released = true;
-      const next = this.queue.shift();
-      if (next) next();
-      else this.locked = false;
-    };
+    return new Promise(resolve => {
+      this.waiters.push(() => {
+        this.locked = true;
+        resolve(() => this.release());
+      });
+    });
   }
 
-  async run<T>(fn: () => Promise<T>): Promise<T> {
-    const release = await this.acquire();
-    try { return await fn(); }
-    finally { release(); }
+  private release() {
+    this.locked = false;
+    const next = this.waiters.shift();
+    if (next) next();
   }
+
+  isLocked(): boolean { return this.locked; }
 }
 
-/** Serialized mutation keys, e.g. "doc:fixture-part" or "doc:part/op:17". */
-export class KeyedLocks {
-  private locks = new Map<string, Mutex>();
+export class KeyedLock {
+  private locks = new Map<string, AsyncLock>();
 
-  for(key: string): Mutex {
+  getLock(key: string): AsyncLock {
     let lock = this.locks.get(key);
-    if (!lock) {
-      lock = new Mutex();
-      this.locks.set(key, lock);
-    }
+    if (!lock) { lock = new AsyncLock(); this.locks.set(key, lock); }
     return lock;
   }
 
-  async run<T>(key: string, fn: () => Promise<T>): Promise<T> {
-    return this.for(key).run(fn);
+  async withLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
+    const release = await this.getLock(key).acquire();
+    try { return await fn(); } finally { release(); }
   }
 
-  get activeKeys(): number {
-    return this.locks.size;
-  }
+  removeLock(key: string) { this.locks.delete(key); }
 }
+
+export const keyedLock = new KeyedLock();

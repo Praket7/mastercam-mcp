@@ -8,8 +8,7 @@ The fixture mode is intended for contributors who do not have Mastercam. It exer
 $env:MASTERCAM_MCP_BACKEND = "mock"
 pnpm run build
 pnpm test
-node work/smoke.mjs
-node work/http-smoke.mjs
+node work\feature-smoke.mjs
 ```
 
 The fixture marks geometry, kinematics, workholding, simulation, and collision information as synthetic. A passing fixture check proves the bridge contract only.
@@ -20,17 +19,7 @@ Use `discover_capabilities` first. Call `mastercam_doctor`, `get_active_part`, `
 
 ## Safe editing
 
-Mutations follow a fixed, server-verified pipeline. There is no direct write path:
-
-1. `preview_operation_parameters` with explicit quantities `{ "feedRate": { "value": 250, "unit": "mm/min" } }`. The server returns a single-use `approvalToken`, the current document revision, and before/after hashes.
-2. Review the preview with a human. An assistant saying "confirmed" is not approval; only the server-issued token is.
-3. `apply_operation_parameter_preview` with the token. The server re-checks the document revision and the operation fingerprint and refuses with `STALE_PREVIEW` if anything changed (compare-and-swap).
-4. A successful apply returns a receipt (`transactionId`, before/after state and hashes). The receipt, never a caller-supplied value, is what `rollback_change` consumes.
-5. `verify_change` rereads the operation and compares it to the expected state.
-6. `regenerate_toolpath` for the affected operation only.
-7. `rollback_change` with the transaction ID restores the prior state and records a rollback receipt in the hash-chained audit log.
-
-Every mutation requires an exact `operationId`; `OPERATION_NOT_FOUND` and `TARGET_REQUIRED` replace any fallback to the first operation.
+Call `preview_change` with the intended feed. Review the returned before and after values. Call `set_feed_speed` only with explicit confirmation. Call `regenerate_toolpath` for affected operations. Finish with `verify_change` and retain the receipt from `get_audit_history`.
 
 ## Live boundary
 

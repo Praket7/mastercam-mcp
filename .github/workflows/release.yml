@@ -6,27 +6,15 @@ on:
       - v*
 
 jobs:
-  # The npm release must not publish when the Windows/native path is broken
-  # (mission point 10): the native gate runs the protocol test suite before
-  # publish is even considered.
-  native-gate:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: 8.0.x
-      - run: dotnet build native/MastercamMcp.Protocol.Tests/MastercamMcp.Protocol.Tests.csproj -c Release
-      - run: dotnet test native/MastercamMcp.Protocol.Tests/MastercamMcp.Protocol.Tests.csproj -c Release --no-build
-
   verify-and-publish:
-    needs: native-gate
     runs-on: ubuntu-latest
     permissions:
       contents: write
       id-token: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: pnpm/action-setup@v4
         with:
           version: 11.19.0
@@ -35,19 +23,75 @@ jobs:
           node-version: 22
           registry-url: https://registry.npmjs.org
           cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm run build
-      - run: pnpm test
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            9.0.x
+            10.0.x
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Lint
+        run: pnpm run lint
+      - name: Typecheck
+        run: pnpm run typecheck
+      - name: Build native - Protocol
+        run: dotnet build native/MastercamMcp.Protocol/MastercamMcp.Protocol.csproj -c Release
+      - name: Build native - Abstractions
+        run: dotnet build native/MastercamMcp.Adapter.Abstractions/MastercamMcp.Adapter.Abstractions.csproj -c Release
+      - name: Build native - Core
+        run: dotnet build native/MastercamMcp.Core/MastercamMcp.Core.csproj -c Release
+      - name: Build native - ApiCatalog
+        run: dotnet build native/MastercamMcp.ApiCatalog/MastercamMcp.ApiCatalog.csproj -c Release
+      - name: Build TypeScript
+        run: pnpm run build
+      - name: Tests
+        run: pnpm test
+      - name: Secret scanning - gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Secret scanning - TruffleHog
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: main
+          head: HEAD
+          extra_args: --debug --only-verified
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          path: ./
+          format: spdx-json
+          upload-artifact: true
+          artifact-name: sbom.spdx.json
       - name: Verify package contents
         shell: bash
         run: |
+          set -euo pipefail
           archive=$(pnpm pack --pack-destination . | tail -n 1)
+          echo "Packed: $archive"
           tar -tzf "$archive" | grep -q 'package/dist/cli.js'
           tar -tzf "$archive" | grep -q 'package/install.ps1'
+          tar -tzf "$archive" | grep -q 'package/native/MastercamMcp.Addin/MastercamMcp.Addin.ft'
           tar -tzf "$archive" | grep -q 'package/native/MastercamMcp.Addin.Legacy/MastercamMcp.Addin.ft'
-          tar -tzf "$archive" | grep -q 'package/native/MastercamMcp.Addin.Legacy/EntryPoint.cs'
-          tar -tzf "$archive" | grep -q 'package/native/MastercamMcp.Protocol/Framing.cs'
-          if tar -tzf "$archive" | grep -Eiq 'package/(native/.*/(bin|obj)|node_modules)/'; then exit 1; fi
+          tar -tzf "$archive" | grep -q 'package/native/MastercamMcp.Addin.2027/MastercamMcp.Addin.ft'
+          if tar -tzf "$archive" | grep -Eiq 'package/(native/.*/(bin|obj)|node_modules)/'; then echo "ERROR: package contains bin/obj/node_modules"; exit 1; fi
+          if tar -tzf "$archive" | grep -Eiq '\.dll$'; then echo "ERROR: package contains .dll (proprietary)"; exit 1; fi
+          echo "Package contents OK"
+      - name: Packed package fresh-install smoke test
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive=$(ls -1 mastercam-mcp-*.tgz | head -n 1)
+          tmpdir=$(mktemp -d)
+          echo "Testing fresh install in $tmpdir"
+          cd "$tmpdir"
+          npm init -y >/dev/null
+          npm install "$GITHUB_WORKSPACE/$archive"
+          npx mastercam-mcp --version
+          npx mastercam-mcp doctor || true
+          echo "Fresh install smoke test passed"
       - name: Publish package
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

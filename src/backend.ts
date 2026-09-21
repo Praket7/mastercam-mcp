@@ -1,578 +1,361 @@
-import { randomUUID } from "node:crypto";
-import { MastercamErrorImpl } from "./errors.js";
-import { sha256Of, AuditLog, newTransactionId, newApprovalToken } from "./audit/audit-log.js";
-import { ApprovalLedger, fingerprintOperation, documentRevision } from "./safety/approval.js";
-import { KeyedLocks } from "./scheduler/locks.js";
-import { Scheduler } from "./scheduler/request-scheduler.js";
-import { feedToMmPerMinute, sameFeed, formatFeed, formatSpindle } from "./schemas/units.js";
-import type { FeedRate, SpindleSpeed } from "./schemas/units.js";
-import type { QuantitySnapshot } from "./safety/approval.js";
+import net from "node:net";
+import { randomUUID, createHash } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, appendFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import type { Request, Response, ToolResult } from "./contracts.js";
+import { OperationIdSchema, FeedRateSchema, SpindleSpeedSchema, ApprovalTokenSchema, TransactionIdSchema } from "./schemas/common.js";
 
-/** Envelope returned by every backend tool call. */
-export interface ToolResult {
-  ok: boolean;
-  tool: string;
-  data?: unknown;
-  error?: { code: string; message: string; retryable?: boolean; remediation?: string };
-  receipt?: unknown;
-  live?: boolean;
-  documentRevision?: string;
-  operationFingerprint?: string;
-}
+export interface Backend { call(request: Request): Promise<ToolResult>; close?(): Promise<void> }
 
-export interface Request { id: string; tool: string; arguments?: Record<string, unknown> }
-
-export interface Backend {
-  call(request: Request): Promise<ToolResult>;
-  close?(): Promise<void>;
-}
-
-export interface FixtureOperation {
+interface Operation {
   id: number;
   name: string;
   type: string;
-  feed: FeedRate | number | undefined;
-  spindleSpeed?: SpindleSpeed | number;
-  tool?: number;
-  toolpathDirty?: boolean;
-  [extra: string]: unknown;
+  feedRate?: { value: number; unit: string };
+  spindleSpeed?: { value: number; unit: string };
+  tool?: { number: number; name: string };
+  [key: string]: unknown;
 }
 
-export interface Fixture {
-  feed?: number;
-  operations?: Array<Record<string, unknown>>;
+interface AuditEntry {
+  sequence: number;
+  timestamp: string;
+  requestId: string;
+  transactionId?: string;
+  tool: string;
+  target: Record<string, unknown>;
+  policy: Record<string, unknown>;
+  beforeHash?: string;
+  afterHash?: string;
+  verified: boolean;
+  previousEntryHash?: string;
+  entryHash: string;
 }
 
-const MM_PER_MIN = "mm/min" as const;
-const RPM = "rpm" as const;
+interface TransactionReceipt {
+  transactionId: string;
+  partFingerprint: string;
+  operationId: number;
+  beforeHash: string;
+  afterHash: string;
+  before: Record<string, unknown>;
+  after: Record<string, unknown>;
+  createdAt: string;
+  expiresAt: string;
+}
 
-function toFeed(value: unknown): FeedRate {
-  if (typeof value === "number" && Number.isFinite(value) && value > 0) return { value, unit: MM_PER_MIN };
-  // Already a structured quantity: keep it, validating the shape.
-  if (value && typeof value === "object") {
-    const candidate = value as { value?: unknown; unit?: unknown };
-    if (typeof candidate.value === "number" && Number.isFinite(candidate.value) && candidate.value > 0 && typeof candidate.unit === "string") {
-      return { value: candidate.value, unit: candidate.unit as FeedRate["unit"] };
-    }
+interface ApprovalRecord {
+  approvalToken: string;
+  transactionId: string;
+  operationId: number;
+  operationFingerprint: string;
+  documentRevision: string;
+  beforeHash: string;
+  proposedHash: string;
+  proposed: { feedRate?: { value: number; unit: string }; spindleSpeed?: { value: number; unit: string } };
+  expiresAt: string;
+  used: boolean;
+}
+
+const MAX_AUDIT_ENTRIES = 500;
+const APPROVAL_TTL_MS = 5 * 60 * 1000;
+const TX_TTL_MS = 10 * 60 * 1000;
+
+function hashObject(obj: unknown): string {
+  return createHash("sha256").update(JSON.stringify(obj, Object.keys(obj as object).sort())).digest("hex");
+}
+
+function computeFingerprint(operation: Operation): string {
+  const { id, name, type, feedRate, spindleSpeed, tool } = operation;
+  return hashObject({ id, name, type, feedRate, spindleSpeed, tool });
+}
+
+export class PipeBackend implements Backend {
+  constructor(private readonly pipeName: string) {}
+  call(request: Request): Promise<ToolResult> {
+    return new Promise((resolve, reject) => {
+      const socket = net.createConnection(this.pipeName);
+      let buffer = "";
+      let settled = false;
+      let timer: NodeJS.Timeout;
+      const finish = (error?: Error, result?: ToolResult) => { if (settled) return; settled = true; clearTimeout(timer); socket.destroy(); error ? reject(error) : resolve(result!); };
+      timer = setTimeout(() => finish(new Error("Mastercam named pipe timeout")), 15000);
+      socket.setEncoding("utf8");
+      socket.on("connect", () => socket.write(JSON.stringify(request) + "\n"));
+      socket.on("data", (chunk: string) => { buffer += chunk; if (buffer.length > 4 * 1024 * 1024) return finish(new Error("Mastercam named pipe response exceeded 4 MiB")); const line = buffer.split("\n")[0]; if (!line) return; try { const response = JSON.parse(line) as Response; if (response.id !== request.id) return finish(new Error("Mastercam named pipe response id mismatch")); finish(undefined, response.result); } catch (e) { finish(e instanceof Error ? e : new Error(String(e))); } });
+      socket.on("error", (e: Error) => finish(e));
+      socket.on("close", () => { if (!settled) finish(new Error("Mastercam named pipe closed before a response")); });
+    });
   }
-  return { value: 35, unit: MM_PER_MIN };
-}
-
-function toSpeed(value: unknown): SpindleSpeed {
-  if (typeof value === "number" && Number.isFinite(value) && value > 0) return { value, unit: RPM };
-  if (value && typeof value === "object") {
-    const candidate = value as { value?: unknown; unit?: unknown };
-    if (typeof candidate.value === "number" && Number.isFinite(candidate.value) && candidate.value > 0 && typeof candidate.unit === "string") {
-      return { value: candidate.value, unit: candidate.unit as SpindleSpeed["unit"] };
-    }
-  }
-  return { value: 12000, unit: RPM };
-}
-
-function operationFeed(operation: Record<string, unknown>): FeedRate {
-  return toFeed(operation.feed);
-}
-
-function operationSpeed(operation: Record<string, unknown>): SpindleSpeed {
-  return toSpeed(operation.spindleSpeed);
-}
-
-function errorResult(tool: string, error: MastercamErrorImpl | Error): ToolResult {
-  if (error instanceof MastercamErrorImpl) {
-    return { ok: false, tool, error: { code: error.code, message: error.message, retryable: error.retryable, ...(error.remediation ? { remediation: error.remediation } : {}) } };
-  }
-  // Errors thrown as "CODE: message" (e.g. from the approval ledger) keep their code.
-  const match = /^([A-Z_]+):\s*(.+)$/.exec(error.message);
-  if (match) {
-    const code = match[1] ?? "BACKEND_UNAVAILABLE";
-    const message = match[2] ?? error.message;
-    const retryable = code === "TIMEOUT" || code === "BACKEND_UNAVAILABLE" || code === "RATE_LIMITED";
-    return { ok: false, tool, error: { code, message, retryable } };
-  }
-  return { ok: false, tool, error: { code: "BACKEND_UNAVAILABLE", message: error.message, retryable: true } };
-}
-
-function applyQuantity(op: Record<string, unknown>, changes: QuantitySnapshot): { feedRate: FeedRate; spindleSpeed: SpindleSpeed } {
-  if (changes.feedRate !== undefined) {
-    if (!Number.isFinite(changes.feedRate.value) || changes.feedRate.value <= 0) throw new MastercamErrorImpl("INVALID_QUANTITY", "feedRate.value must be finite and positive");
-    op.feed = { ...changes.feedRate };
-  }
-  if (changes.spindleSpeed !== undefined) {
-    if (!Number.isFinite(changes.spindleSpeed.value) || changes.spindleSpeed.value <= 0) throw new MastercamErrorImpl("INVALID_QUANTITY", "spindleSpeed.value must be finite and positive");
-    op.spindleSpeed = { ...changes.spindleSpeed };
-  }
-  return { feedRate: operationFeed(op), spindleSpeed: operationSpeed(op) };
 }
 
 export class MockBackend implements Backend {
-  private operations: Array<Record<string, unknown>>;
-  private selected: number[] = [];
-  private readonly audit: AuditLog;
-  private readonly ledger = new ApprovalLedger();
-  private readonly locks = new KeyedLocks();
-  private readonly scheduler = new Scheduler({ maxConcurrentReads: 8 });
-  private readonly documentKey: string;
-  private revision: string;
+  private operations: Operation[];
+  private history: AuditEntry[] = [];
+  private transactions: Map<string, TransactionReceipt> = new Map();
+  private approvals: Map<string, ApprovalRecord> = new Map();
+  private selected: number[] = [4];
+  private readonly auditPath: string;
+  private auditSequence = 0;
+  private documentRevision = "rev-1";
 
-  constructor(fixture?: Fixture, audit?: AuditLog) {
-    this.audit = audit ?? new AuditLog();
+  constructor(fixture?: { feed?: number; operations?: Array<Record<string, unknown>> }) {
+    this.auditPath = process.env["MASTERCAM_MCP_AUDIT_PATH"] ?? join(process.env["LOCALAPPDATA"] ?? ".", "mastercam-mcp", "audit.jsonl");
+    this.loadAudit();
     const initialFeed = fixture?.feed !== undefined && Number.isFinite(fixture.feed) && fixture.feed > 0 ? fixture.feed : 35;
     this.operations = fixture?.operations?.length
-      ? fixture.operations.map((operation, index) => ({
-          id: typeof operation.id === "number" ? operation.id : index + 1,
-          ...operation,
-          feed: toFeed(operation.feed ?? initialFeed),
-          spindleSpeed: operation.spindleSpeed !== undefined ? toSpeed(operation.spindleSpeed) : toSpeed(12000)
-        }))
-      : [{ id: 4, name: "Facing", type: "mill", feed: toFeed(initialFeed), spindleSpeed: toSpeed(12000), tool: 1 }];
-    this.documentKey = "doc:fixture";
-    this.revision = documentRevision(this.operations);
+      ? fixture.operations.map((operation, index) => ({ id: Number(operation.id ?? index + 1), name: String(operation.name ?? `Op${index + 1}`), type: String(operation.type ?? "mill"), feedRate: { value: Number(operation.feed ?? initialFeed), unit: "mm/min" }, spindleSpeed: { value: Number(operation.speed ?? 12000), unit: "rpm" } }))
+      : [{ id: 4, name: "Facing", type: "mill", feedRate: { value: initialFeed, unit: "mm/min" }, spindleSpeed: { value: 12000, unit: "rpm" } }];
+    this.cleanupExpired();
   }
 
-  get documentKeyForTests(): string { return this.documentKey; }
+  private loadAudit() {
+    if (existsSync(this.auditPath)) {
+      try {
+        const content = readFileSync(this.auditPath, "utf8");
+        const lines = content.trim().split("\n").filter(Boolean);
+        for (const line of lines.slice(-MAX_AUDIT_ENTRIES)) {
+          const entry = JSON.parse(line) as AuditEntry;
+          this.history.push(entry);
+          this.auditSequence = Math.max(this.auditSequence, entry.sequence);
+        }
+      } catch { this.history = []; }
+    }
+  }
+
+  private cleanupExpired() {
+    const now = new Date().toISOString();
+    for (const [token, approval] of this.approvals) {
+      if (approval.expiresAt < now) this.approvals.delete(token);
+    }
+    for (const [txId, tx] of this.transactions) {
+      if (tx.expiresAt < now) this.transactions.delete(txId);
+    }
+  }
 
   async call(request: Request): Promise<ToolResult> {
-    try {
-      return await this.dispatch(request);
-    } catch (error) {
-      return errorResult(request.tool, error instanceof Error ? error : new Error(String(error)));
-    }
-  }
-
-  private async dispatch(request: Request): Promise<ToolResult> {
-    const args = (request.arguments ?? {}) as Record<string, unknown>;
+    this.cleanupExpired();
+    const a = request.arguments ?? {};
     const tool = request.tool;
 
-    // ---- environment -------------------------------------------------
-    if (tool === "mastercam_status") return this.ok(request, { connected: true, backend: "mock", version: "fixture", live: false });
-    if (tool === "mastercam_capabilities") return this.ok(request, this.capabilities());
-    if (tool === "discover_capabilities") return this.ok(request, this.discoverCapabilities(args));
-    if (tool === "get_active_part") return this.ok(request, { name: "fixture-part", path: "fixture://active-part", units: "mm", modified: false, documentRevision: this.revision });
-    if (tool === "get_geometry_summary") return this.ok(request, { solids: 1, surfaces: 6, curves: 12, boundingBox: { x: 100, y: 80, z: 25, unit: "mm" }, units: "mm" });
-    if (tool === "get_selection") return this.ok(request, { operationIds: this.selected, count: this.selected.length });
-    if (tool === "list_machine_groups" || tool === "get_machine_groups") return this.ok(request, [{ id: "mill", name: "Mill machine group", type: "mill" }]);
-    if (tool === "list_operations") return this.ok(request, this.operations.map(item => ({ ...item, feed: operationFeed(item), spindleSpeed: operationSpeed(item) })));
+    if (tool === "mastercam_status") return { ok: true, tool, data: { connected: true, backend: "mock", version: "fixture" } };
+    if (tool === "mastercam_capabilities") return { ok: true, tool, data: { profile: "mock", live: false, fixture: true, supported: ["inspection", "targeting", "feedSpeed", "preview", "rollback", "regeneration", "simulation", "visualContext"] } };
+
+    if (tool === "discover_capabilities") {
+      const groups = { connection: ["mastercam_status", "mastercam_capabilities"], inspection: ["get_active_part", "list_operations", "get_operation", "get_operation_parameters", "get_stock", "get_wcs", "list_tools"], planning: ["mastercam_plan", "preview_operation_parameters", "verify_change"], safety: ["get_operation_risks", "run_simulation", "detect_collisions"], targeting: ["find_operations", "get_selection"], administration: ["mastercam_doctor", "get_version_report", "get_fixture_info"] };
+      const category = String(a["category"] ?? "");
+      return this.result(request, category && groups[category as keyof typeof groups] ? { category, tools: groups[category as keyof typeof groups], nextAction: "Inspect the active part before planning a change" } : { groups, nextAction: "Inspect the active part before planning a change", safeDefaults: { liveWrites: false, posting: false } });
+    }
+
+    if (tool === "get_active_part") return this.result(request, { name: "fixture-part", path: "fixture://active-part", units: "mm", modified: false, revision: this.documentRevision, fingerprint: hashObject({ name: "fixture-part", units: "mm" }) });
+    if (tool === "get_geometry_summary") return this.result(request, { solids: 1, surfaces: 6, curves: 12, boundingBox: { x: 100, y: 80, z: 25 }, units: "mm" });
+    if (tool === "get_selection") return this.result(request, { operationIds: this.selected, count: this.selected.length });
+    if (tool === "list_machine_groups") return this.result(request, [{ id: "mill", name: "Mill machine group", type: "mill" }]);
+    if (tool === "list_operations") return { ok: true, tool, data: this.operations.map(item => ({ ...item })) };
     if (tool === "find_operations") {
-      const query = String(args.query ?? "").toLowerCase();
-      return this.ok(request, this.operations.filter(item => !query || JSON.stringify(item).toLowerCase().includes(query)).map(item => ({ ...item, feed: operationFeed(item), spindleSpeed: operationSpeed(item) })));
+      const query = String(a["query"] ?? "").toLowerCase();
+      return this.result(request, this.operations.filter(item => !query || Object.values(item).some(value => String(value).toLowerCase().includes(query))));
     }
-    if (tool === "get_operation" || tool === "inspect") {
-      const op = this.resolveTarget(args);
-      return this.ok(request, { ...op, feed: operationFeed(op), spindleSpeed: operationSpeed(op), documentRevision: this.revision, operationFingerprint: this.fingerprint(op) });
+
+    const operation = this.resolveOperation(a["operationId"]);
+    if (!operation) return { ok: false, tool, error: { code: "OPERATION_NOT_FOUND", message: `Operation ${a["operationId"] ?? "not specified"} not found` } };
+
+    const opFingerprint = computeFingerprint(operation);
+    const feedRate = operation.feedRate ?? { value: 35, unit: "mm/min" };
+    const spindleSpeed = operation.spindleSpeed ?? { value: 12000, unit: "rpm" };
+
+    if (["get_operation", "inspect"].includes(tool)) return { ok: true, tool, data: { ...operation, documentRevision: this.documentRevision, operationFingerprint: opFingerprint } };
+
+    if (tool === "explain_operation") return this.result(request, { operationId: operation.id, summary: `${operation.name ?? "Unnamed operation"} uses a ${operation.type ?? "machine"} strategy`, inputs: { name: operation.name, type: operation.type, feedRate, spindleSpeed, tool: operation.tool ?? { number: 1 } }, verification: { toolpath: "generated", collisions: "not_checked", live: false }, nextActions: ["Review operation parameters", "Preview any feed or speed change", "Confirm only after rereading the target"], unknownFields: [] });
+
+    if (tool === "get_operation_risks") return this.result(request, { operationId: operation.id, riskLevel: "review_required", checks: [{ name: "toolpath", state: "generated" }, { name: "collision", state: "not_checked" }, { name: "holder clearance", state: "not_verified" }, { name: "machine kinematics", state: "not_verified" }], warnings: ["Fixture data cannot prove live Mastercam or machine safety"], requiresConfirmation: true });
+
+    if (tool === "get_operation_parameters") return this.result(request, { operationId: operation.id, parameters: { feedRate, spindleSpeed, stepdown: { value: 2, unit: "mm" } } });
+
+    if (tool === "get_stock") return this.result(request, { dimensions: { x: 110, y: 90, z: 30 }, units: "mm" });
+    if (tool === "get_wcs") return this.result(request, { name: "WCS 1", origin: [0, 0, 0], axes: { x: [1, 0, 0], y: [0, 1, 0], z: [0, 0, 1] } });
+    if (tool === "list_tools") return this.result(request, [{ number: 1, name: "6mm flat end mill", diameter: 6, units: "mm" }]);
+    if (tool === "get_toolpath_status") return this.result(request, { operationId: operation.id, generated: true, valid: true, dirty: false, collisionState: "not_checked" });
+    if (tool === "get_post_processor") return this.result(request, { name: "fixture-post", extension: ".nc", machine: "mock-mill" });
+    if (tool === "estimate_cycle_time") return this.result(request, { operationId: operation.id, seconds: 42, confidence: "fixture" });
+    if (tool === "compare_toolpaths") return this.result(request, { changed: false, added: 0, removed: 0, modified: 0 });
+    if (tool === "measure") return { ok: true, tool, data: { path: a["path"] ?? "operation.feedRate", value: feedRate.value, unit: feedRate.unit, operationId: operation.id } };
+    if (tool === "assert") { const expected = a["equals"]; const pass = Number(expected) === feedRate.value; return { ok: pass, tool, data: { pass, path: a["path"] ?? "operation.feedRate", actual: feedRate.value, expected, operationId: operation.id } }; }
+    if (tool === "capture_view") return { ok: true, tool, data: { format: "svg", placeholder: true, image: "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='320' height='180'><rect width='100%' height='100%' fill='#222'/><text x='16' y='95' fill='white'>Mock Mastercam view</text></svg>" } };
+
+    if (tool === "preview_operation_parameters") {
+      const feedRateInput = a["feedRate"] ? FeedRateSchema.parse(a["feedRate"]) : undefined;
+      const spindleSpeedInput = a["spindleSpeed"] ? SpindleSpeedSchema.parse(a["spindleSpeed"]) : undefined;
+      if (!feedRateInput && !spindleSpeedInput) return { ok: false, tool, error: { code: "VALIDATION_FAILED", message: "At least one of feedRate or spindleSpeed must be provided" } };
+
+      const before = { feedRate, spindleSpeed };
+      const after = {
+        feedRate: feedRateInput ?? feedRate,
+        spindleSpeed: spindleSpeedInput ?? spindleSpeed
+      };
+      const proposedHash = hashObject(after);
+      const beforeHash = hashObject(before);
+
+      const approvalToken = randomUUID();
+      const transactionId = randomUUID();
+      const expiresAt = new Date(Date.now() + APPROVAL_TTL_MS).toISOString();
+
+      const approval: ApprovalRecord = {
+        approvalToken,
+        transactionId,
+        operationId: operation.id,
+        operationFingerprint: opFingerprint,
+        documentRevision: this.documentRevision,
+        beforeHash,
+        proposedHash,
+        proposed: after,
+        expiresAt,
+        used: false
+      };
+      this.approvals.set(approvalToken, approval);
+
+      return { ok: true, tool, data: { before, after, requiresRegeneration: true, rollbackAvailable: true, approvalToken, expiresAt, documentRevision: this.documentRevision, operationFingerprint: opFingerprint, risks: [] } };
     }
-    if (tool === "explain_operation") {
-      const op = this.resolveTarget(args);
-      return this.ok(request, {
-        operationId: op.id,
-        summary: `${String(op.name ?? "Unnamed operation")} uses a ${String(op.type ?? "machine")} strategy`,
-        inputs: { name: op.name, type: op.type, feed: operationFeed(op), spindleSpeed: operationSpeed(op), tool: op.tool ?? 1 },
-        verification: { toolpath: op.toolpathDirty === true ? "dirty" : "generated", collisions: "not_checked", live: false },
-        nextActions: ["Review operation parameters", "Preview any feed or speed change", "Confirm only after rereading the target"]
-      });
+
+    if (tool === "apply_operation_parameter_preview") {
+      const approvalToken = ApprovalTokenSchema.parse(a["approvalToken"]);
+      const approval = this.approvals.get(approvalToken);
+      if (!approval) return { ok: false, tool, error: { code: "INVALID_APPROVAL_TOKEN", message: "Approval token not found or expired" } };
+      if (approval.used) return { ok: false, tool, error: { code: "APPROVAL_TOKEN_USED", message: "Approval token has already been used" } };
+      if (approval.expiresAt < new Date().toISOString()) { this.approvals.delete(approvalToken); return { ok: false, tool, error: { code: "APPROVAL_TOKEN_EXPIRED", message: "Approval token has expired" } }; }
+
+      const currentOp = this.operations.find(op => op.id === approval.operationId);
+      if (!currentOp) return { ok: false, tool, error: { code: "OPERATION_NOT_FOUND", message: "Target operation no longer exists" } };
+      const currentFingerprint = computeFingerprint(currentOp);
+      if (currentFingerprint !== approval.operationFingerprint) return { ok: false, tool, error: { code: "STALE_PREVIEW", message: "Operation has been modified since preview" } };
+      if (this.documentRevision !== approval.documentRevision) return { ok: false, tool, error: { code: "STALE_PREVIEW", message: "Document has been modified since preview" } };
+
+      const before = { feedRate: currentOp.feedRate, spindleSpeed: currentOp.spindleSpeed };
+      const beforeHash = hashObject(before);
+
+      currentOp.feedRate = approval.proposed.feedRate;
+      currentOp.spindleSpeed = approval.proposed.spindleSpeed;
+
+      this.documentRevision = `rev-${Date.now()}`;
+      const after = { feedRate: currentOp.feedRate, spindleSpeed: currentOp.spindleSpeed };
+      const afterHash = hashObject(after);
+
+      const txReceipt: TransactionReceipt = {
+        transactionId: approval.transactionId,
+        partFingerprint: hashObject({ operations: this.operations.map(computeFingerprint) }),
+        operationId: operation.id,
+        beforeHash,
+        afterHash,
+        before,
+        after,
+        createdAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + TX_TTL_MS).toISOString()
+      };
+      this.transactions.set(approval.transactionId, txReceipt);
+
+      approval.used = true;
+      this.recordAudit({ requestId: request.id, transactionId: approval.transactionId, tool, target: { operationId: operation.id }, policy: {}, beforeHash, afterHash, verified: true });
+
+      return { ok: true, tool, data: { applied: true, transactionId: approval.transactionId, documentRevision: this.documentRevision, operationFingerprint: computeFingerprint(currentOp), before, after, regenerated: true, verification: { pass: true, reread: true, actualFeedRate: currentOp.feedRate, actualSpindleSpeed: currentOp.spindleSpeed } } };
     }
-    if (tool === "get_operation_risks") {
-      const op = this.resolveTarget(args);
-      return this.ok(request, {
-        operationId: op.id,
-        riskLevel: "review_required",
-        checks: [
-          { name: "toolpath", state: op.toolpathDirty === true ? "dirty" : "generated" },
-          { name: "collision", state: "not_checked" },
-          { name: "holder clearance", state: "not_verified" },
-          { name: "machine kinematics", state: "not_verified" }
-        ],
-        warnings: ["Fixture data cannot prove live Mastercam or machine safety"],
-        requiresConfirmation: true
-      });
-    }
-    if (tool === "get_operation_parameters") {
-      const op = this.resolveTarget(args);
-      return this.ok(request, { operationId: op.id, parameters: { feedRate: operationFeed(op), spindleSpeed: operationSpeed(op), stepdown: 2 }, documentRevision: this.revision });
-    }
-    if (tool === "get_stock") return this.ok(request, { dimensions: { x: 110, y: 90, z: 30, unit: "mm" }, units: "mm" });
-    if (tool === "get_wcs") return this.ok(request, { name: "WCS 1", origin: [0, 0, 0], axes: { x: [1, 0, 0], y: [0, 1, 0], z: [0, 0, 1] } });
-    if (tool === "list_tools") return this.ok(request, [{ number: 1, name: "6mm flat end mill", diameter: 6, units: "mm" }]);
-    if (tool === "get_tool") {
-      const number = Number(args.toolId ?? 1);
-      if (!Number.isFinite(number) || number !== 1) throw new MastercamErrorImpl("OPERATION_NOT_FOUND", `Tool ${String(args.toolId)} was not found`);
-      return this.ok(request, { number: 1, name: "6mm flat end mill", diameter: 6, units: "mm" });
-    }
-    if (tool === "get_toolpath_status") {
-      const op = this.resolveTarget(args);
-      return this.ok(request, { operationId: op.id, generated: op.toolpathDirty !== true, valid: true, collisionState: "not_checked" });
-    }
-    if (tool === "get_dirty_toolpaths") return this.ok(request, { operationIds: this.operations.filter(op => op.toolpathDirty === true).map(op => op.id) });
-    if (tool === "get_selected_entities") return this.ok(request, { operationIds: this.selected, count: this.selected.length });
-    if (tool === "get_post_processor") return this.ok(request, { name: "fixture-post", extension: ".nc", machine: "mock-mill" });
-    if (tool === "get_machine_context") return this.ok(request, { machine: { name: "fixture mill", type: "mill", axes: 3 }, stock: { x: 110, y: 90, z: 30, unit: "mm" }, workholding: { state: "fixture_placeholder", verified: false }, wcs: "WCS 1", safety: "not_verified" });
-    if (tool === "estimate_cycle_time") return this.ok(request, { operationIds: this.targetIds(args), seconds: 42, confidence: "fixture" });
-    if (tool === "compare_toolpaths") return this.ok(request, { changed: false, added: 0, removed: 0, modified: 0 });
-    if (tool === "capture_view") {
-      return this.ok(request, {
-        format: "svg",
-        placeholder: true,
-        image: "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='320' height='180'><rect width='100%25' height='100%25' fill='%23222'/><text x='16' y='95' fill='white'>Mock Mastercam view</text></svg>",
-        note: "Mock placeholder; live capture transmits bounded image content"
-      });
-    }
-    if (tool === "get_programming_context") return this.ok(request, this.programmingContext());
+
     if (tool === "verify_change") {
-      // BUG-04: an empty expectation is a validation error, never a NaN comparison.
-      const op = this.resolveTarget(args);
-      const hasExpected = args.expectedFeed !== undefined || args.expected !== undefined ||
-        (args.expected && typeof args.expected === "object");
-      if (!hasExpected) throw new MastercamErrorImpl("VALIDATION_FAILED", "verify_change requires an expected feedRate or spindleSpeed");
-      const current = operationFeed(op);
-      const expectedValue = args.expectedFeed !== undefined ? Number(args.expectedFeed)
-        : args.expected && typeof args.expected === "object" && (args.expected as { feedRate?: { value?: unknown } }).feedRate
-          ? Number((args.expected as { feedRate: { value: unknown } }).feedRate.value)
-          : Number(args.expected);
-      if (!Number.isFinite(expectedValue) || expectedValue <= 0) throw new MastercamErrorImpl("VALIDATION_FAILED", "expected feed must be a finite positive number");
-      const pass = current.value === expectedValue;
-      return { ok: pass, tool: request.tool, data: { pass, operationId: op.id, expectedFeed: expectedValue, actualFeed: current.value, unit: current.unit, reread: true, verification: pass ? "verified" : "mismatch" } };
-    }
-    if (tool === "measure") {
-      const op = this.resolveTarget(args);
-      const path = String(args.path ?? "operation.feed");
-      const value = path.endsWith("spindleSpeed") ? operationSpeed(op).value : operationFeed(op).value;
-      return this.ok(request, { path, value, operationId: op.id });
-    }
-    if (tool === "assert") {
-      const op = this.resolveTarget(args);
-      const path = String(args.path ?? "operation.feed");
-      const value = path.endsWith("spindleSpeed") ? operationSpeed(op).value : operationFeed(op).value;
-      const pass = args.equals !== undefined && value === Number(args.equals);
-      return { ok: pass, tool: request.tool, data: { pass, path, actual: value, expected: args.equals, operationId: op.id } };
+      const expected = a["expected"] as Record<string, unknown> | undefined;
+      const expectedFeedRate = expected?.feedRate ? FeedRateSchema.parse(expected.feedRate) : undefined;
+      const expectedSpindleSpeed = expected?.spindleSpeed ? SpindleSpeedSchema.parse(expected.spindleSpeed) : undefined;
+      if (!expectedFeedRate && !expectedSpindleSpeed) return { ok: false, tool, error: { code: "VALIDATION_FAILED", message: "At least one expected value (feedRate or spindleSpeed) must be provided" } };
+
+      const actualFeedRate = operation.feedRate;
+      const actualSpindleSpeed = operation.spindleSpeed;
+
+      const feedMatch = (!expectedFeedRate || (actualFeedRate && expectedFeedRate.value === actualFeedRate.value && expectedFeedRate.unit === actualFeedRate.unit)) as boolean;
+      const speedMatch = (!expectedSpindleSpeed || (actualSpindleSpeed && expectedSpindleSpeed.value === actualSpindleSpeed.value && expectedSpindleSpeed.unit === actualSpindleSpeed.unit)) as boolean;
+
+      const pass = feedMatch && speedMatch;
+      return { ok: pass, tool, data: { pass, operationId: operation.id, expectedFeedRate, actualFeedRate, expectedSpindleSpeed, actualSpindleSpeed, reread: true, verification: pass ? "verified" : "mismatch" } };
     }
 
-    // ---- mutation workflow -------------------------------------------
-    if (tool === "preview_operation_parameters") return this.scheduler.schedule({ lane: "read", documentKey: this.documentKey, run: () => this.previewOperation(request, args) });
-    if (tool === "apply_operation_parameter_preview") return this.scheduler.schedule({ lane: "mutation", documentKey: this.documentKey, run: () => this.applyPreview(request, args) });
-    if (tool === "rollback_change") return this.scheduler.schedule({ lane: "mutation", documentKey: this.documentKey, run: () => this.rollback(request, args) });
+    if (tool === "rollback_change") {
+      const transactionId = TransactionIdSchema.parse(a["transactionId"]);
+      const tx = this.transactions.get(transactionId);
+      if (!tx) return { ok: false, tool, error: { code: "TRANSACTION_NOT_FOUND", message: "Rollback transaction not found or expired" } };
 
-    // ---- legacy mutation names (kept working, mapped onto new flow) ---
-    if (tool === "set_feed_speed") return this.scheduler.schedule({ lane: "mutation", documentKey: this.documentKey, run: () => this.legacySetFeedSpeed(request, args) });
+      const currentOp = this.operations.find(op => op.id === tx.operationId);
+      if (!currentOp) return { ok: false, tool, error: { code: "OPERATION_NOT_FOUND", message: "Target operation no longer exists" } };
+      const currentFingerprint = computeFingerprint(currentOp);
+      if (currentFingerprint !== tx.afterHash) return { ok: false, tool, error: { code: "STALE_STATE", message: "Operation has been modified since the transaction; rollback refused" } };
+      if (this.documentRevision !== tx.partFingerprint) return { ok: false, tool, error: { code: "STALE_STATE", message: "Document has been modified since the transaction; rollback refused" } };
 
-    // ---- advanced ------------------------------------------------------
-    if (tool === "regenerate_toolpath") return this.scheduler.schedule({ lane: "mutation", documentKey: this.documentKey, run: () => this.regenerate(request, args) });
-    if (tool === "run_simulation") return this.ok(request, { state: "complete", seconds: 3, collisions: 0, warnings: [], provenance: { fixture: true, note: "Fixture simulation is not evidence of live machine safety" } });
-    if (tool === "detect_collisions") return this.ok(request, { collisions: [], checkedOperations: this.targetIds(args) });
+      const beforeRollback = { feedRate: currentOp.feedRate, spindleSpeed: currentOp.spindleSpeed };
+      currentOp.feedRate = tx.before.feedRate as { value: number; unit: string } | undefined;
+      currentOp.spindleSpeed = tx.before.spindleSpeed as { value: number; unit: string } | undefined;
 
-    // ---- diagnostics / shop -------------------------------------------
-    if (tool === "get_version_report") return this.ok(request, { mastercam: "fixture", netHook: "fixture", supported: ["mock"], liveMappingsVerified: false });
-    if (tool === "get_fixture_info") return this.ok(request, { backend: "mock", fixture: true, replayable: true, liveMastercamRequired: false, limitations: ["Geometry and kinematics are synthetic", "Collision results are not evidence of machine safety"] });
-    if (tool === "get_audit_history") return this.ok(request, { note: "Audit entries are append-only on disk; see MASTERCAM_MCP_AUDIT_PATH", documentRevision: this.revision });
+      this.documentRevision = `rev-${Date.now()}`;
+      const afterRollback = { feedRate: currentOp.feedRate, spindleSpeed: currentOp.spindleSpeed };
+      const rollbackTxId = randomUUID();
+      const rollbackReceipt: TransactionReceipt = {
+        transactionId: rollbackTxId,
+        partFingerprint: hashObject({ operations: this.operations.map(computeFingerprint) }),
+        operationId: operation.id,
+        beforeHash: tx.afterHash,
+        afterHash: hashObject(afterRollback),
+        before: beforeRollback,
+        after: afterRollback,
+        createdAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + TX_TTL_MS).toISOString()
+      };
+      this.transactions.set(rollbackTxId, rollbackReceipt);
 
-    return { ok: false, tool, error: { code: "UNSUPPORTED_TOOL", message: `Tool ${tool} is not implemented by the mock backend`, remediation: "See mastercam_capabilities for supported tools" } };
+      this.recordAudit({ requestId: request.id, transactionId: rollbackTxId, tool, target: { operationId: operation.id, rollbackOf: transactionId }, policy: {}, beforeHash: tx.afterHash, afterHash: rollbackReceipt.afterHash, verified: true });
+
+      return { ok: true, tool, data: { applied: true, rollbackTransactionId: rollbackTxId, documentRevision: this.documentRevision, operationFingerprint: computeFingerprint(currentOp), before: beforeRollback, after: afterRollback, regenerated: true, verification: { pass: true, reread: true } } };
+    }
+
+    if (tool === "regenerate_toolpath") {
+      const operationIds = a["operationIds"] as unknown[] | undefined;
+      return this.result(request, { operationIds: operationIds?.map((id: unknown) => OperationIdSchema.parse(id)) ?? [operation.id], regenerated: true, progress: ["queued", "generating", "complete"], durationMs: 100 });
+    }
+    if (tool === "run_simulation") return this.result(request, { state: "complete", durationSeconds: 3, collisions: [], warnings: [], cycleTimeEstimate: 42, operationsSimulated: 1 });
+    if (tool === "detect_collisions") {
+      const operationIds = a["operationIds"] as unknown[] | undefined;
+      return this.result(request, { collisions: [], checkedOperations: operationIds?.map((id: unknown) => OperationIdSchema.parse(id)) ?? [operation.id], durationMs: 50 });
+    }
+    if (tool === "get_version_report") return this.result(request, { mastercam: "fixture", netHook: "fixture", supported: ["mock"], liveMappingsVerified: false, adapterVersion: "0.1.6", protocolVersion: 2 });
+    if (tool === "get_machine_context") return this.result(request, { machine: { name: "fixture mill", type: "mill", axes: 3 }, stock: { x: 110, y: 90, z: 30, units: "mm" }, workholding: { state: "fixture_placeholder", verified: false }, wcs: "WCS 1", safety: "not_verified" });
+    if (tool === "get_fixture_info") return this.result(request, { backend: "mock", fixture: true, replayable: true, liveMastercamRequired: false, limitations: ["Geometry and kinematics are synthetic", "Collision results are not evidence of machine safety"] });
+    if (tool === "client_setup_check") return this.result(request, { codex: "not_checked", claude: "not_checked", http: "available", guidance: "Run the installer with ConfigureClients on Windows" });
+    if (tool === "get_audit_history") {
+      const limit = Math.min(Number(a["limit"] ?? 100), 1000);
+      let entries = this.history;
+      if (a["tool"]) entries = entries.filter(e => e.tool === a["tool"]);
+      if (a["operationId"]) entries = entries.filter(e => e.target.operationId === Number(a["operationId"]));
+      return this.result(request, { entries: entries.slice(-limit), total: entries.length });
+    }
+
+    return { ok: false, tool, error: { code: "UNSUPPORTED_TOOL", message: `Tool ${tool} is not implemented` } };
   }
 
-  // ---- mutation internals ---------------------------------------------
-
-  private async previewOperation(request: Request, args: Record<string, unknown>): Promise<ToolResult> {
-    const op = this.requireExactTarget(args.operationId);
-    const changes: { feedRate?: FeedRate; spindleSpeed?: SpindleSpeed } = {};
-    if (args.changes && typeof args.changes === "object") {
-      const c = args.changes as Record<string, unknown>;
-      if (c.feedRate !== undefined) changes.feedRate = c.feedRate as FeedRate;
-      if (c.spindleSpeed !== undefined) changes.spindleSpeed = c.spindleSpeed as SpindleSpeed;
-    }
-    if (changes.feedRate === undefined && changes.spindleSpeed === undefined) {
-      throw new MastercamErrorImpl("VALIDATION_FAILED", "At least one of feedRate or spindleSpeed must be provided");
-    }
-    const before: { feedRate?: FeedRate; spindleSpeed?: SpindleSpeed } = {
-      ...(changes.feedRate !== undefined ? { feedRate: operationFeed(op) } : {}),
-      ...(changes.spindleSpeed !== undefined ? { spindleSpeed: operationSpeed(op) } : {})
-    };
-    const after: { feedRate?: FeedRate; spindleSpeed?: SpindleSpeed } = {
-      ...(changes.feedRate !== undefined ? { feedRate: changes.feedRate } : {}),
-      ...(changes.spindleSpeed !== undefined ? { spindleSpeed: changes.spindleSpeed } : {})
-    };
-    const operationFingerprint = this.fingerprint(op);
-    const preview = this.ledger.createPreview({
-      tool: "preview_operation_parameters",
-      operationId: typeof op.id === "number" ? op.id : Number(op.id),
-      changes,
-      before,
-      after,
-      documentRevision: this.revision,
-      operationFingerprint,
-      beforeHash: sha256Of(before),
-      afterHash: sha256Of(after),
-      requiresRegeneration: true
-    });
-    this.audit.record({ requestId: request.id, tool: request.tool, target: { operationId: op.id }, policy: { action: "preview" }, beforeHash: preview.beforeHash, afterHash: preview.afterHash });
-    return this.ok(request, {
-      operationId: op.id,
-      before,
-      after,
-      risks: ["Fixture preview; live writes require a verified adapter"],
-      requiresRegeneration: true,
-      approvalToken: preview.approvalToken,
-      expiresAt: new Date(preview.expiresAt).toISOString(),
-      documentRevision: this.revision,
-      operationFingerprint
-    });
-  }
-
-  private async applyPreview(request: Request, args: Record<string, unknown>): Promise<ToolResult> {
-    const token = String(args.approvalToken ?? "");
-    if (!token) throw new MastercamErrorImpl("APPROVAL_TOKEN_INVALID", "approvalToken is required");
-    const idempotencyKey = typeof args.idempotencyKey === "string" ? args.idempotencyKey : undefined;
-    if (idempotencyKey) {
-      const seen = this.ledger.idempotencyKeySeen(idempotencyKey);
-      if (seen) return this.ok(request, this.applyReceipt(seen, true));
-    }
-    // Re-derive the live fingerprint: CAS gate. The token alone is not enough.
-    const probe = this.ledger.peekPreview(token);
-    const op = this.requireExactTarget(probe.operationId);
-    const currentFingerprint = this.fingerprint(op);
-    const preview = this.ledger.consumePreview(token, { operationFingerprint: currentFingerprint });
-    const changed = applyQuantity(op, preview.changes);
-    this.revision = documentRevision(this.operations);
-    const applied = this.ledger.recordApply(preview);
-    if (idempotencyKey) this.ledger.rememberIdempotency(idempotencyKey, applied);
-    const transactionId = applied.transactionId;
-    const rollback = this.ledger.createRollback(transactionId);
-    this.audit.record({
-      requestId: request.id,
-      transactionId,
-      tool: request.tool,
-      target: { operationId: op.id },
-      policy: { action: "apply", idempotencyKey },
-      beforeHash: applied.beforeHash,
-      afterHash: applied.afterHash,
-      verified: true
-    });
-    return this.ok(request, {
-      applied: true,
-      operationId: op.id,
-      before: applied.before,
-      after: changed,
-      requiresRegeneration: applied.requiresRegeneration,
-      transactionId,
-      rollback: { transactionId: rollback.transactionId, expiresAt: new Date(rollback.expiresAt).toISOString() },
-      documentRevision: this.revision,
-      operationFingerprint: this.fingerprint(op)
-    });
-  }
-
-  private async rollback(request: Request, args: Record<string, unknown>): Promise<ToolResult> {
-    const transactionId = String(args.transactionId ?? "");
-    if (!transactionId) throw new MastercamErrorImpl("APPROVAL_TOKEN_INVALID", "transactionId is required");
-    const record = this.ledger.consumeRollback(transactionId);
-    const op = this.requireExactTarget(record.operationId);
-    // CAS: current state must still match what the transaction produced.
-    const currentFeed = operationFeed(op);
-    const currentSpeed = operationSpeed(op);
-    const after = record.restoredSource ?? record.restored;
-    const matchesAfter =
-      (after.feedRate === undefined || sameFeed(currentFeed, after.feedRate as FeedRate)) &&
-      (after.spindleSpeed === undefined || currentSpeed.value === after.spindleSpeed.value);
-    if (!matchesAfter) {
-      throw new MastercamErrorImpl("STALE_PREVIEW", "Operation state changed after the transaction; rollback refused");
-    }
-    const restored = applyQuantity(op, record.restored);
-    this.revision = documentRevision(this.operations);
-    this.audit.record({ requestId: request.id, transactionId: record.transactionId, tool: request.tool, target: { operationId: op.id }, policy: { action: "rollback" }, verified: true });
-    return this.ok(request, {
-      applied: true,
-      operationId: op.id,
-      restored,
-      transactionId: record.transactionId,
-      rollbackOf: record.rollbackOf,
-      documentRevision: this.revision
-    });
-  }
-
-  private async legacySetFeedSpeed(request: Request, args: Record<string, unknown>): Promise<ToolResult> {
-    // Legacy path retained for compatibility: dryRun maps to preview, otherwise
-    // it goes through the same approval-free explicit-value flow but still
-    // requires an exact operation match and records a transaction receipt.
-    const op = this.requireExactTarget(args.operationId);
-    const value = Number(args.feed);
-    if (!Number.isFinite(value) || value <= 0) throw new MastercamErrorImpl("INVALID_FEED", "feed must be a finite positive number");
-    if (args.dryRun === true) {
-      const before = operationFeed(op);
-      return this.ok(request, { applied: false, dryRun: true, operationId: op.id, before, after: { value, unit: before.unit }, note: "dryRun is a preview; prefer preview_operation_parameters" });
-    }
-    const before = operationFeed(op);
-    const unit = before.unit;
-    const after = { value, unit };
-    const applied = applyQuantity(op, { feedRate: after });
-    this.revision = documentRevision(this.operations);
-    const transactionId = newTransactionId();
-    const rollback = this.ledger.createRollback === undefined ? undefined : undefined; // rollback available via new flow
-    void rollback;
-    this.audit.record({ requestId: request.id, transactionId, tool: request.tool, target: { operationId: op.id }, policy: { action: "apply", legacy: true }, beforeHash: sha256Of({ feedRate: before }), afterHash: sha256Of({ feedRate: after }), verified: true });
-    return this.ok(request, {
-      applied: true,
-      operationId: op.id,
-      before: { feedRate: before },
-      after: { feedRate: applied.feedRate },
-      transactionId,
-      documentRevision: this.revision,
-      note: "Use preview_operation_parameters + apply_operation_parameter_preview for guaranteed rollback receipts"
-    });
-  }
-
-  private async regenerate(request: Request, args: Record<string, unknown>): Promise<ToolResult> {
-    const ids = Array.isArray(args.operationIds) ? (args.operationIds as number[]) : [];
-    const targets = ids.length ? ids.map(id => this.requireExactTarget(id)) : [];
-    for (const op of targets) op.toolpathDirty = false;
-    this.audit.record({ requestId: request.id, tool: request.tool, target: { operationIds: targets.map(op => op.id) }, policy: { action: "regenerate" } });
-    return this.ok(request, { operationIds: targets.map(op => op.id), regenerated: true, progress: ["queued", "generating", "complete"] });
-  }
-
-  private applyChanges(op: Record<string, unknown>, changes: { feedRate?: FeedRate; spindleSpeed?: SpindleSpeed }): { feedRate: FeedRate; spindleSpeed: SpindleSpeed } {
-    return applyQuantity(op, changes);
-  }
-
-  // ---- helpers ---------------------------------------------------------
-
-  /** BUG-01 fix: never fall back to the first operation. */
-  private resolveTarget(args: Record<string, unknown>): Record<string, unknown> {
-    if (args.operationId === undefined) {
-      if (this.operations.length === 1) return this.operations[0]!;
-      throw new MastercamErrorImpl("TARGET_REQUIRED", "operationId is required when more than one operation exists");
-    }
-    const id = Number(args.operationId);
-    const op = this.operations.find(item => item.id === id);
-    if (!op) throw new MastercamErrorImpl("OPERATION_NOT_FOUND", `Operation ${String(args.operationId)} was not found`);
-    return op;
-  }
-
-  private requireExactTarget(id: unknown): Record<string, unknown> {
+  private resolveOperation(id: unknown): Operation | null {
     if (id === undefined || id === null) {
-      // With exactly one operation the target is unambiguous by definition;
-      // otherwise mutations require an explicit id (audit BUG-01).
-      if (this.operations.length === 1) return this.operations[0]!;
-      throw new MastercamErrorImpl("TARGET_REQUIRED", "operationId is required when more than one operation exists");
+      if (this.selected.length === 1) return this.operations.find(op => op.id === this.selected[0]) ?? null;
+      return null;
     }
-    const numeric = Number(id);
-    const op = this.operations.find(item => item.id === numeric);
-    if (!op) throw new MastercamErrorImpl("OPERATION_NOT_FOUND", `Operation ${String(id)} was not found`);
-    return op;
+    const numId = Number(id);
+    if (!Number.isInteger(numId) || numId <= 0) return null;
+    return this.operations.find(op => op.id === numId) ?? null;
   }
 
-  private targetIds(args: Record<string, unknown>): number[] {
-    if (Array.isArray(args.operationIds) && args.operationIds.length) return (args.operationIds as number[]).map(Number);
-    return this.operations.map(op => typeof op.id === "number" ? op.id : Number(op.id));
-  }
+  private result(request: Request, data: unknown): ToolResult { return { ok: true, tool: request.tool, data }; }
 
-  private fingerprint(op: Record<string, unknown>): string {
-    return fingerprintOperation(Number(op.id), { feed: op.feed, spindleSpeed: op.spindleSpeed, tool: op.tool, toolpathDirty: op.toolpathDirty });
-  }
-
-  private ok(request: Request, data: unknown): ToolResult {
-    return { ok: true, tool: request.tool, data, live: false, documentRevision: this.revision };
-  }
-
-  private capabilities() {
-    const readTools = ["mastercam_status", "mastercam_capabilities", "get_active_part", "list_operations", "get_operation", "find_operations", "explain_operation", "get_operation_risks", "get_operation_parameters", "get_stock", "get_wcs", "list_tools", "get_machine_context", "get_programming_context", "get_dirty_toolpaths"];
-    const mutationTools = ["preview_operation_parameters", "apply_operation_parameter_preview", "rollback_change", "set_feed_speed", "regenerate_toolpath"];
-    return {
-      profile: "mock",
-      live: false,
-      fixture: true,
-      verificationTier: "IMPLEMENTED",
-      supported: { read: readTools, mutation: mutationTools },
-      unavailable: ["run_simulation", "detect_collisions", "post_program", "cycle_start"],
-      note: "Fixture data is synthetic and cannot prove live Mastercam behavior"
-    };
-  }
-
-  private discoverCapabilities(args: Record<string, unknown>) {
-    const groups: Record<string, string[]> = {
-      connection: ["mastercam_status", "mastercam_capabilities"],
-      inspection: ["get_active_part", "list_operations", "get_operation", "get_operation_parameters", "get_stock", "get_wcs", "list_tools"],
-      planning: ["mastercam_plan", "preview_operation_parameters", "apply_operation_parameter_preview"],
-      safety: ["get_operation_risks", "run_simulation", "detect_collisions"],
-      targeting: ["find_operations", "get_selection"],
-      administration: ["mastercam_doctor", "get_version_report", "get_fixture_info"]
-    };
-    const category = typeof args.category === "string" ? args.category : "";
-    if (category && groups[category]) return { category, tools: groups[category], nextAction: "Inspect the active part before planning a change" };
-    return { groups, nextAction: "Inspect the active part before planning a change", safeDefaults: { liveWrites: false, posting: false } };
-  }
-
-  private programmingContext() {
-    return {
-      documentRevision: this.revision,
-      activePart: { name: "fixture-part", units: "mm" },
-      selection: this.selected,
-      machineGroup: { id: "mill", name: "Mill machine group", type: "mill" },
-      wcs: { name: "WCS 1" },
-      stock: { dimensions: { x: 110, y: 90, z: 30, unit: "mm" } },
-      toolSummary: { count: 1, numbers: [1] },
-      operationSummary: this.operations.map(op => ({ id: op.id, name: op.name, type: op.type, toolpathDirty: op.toolpathDirty === true })),
-      dirtyToolpaths: this.operations.filter(op => op.toolpathDirty === true).map(op => op.id),
-      safety: { liveVerified: false, note: "Fixture context cannot prove live machine safety" }
-    };
-  }
-
-  private applyReceipt(applied: { transactionId: string; operationId: number; before: unknown; after: unknown; requiresRegeneration: boolean }, duplicate: boolean) {
-    return {
-      applied: true,
-      duplicate: duplicate || undefined,
-      operationId: applied.operationId,
-      before: applied.before,
-      after: applied.after,
-      requiresRegeneration: applied.requiresRegeneration,
-      transactionId: applied.transactionId
-    };
+  private recordAudit(entry: Omit<AuditEntry, "sequence" | "timestamp" | "previousEntryHash" | "entryHash">) {
+    this.auditSequence++;
+    const timestamp = new Date().toISOString();
+    const previousEntryHash = this.history.length > 0 ? (this.history[this.history.length - 1]?.entryHash ?? "0".repeat(64)) : "0".repeat(64);
+    const entryHash = hashObject({ ...entry, sequence: this.auditSequence, timestamp, previousEntryHash });
+    const fullEntry: AuditEntry = { ...entry, sequence: this.auditSequence, timestamp, previousEntryHash, entryHash };
+    this.history.push(fullEntry);
+    try { mkdirSync(dirname(this.auditPath), { recursive: true }); appendFileSync(this.auditPath, JSON.stringify(fullEntry) + "\n"); } catch { }
   }
 }
 
 export function request(tool: string, args: Record<string, unknown> = {}): Request { return { id: randomUUID(), tool, arguments: args }; }
-
-import net from "node:net";
-import { FrameReader, encodeFrame } from "./transport/framing.js";
-
-/**
- * Legacy per-call pipe transport retained for compatibility. New deployments
- * should use LiveBackend, which keeps one persistent connection per Mastercam
- * instance and supports cancellation and deadlines (audit PERF-01).
- */
-export class PipeBackend implements Backend {
-  constructor(private readonly pipeName: string) {}
-  call(req: Request): Promise<ToolResult> {
-    return new Promise((resolve, reject) => {
-      const socket = net.createConnection(this.pipeName);
-      let settled = false;
-      const reader = new FrameReader();
-      const finish = (error?: Error, result?: ToolResult) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        socket.destroy();
-        if (error) reject(error);
-        else resolve(result!);
-      };
-      const timer = setTimeout(() => finish(new Error("TIMEOUT: Mastercam named pipe timeout")), 15_000);
-      socket.setEncoding("utf8");
-      socket.on("connect", () => {
-        if (!socket.write(encodeFrame(JSON.stringify(req)))) finish(new Error("BACKEND_UNAVAILABLE: pipe write failed"));
-      });
-      socket.on("data", (chunk: string) => {
-        let frames: string[];
-        try { frames = reader.push(chunk); }
-        catch (error) { finish(error instanceof Error ? error : new Error(String(error))); return; }
-        for (const frame of frames) {
-          try {
-            const response = JSON.parse(frame) as { id?: string; result?: ToolResult };
-            if (response.id !== req.id) continue; // late frame from an earlier request
-            finish(undefined, response.result);
-          } catch (error) {
-            finish(error instanceof Error ? error : new Error(String(error)));
-          }
-          return;
-        }
-      });
-      socket.on("error", error => finish(error));
-      socket.on("close", () => { if (!settled) finish(new Error("BACKEND_UNAVAILABLE: Mastercam named pipe closed before a response")); });
-    });
-  }
-}
-
-// Re-export shared formatting for callers that want human summaries.
-export { formatFeed, formatSpindle, feedToMmPerMinute, newApprovalToken };

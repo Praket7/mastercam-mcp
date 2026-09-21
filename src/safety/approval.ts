@@ -1,165 +1,97 @@
-import { createHash, randomBytes } from "node:crypto";
-import { sha256Of } from "../audit/audit-log.js";
+import { randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 
-export interface QuantitySnapshot { feedRate?: { value: number; unit: string }; spindleSpeed?: { value: number; unit: string } }
-
-export interface PreviewRecord {
+export interface ApprovalRecord {
   approvalToken: string;
-  tool: string;
+  transactionId: string;
   operationId: number;
-  changes: QuantitySnapshot;
-  before: QuantitySnapshot;
-  after: QuantitySnapshot;
-  documentRevision: string;
   operationFingerprint: string;
+  documentRevision: string;
+  beforeHash: string;
+  proposedHash: string;
+  proposed: { feedRate?: { value: number; unit: string }; spindleSpeed?: { value: number; unit: string } };
+  expiresAt: string;
+  used: boolean;
+}
+
+export interface TransactionReceipt {
+  transactionId: string;
+  partFingerprint: string;
+  operationId: number;
   beforeHash: string;
   afterHash: string;
-  requiresRegeneration: boolean;
-  createdAt: number;
-  expiresAt: number;
-  used: boolean;
+  before: { feedRate?: { value: number; unit: string }; spindleSpeed?: { value: number; unit: string } };
+  after: { feedRate?: { value: number; unit: string }; spindleSpeed?: { value: number; unit: string } };
+  createdAt: string;
+  expiresAt: string;
 }
 
-export interface ApplyRecord extends PreviewRecord {
-  appliedAt: number;
-  transactionId: string;
-}
+const APPROVAL_TTL_MS = 5 * 60 * 1000;
+const TX_TTL_MS = 10 * 60 * 1000;
 
-export interface RollbackRecord {
-  transactionId: string;
-  rollbackOf: string;
-  operationId: number;
-  restored: QuantitySnapshot;
-  /** State the transaction produced; rollback refuses if current state diverges. */
-  restoredSource?: QuantitySnapshot;
-  appliedAt: number;
-  expiresAt: number;
-  used: boolean;
-}
+export class ApprovalManager {
+  private approvals = new Map<string, ApprovalRecord>();
+  private transactions = new Map<string, TransactionReceipt>();
 
-const DEFAULT_TTL_MS = 10 * 60 * 1000;
-const MAX_LEDGER = 500;
+  createApproval(operationId: number, operationFingerprint: string, documentRevision: string, before: { feedRate?: { value: number; unit: string }; spindleSpeed?: { value: number; unit: string } }, proposed: { feedRate?: { value: number; unit: string }; spindleSpeed?: { value: number; unit: string } }): ApprovalRecord {
+    const approvalToken = randomUUID();
+    const transactionId = randomUUID();
+    const beforeHash = hashObject(before);
+    const proposedHash = hashObject(proposed);
+    const expiresAt = new Date(Date.now() + APPROVAL_TTL_MS).toISOString();
 
-/**
- * The ledger is the single source of truth for approvals and rollbacks.
- * A model cannot invent `confirmed: true`; it must present a server-issued,
- * single-use, expiring token bound to the exact state it previewed.
- */
-export class ApprovalLedger {
-  private previews = new Map<string, PreviewRecord>();
-  private applied = new Map<string, ApplyRecord>();
-  private rollbacks = new Map<string, RollbackRecord>();
-  private readonly ttlMs: number;
-
-  constructor(ttlMs = DEFAULT_TTL_MS) {
-    this.ttlMs = ttlMs;
+    const approval: ApprovalRecord = { approvalToken, transactionId, operationId, operationFingerprint, documentRevision, beforeHash, proposedHash, proposed, expiresAt, used: false };
+    this.approvals.set(approvalToken, approval);
+    return approval;
   }
 
-  createPreview(input: Omit<PreviewRecord, "approvalToken" | "createdAt" | "expiresAt" | "used">): PreviewRecord {
-    this.evict();
-    const token = `appr_${randomBytes(24).toString("base64url")}`;
-    const now = Date.now();
-    const record: PreviewRecord = {
-      ...input,
-      approvalToken: token,
-      createdAt: now,
-      expiresAt: now + this.ttlMs,
-      used: false
+  validateApproval(approvalToken: string, currentOperationFingerprint: string, currentDocumentRevision: string): { approval: ApprovalRecord; error?: string } {
+    const approval = this.approvals.get(approvalToken);
+    if (!approval) return { approval: null as any, error: "INVALID_APPROVAL_TOKEN" };
+    if (approval.used) return { approval: null as any, error: "APPROVAL_TOKEN_USED" };
+    if (approval.expiresAt < new Date().toISOString()) { this.approvals.delete(approvalToken); return { approval: null as any, error: "APPROVAL_TOKEN_EXPIRED" }; }
+    if (currentOperationFingerprint !== approval.operationFingerprint) return { approval: null as any, error: "STALE_PREVIEW" };
+    if (currentDocumentRevision !== approval.documentRevision) return { approval: null as any, error: "STALE_PREVIEW" };
+    return { approval };
+  }
+
+  markUsed(approvalToken: string): void {
+    const approval = this.approvals.get(approvalToken);
+    if (approval) { approval.used = true; }
+  }
+
+  createTransactionReceipt(approval: ApprovalRecord, after: { feedRate?: { value: number; unit: string }; spindleSpeed?: { value: number; unit: string } }, partFingerprint: string): TransactionReceipt {
+    const afterHash = hashObject(after);
+    const receipt: TransactionReceipt = {
+      transactionId: approval.transactionId,
+      partFingerprint,
+      operationId: approval.operationId,
+      beforeHash: approval.beforeHash,
+      afterHash,
+      before: approval.proposed,
+      after,
+      createdAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + TX_TTL_MS).toISOString()
     };
-    this.previews.set(token, record);
-    return record;
+    this.transactions.set(approval.transactionId, receipt);
+    return receipt;
   }
 
-  /** Non-consuming lookup so the apply path can resolve the target for CAS. */
-  peekPreview(token: string): PreviewRecord {
-    const record = this.previews.get(token);
-    if (!record) throw new Error("APPROVAL_TOKEN_INVALID: unknown or already consumed approval token");
-    return record;
+  getTransaction(transactionId: string): TransactionReceipt | undefined {
+    const tx = this.transactions.get(transactionId);
+    if (tx && tx.expiresAt < new Date().toISOString()) { this.transactions.delete(transactionId); return undefined; }
+    return tx;
   }
 
-  /** Returns the record and marks it used; throws ErrorInfo on any invalid state. */
-  consumePreview(token: string, expected: { operationFingerprint: string }): PreviewRecord {
-    const record = this.previews.get(token);
-    if (!record) throw new Error("APPROVAL_TOKEN_INVALID: unknown or already consumed approval token");
-    this.previews.delete(token);
-    if (record.used) throw new Error("APPROVAL_TOKEN_INVALID: approval token was already used");
-    if (Date.now() > record.expiresAt) throw new Error("APPROVAL_TOKEN_EXPIRED: request a fresh preview");
-    if (record.operationFingerprint !== expected.operationFingerprint) {
-      throw new Error(`STALE_PREVIEW: operation changed since preview (${record.operationFingerprint} != ${expected.operationFingerprint})`);
-    }
-    record.used = true;
-    return record;
-  }
-
-  recordApply(record: PreviewRecord): ApplyRecord {
-    const applied: ApplyRecord = {
-      ...record,
-      appliedAt: Date.now(),
-      transactionId: `txn_${randomBytes(16).toString("base64url")}`
-    };
-    this.applied.set(applied.transactionId, applied);
-    return applied;
-  }
-
-  /** Creates a one-use rollback receipt bound to the applied transaction. */
-  createRollback(transactionId: string): RollbackRecord {
-    const applied = this.applied.get(transactionId);
-    if (!applied) throw new Error("APPROVAL_TOKEN_INVALID: unknown transaction");
-    const record: RollbackRecord = {
-      transactionId: `txn_${randomBytes(16).toString("base64url")}`,
-      rollbackOf: transactionId,
-      operationId: applied.operationId,
-      restored: applied.before,
-      restoredSource: applied.after,
-      appliedAt: Date.now(),
-      expiresAt: Date.now() + this.ttlMs,
-      used: false
-    };
-    this.rollbacks.set(record.transactionId, record);
-    return record;
-  }
-
-  consumeRollback(transactionId: string): RollbackRecord {
-    // Accept either the rollback receipt id or the original transaction id.
-    const record = this.rollbacks.get(transactionId) ?? [...this.rollbacks.values()].find(r => r.rollbackOf === transactionId && !r.used);
-    if (!record) throw new Error("APPROVAL_TOKEN_INVALID: unknown or already consumed rollback transaction");
-    if (record.used) throw new Error("APPROVAL_TOKEN_INVALID: rollback was already applied");
-    if (Date.now() > record.expiresAt) throw new Error("APPROVAL_TOKEN_EXPIRED: request a new rollback receipt");
-    record.used = true;
-    return record;
-  }
-
-  /** Idempotency: repeat calls with the same key return the original outcome. */
-  idempotencyKeySeen(key: string): ApplyRecord | undefined {
-    return this.idempotency.get(key);
-  }
-
-  rememberIdempotency(key: string, record: ApplyRecord): void {
-    if (this.idempotency.size >= MAX_LEDGER) {
-      const first = this.idempotency.keys().next().value;
-      if (first) this.idempotency.delete(first);
-    }
-    this.idempotency.set(key, record);
-  }
-
-  private idempotency = new Map<string, ApplyRecord>();
-
-  private evict(): void {
-    if (this.previews.size < MAX_LEDGER) return;
-    const cutoff = Date.now() - this.ttlMs;
-    for (const [token, record] of this.previews) if (record.used || record.expiresAt < cutoff) this.previews.delete(token);
-    while (this.previews.size >= MAX_LEDGER) {
-      const oldest = this.previews.keys().next().value;
-      if (!oldest) break;
-      this.previews.delete(oldest);
-    }
+  cleanup(): void {
+    const now = new Date().toISOString();
+    for (const [token, approval] of this.approvals) { if (approval.expiresAt < now) this.approvals.delete(token); }
+    for (const [txId, tx] of this.transactions) { if (tx.expiresAt < now) this.transactions.delete(txId); }
   }
 }
 
-export function fingerprintOperation(operationId: number, state: unknown): string {
-  return sha256Of({ operationId, state });
+function hashObject(obj: unknown): string {
+  return createHash("sha256").update(JSON.stringify(obj, Object.keys(obj as object).sort())).digest("hex");
 }
 
-export function documentRevision(seed: unknown): string {
-  return `rev_${createHash("sha256").update(sha256Of(seed)).digest("hex").slice(0, 16)}`;
-}
+export const approvalManager = new ApprovalManager();
