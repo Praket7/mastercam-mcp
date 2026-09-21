@@ -46,6 +46,7 @@
     "build": "tsc -p tsconfig.json",
     "test": "node --test --import tsx test/*.test.ts test/integration/*.test.ts",
     "lint": "eslint src test",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
     "docs:capabilities": "tsx scripts/generate-capabilities.ts",
     "start": "node dist/server.js",
     "start:http": "node dist/http.js",

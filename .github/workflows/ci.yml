@@ -146,10 +146,10 @@ jobs:
       - run: pnpm run build
       - name: Build native projects
         run: |
-          dotnet build native/MastercamMcp.Protocol/MastercamMcp.Protocol.csproj -c Release -f net48
-          dotnet build native/MastercamMcp.Core/MastercamMcp.Core.csproj -c Release -f net48
-          dotnet build native/MastercamMcp.Adapter.Abstractions/MastercamMcp.Adapter.Abstractions.csproj -c Release -f net48
-          dotnet build native/MastercamMcp.ApiCatalog/MastercamMcp.ApiCatalog.csproj -c Release -f net48
+          dotnet build native/MastercamMcp.Protocol/MastercamMcp.Protocol.csproj -c Release
+          dotnet build native/MastercamMcp.Core/MastercamMcp.Core.csproj -c Release
+          dotnet build native/MastercamMcp.Adapter.Abstractions/MastercamMcp.Adapter.Abstractions.csproj -c Release
+          dotnet build native/MastercamMcp.ApiCatalog/MastercamMcp.ApiCatalog.csproj -c Release
       - name: Run Windows tests
         run: |
           pnpm run test
