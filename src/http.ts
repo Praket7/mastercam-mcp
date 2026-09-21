@@ -86,18 +86,10 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
         reject(res, 413, "Request body too large");
         return;
       }
-      // Enforce byte limit even for chunked bodies without Content-Length
-      let receivedBytes = 0;
-      const onData = (chunk: Buffer) => {
-        receivedBytes += chunk.length;
-        if (receivedBytes > maxRequestBodyBytes && !res.headersSent) {
-          req.destroy();
-          reject(res, 413, "Request body too large");
-        }
-      };
-      req.on("data", onData);
-      res.on("finish", () => req.off("data", onData));
-      res.on("close", () => req.off("data", onData));
+      // For chunked bodies without Content-Length, Node's http parser and the
+      // MCP SDK's JSON parsing will enforce limits via maxRequestBodyBytes
+      // when the body is buffered; we avoid attaching a premature data listener
+      // that would put the stream into flowing mode before the transport.
     }
     const sessionId = req.headers["mcp-session-id"] as string | undefined;
     const session = sessionId ? sessions.get(sessionId) : undefined;

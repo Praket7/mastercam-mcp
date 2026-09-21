@@ -48,3 +48,4 @@ export class KeyedLocks {
     return this.locks.size;
   }
 }
+export const KeyedLock = KeyedLocks;

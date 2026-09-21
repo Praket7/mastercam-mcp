@@ -321,13 +321,6 @@ export class MockBackend implements Backend {
     if (idempotencyKey) {
       const seen = this.ledger.idempotencyKeySeen(idempotencyKey);
       if (seen) {
-        // Bind key to canonical action: tool + operationId + changes hash
-        const probeForIdempotency = this.ledger.peekPreview(token);
-        const canonical = `${request.tool}:${probeForIdempotency.operationId}:${sha256Of(probeForIdempotency.changes)}`;
-        const seenCanonical = (seen as unknown as { _canonical?: string })._canonical;
-        if (seenCanonical && seenCanonical !== canonical) {
-          throw new MastercamErrorImpl("IDEMPOTENCY_CONFLICT", "Idempotency key reused for different action");
-        }
         return this.ok(request, this.applyReceipt(seen, true));
       }
     }

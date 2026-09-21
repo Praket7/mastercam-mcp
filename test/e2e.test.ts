@@ -51,19 +51,19 @@ function createMockV2Server(socketPath: string, handler: (req: any) => any) {
 }
 
 test("e2e: LiveBackend -> Bridge-v2 mock native", async () => {
-  const socketPath = join(tmpdir(), `e2e-mcp-${process.pid}-${Date.now()}.sock`);
-  try { fs.unlinkSync(socketPath); } catch {}
+  const socketPath = process.platform === "win32" ? `\\\\.\\pipe\\mastercam-mcp-e2e-${process.pid}-${Date.now()}` : join(tmpdir(), `e2e-mcp-${process.pid}-${Date.now()}.sock`);
+  try { if (process.platform !== "win32") fs.unlinkSync(socketPath); } catch {}
   const server = createMockV2Server(socketPath, (_req) => {
-    if (req.tool === "mastercam_status") return { ok: true, tool: req.tool, data: { connected: true, backend: "mock-v2" } };
-    if (req.tool === "get_active_part") return { ok: true, tool: req.tool, data: { name: "e2e-part", path: "e2e://part", units: "mm", modified: false, revision: "rev-e2e", fingerprint: "abc" } };
-    if (req.tool === "preview_operation_parameters") {
-      return { ok: true, tool: req.tool, data: { before: { feedRate: { value: 100, unit: "mm/min" } }, after: { feedRate: { value: 200, unit: "mm/min" } }, approvalToken: "e2e-token", expiresAt: new Date(Date.now()+300000).toISOString(), documentRevision: "rev-e2e", operationFingerprint: "fp-e2e", requiresRegeneration: true, rollbackAvailable: true, risks: [] } };
+    if (_req.tool === "mastercam_status") return { ok: true, tool: _req.tool, data: { connected: true, backend: "mock-v2" } };
+    if (_req.tool === "get_active_part") return { ok: true, tool: _req.tool, data: { name: "e2e-part", path: "e2e://part", units: "mm", modified: false, revision: "rev-e2e", fingerprint: "abc" } };
+    if (_req.tool === "preview_operation_parameters") {
+      return { ok: true, tool: _req.tool, data: { before: { feedRate: { value: 100, unit: "mm/min" } }, after: { feedRate: { value: 200, unit: "mm/min" } }, approvalToken: "e2e-token", expiresAt: new Date(Date.now()+300000).toISOString(), documentRevision: "rev-e2e", operationFingerprint: "fp-e2e", requiresRegeneration: true, rollbackAvailable: true, risks: [] } };
     }
-    return { ok: false, tool: req.tool, error: { code: "UNSUPPORTED_TOOL", message: "not implemented in e2e mock" } };
+    return { ok: false, tool: _req.tool, error: { code: "UNSUPPORTED_TOOL", message: "not implemented in e2e mock" } };
   });
   await new Promise<void>((res, rej) => { server.listen(socketPath, res); server.on("error", rej); });
 
-  const backend = new LiveBackend(socketPath);
+  const backend = new LiveBackend({ endpoint: socketPath });
   const status = await backend.call({ id: "e2e-1", tool: "mastercam_status", arguments: {} });
   assert.equal(status.ok, true);
   assert.equal((status.data as any).backend, "mock-v2");
@@ -82,18 +82,18 @@ test("e2e: LiveBackend -> Bridge-v2 mock native", async () => {
 });
 
 test("e2e: BridgeClient cancellation", async () => {
-  const socketPath = join(tmpdir(), `e2e-cancel-${process.pid}-${Date.now()}.sock`);
-  try { fs.unlinkSync(socketPath); } catch {}
+  const socketPath = process.platform === "win32" ? `\\\\.\\pipe\\mastercam-mcp-e2e-cancel-${process.pid}-${Date.now()}` : join(tmpdir(), `e2e-cancel-${process.pid}-${Date.now()}.sock`);
+  try { if (process.platform !== "win32") fs.unlinkSync(socketPath); } catch {}
   const server = createMockV2Server(socketPath, (_req) => {
     // never respond to test cancellation
     return new Promise(() => {});
   });
   await new Promise<void>((res, rej) => { server.listen(socketPath, res); server.on("error", rej); });
-  const client = new BridgeClient(socketPath, { requestTimeout: 5000 });
+  const client = new BridgeClient({ endpoint: socketPath });
   const ac = new AbortController();
   setTimeout(() => ac.abort(), 10);
   await assert.rejects(
-    client.request("long_op", {}, { signal: ac.signal }),
+    client.call("long_op", {}, 5000, ac.signal),
     (err: Error) => err.message.includes("CANCELLED")
   );
   await client.close();

@@ -171,3 +171,4 @@ export function fingerprintOperation(operationId: number, state: unknown): strin
 export function documentRevision(seed: unknown): string {
   return `rev_${createHash("sha256").update(sha256Of(seed)).digest("hex").slice(0, 16)}`;
 }
+export const ApprovalManager = ApprovalLedger;
