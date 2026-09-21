@@ -7,6 +7,7 @@
     <OutputType>Library</OutputType>
     <AssemblyName>MastercamMcp.Addin</AssemblyName>
     <RootNamespace>MastercamMcp.Addin</RootNamespace>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\MastercamMcp.Protocol\MastercamMcp.Protocol.csproj" />
