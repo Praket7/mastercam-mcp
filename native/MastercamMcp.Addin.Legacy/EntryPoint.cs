@@ -51,7 +51,7 @@ namespace MastercamMcp.Addin
         private static async Task Listen(string pipeName, CancellationToken ct)
         {
             pipeName = NormalizePipeName(pipeName);
-            var router = new RequestRouter(new LegacyAdapter(), "2026");
+            var router = new RequestRouter(new EnvironmentAdapter(), "2026");
 
             while (!ct.IsCancellationRequested)
             {
