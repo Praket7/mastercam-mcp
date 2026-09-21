@@ -1,9 +1,6 @@
-import { appendFileSync, mkdirSync } from "node:fs";
-import { dirname } from "node:path";
-import { createHash } from "node:crypto";
-import { fileURLToPath } from "node:url";
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
+import { createHash, randomUUID } from "node:crypto";
+import { appendFile, mkdir, stat, rename, readFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 
 export interface AuditEntry {
   sequence: number;
@@ -11,135 +8,166 @@ export interface AuditEntry {
   requestId: string;
   transactionId?: string;
   tool: string;
-  target: Record<string, unknown>;
-  policy: Record<string, unknown>;
+  target?: Record<string, unknown>;
+  policy?: Record<string, unknown>;
   beforeHash?: string;
   afterHash?: string;
-  verified: boolean;
-  previousEntryHash?: string;
-  entryHash: string;
+  verified?: boolean;
+  [extra: string]: unknown;
+}
+
+interface ChainState {
+  sequence: number;
+  previousEntryHash: string;
+}
+
+const GENESIS_HASH = "sha256:genesis";
+const MAX_REDACT_DEPTH = 6;
+const SENSITIVE_KEYS = /^(password|token|secret|authorization|apikey|api_key|credential)/i;
+
+export function sha256Of(value: unknown): string {
+  return `sha256:${createHash("sha256").update(stableStringify(value)).digest("hex")}`;
+}
+
+/** Deterministic serialization so hashes do not depend on key insertion order. */
+export function stableStringify(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
+  if (Array.isArray(value)) return `[${value.map(item => stableStringify(item)).join(",")}]`;
+  const entries = Object.entries(value as Record<string, unknown>)
+    .filter(([, v]) => v !== undefined)
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${stableStringify(v)}`).join(",")}}`;
+}
+
+export function redact(value: unknown, depth = 0): unknown {
+  if (depth > MAX_REDACT_DEPTH || value === null || typeof value !== "object") return value;
+  if (Array.isArray(value)) return value.slice(0, 50).map(item => redact(item, depth + 1));
+  const out: Record<string, unknown> = {};
+  for (const [key, val] of Object.entries(value as Record<string, unknown>)) {
+    if (SENSITIVE_KEYS.test(key)) out[key] = "[redacted]";
+    else out[key] = redact(val, depth + 1);
+  }
+  return out;
+}
+
+export interface AuditLogOptions {
+  path?: string;
+  enabled?: boolean;
+  maxFileBytes?: number;
+  maxRotatedFiles?: number;
 }
 
 export class AuditLog {
-  private entries: AuditEntry[] = [];
-  private sequence = 0;
-  private readonly path: string;
-  private readonly maxEntries: number;
-  private genesisHash = "0".repeat(64);
+  private chain: ChainState = { sequence: 0, previousEntryHash: GENESIS_HASH };
+  private readonly enabled: boolean;
+  private readonly path: string | undefined;
+  private readonly maxFileBytes: number;
+  private readonly maxRotatedFiles: number;
 
-  constructor(path: string, maxEntries = 500) {
-    this.path = path;
-    this.maxEntries = maxEntries;
-    this.load();
+  constructor(options: AuditLogOptions = {}) {
+    this.enabled = options.enabled ?? process.env.MASTERCAM_MCP_AUDIT !== "0";
+    this.path = options.path
+      ?? process.env.MASTERCAM_MCP_AUDIT_PATH
+      ?? join(process.env.LOCALAPPDATA ?? process.env.XDG_DATA_HOME ?? process.env.TMPDIR ?? ".", "mastercam-mcp", "audit.jsonl");
+    this.maxFileBytes = options.maxFileBytes ?? 10 * 1024 * 1024;
+    this.maxRotatedFiles = options.maxRotatedFiles ?? 5;
   }
 
-  private load() {
-    const fs = require("node:fs");
-    if (fs.existsSync(this.path)) {
+  get isEnabled(): boolean { return this.enabled; }
+  get location(): string { return this.path ?? "(memory)"; }
+
+  /** Records an entry asynchronously; callers never await disk on the request path. */
+  record(entry: Omit<AuditEntry, "sequence" | "timestamp">): AuditEntry {
+    const record: AuditEntry = redact({ ...entry }) as AuditEntry;
+    const full: AuditEntry = {
+      ...record,
+      sequence: this.chain.sequence + 1,
+      timestamp: new Date().toISOString()
+    };
+    const previousHash = this.chain.previousEntryHash;
+    const entryHash = sha256Of({ entry: stableStringify(full), previous: previousHash });
+    this.chain = { sequence: full.sequence, previousEntryHash: entryHash };
+    if (this.enabled && this.path) {
+      const line = `${JSON.stringify({ ...full, previousEntryHash: previousHash, entryHash })}\n`;
+      void this.write(line);
+    }
+    return full;
+  }
+
+  /** Drain for tests and graceful shutdown. */
+  async flush(): Promise<void> {
+    await this.tail;
+  }
+
+  private writeBuffer = "";
+  private writesInFlight = 0;
+  private tail: Promise<void> = Promise.resolve();
+
+  private write(line: string): void {
+    this.writeBuffer += line;
+    this.tail = this.tail.then(async () => {
+      const payload = this.writeBuffer;
+      this.writeBuffer = "";
+      if (!payload) return;
+      this.writesInFlight++;
       try {
-        const content = fs.readFileSync(this.path, "utf8");
-        const lines = content.trim().split("\n").filter(Boolean);
-        for (const line of lines.slice(-this.maxEntries)) {
-          const entry = JSON.parse(line) as AuditEntry;
-          this.entries.push(entry);
-          this.sequence = Math.max(this.sequence, entry.sequence);
-        }
-      } catch { this.entries = []; }
-    }
-  }
-
-  append(entry: Omit<AuditEntry, "sequence" | "timestamp" | "previousEntryHash" | "entryHash">): AuditEntry {
-    this.sequence++;
-    const timestamp = new Date().toISOString();
-    const previousEntryHash = this.entries.length > 0 
-      ? (this.entries[this.entries.length - 1]?.entryHash ?? this.genesisHash)
-      : this.genesisHash;
-    const hashInput = { ...entry, sequence: this.sequence, timestamp, previousEntryHash };
-    const entryHash = this.computeEntryHash(hashInput);
-    const fullEntry: AuditEntry = { ...hashInput, entryHash };
-    this.entries.push(fullEntry);
-    this.persist(fullEntry);
-    if (this.entries.length > this.maxEntries) this.entries = this.entries.slice(-this.maxEntries);
-    return fullEntry;
-  }
-
-  private persist(entry: AuditEntry) {
-    try { mkdirSync(dirname(this.path), { recursive: true }); appendFileSync(this.path, JSON.stringify(this.redact(entry)) + "\n"); } catch { }
-  }
-
-  private computeEntryHash(entry: Omit<AuditEntry, "entryHash">): string {
-    return createHash("sha256").update(JSON.stringify(entry, Object.keys(entry).sort())).digest("hex");
-  }
-
-  private redact(entry: AuditEntry): AuditEntry {
-    const redacted = { ...entry };
-    redacted.target = this.redactObject(redacted.target);
-    redacted.policy = this.redactObject(redacted.policy);
-    return redacted;
-  }
-
-  private redactObject(obj: Record<string, unknown>): Record<string, unknown> {
-    const result: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(obj)) {
-      if (this.isSensitiveKey(key)) {
-        result[key] = "[REDACTED]";
-      } else if (value && typeof value === "object" && !Array.isArray(value)) {
-        result[key] = this.redactObject(value as Record<string, unknown>);
-      } else if (Array.isArray(value)) {
-        result[key] = value.map(v => 
-          v && typeof v === "object" ? this.redactObject(v as Record<string, unknown>) : v
-        );
-      } else {
-        result[key] = value;
+        await mkdir(dirname(this.path!), { recursive: true });
+        await appendFile(this.path!, payload, "utf8");
+        await this.rotateIfNeeded();
+      } catch {
+        // Audit failures must never break the machining request (audit §30).
+      } finally {
+        this.writesInFlight--;
       }
-    }
-    return result;
+    });
   }
 
-  private isSensitiveKey(key: string): boolean {
-    const sensitivePatterns = [
-      /^password$/i,
-      /^secret$/i,
-      /^token$/i,
-      /^authorization$/i,
-      /^apikey$/i,
-      /^api_key$/i,
-      /^credential$/i,
-      /^token$/i,
-      /approvalToken/i,
-      /rollbackToken/i,
-      /accessToken/i,
-      /refreshToken/i,
-      /idempotencyKey/i,
-    ];
-    return sensitivePatterns.some(pattern => pattern.test(key));
-  }
-
-  query(options: { limit?: number; tool?: string; operationId?: number } = {}): { entries: AuditEntry[]; total: number } {
-    let result = this.entries;
-    if (options.tool) result = result.filter(e => e.tool === options.tool);
-    if (options.operationId) result = result.filter(e => e.target["operationId"] === options.operationId);
-    const limit = Math.min(options.limit ?? 100, 1000);
-    return { entries: result.slice(-limit), total: result.length };
-  }
-
-  verifyChain(): { valid: boolean; brokenAt?: number } {
-    let previousHash = "0".repeat(64);
-    for (const entry of this.entries) {
-      if (entry.previousEntryHash !== previousHash) return { valid: false, brokenAt: entry.sequence };
-      const { entryHash: _, ...rest } = entry;
-      const computed = this.computeEntryHash(rest);
-      if (computed !== entry.entryHash) return { valid: false, brokenAt: entry.sequence };
-      previousHash = entry.entryHash;
-    }
-    return { valid: true };
+  private async rotateIfNeeded(): Promise<void> {
+    const path = this.path!;
+    try {
+      const info = await stat(path);
+      if (info.size < this.maxFileBytes) return;
+      for (let i = this.maxRotatedFiles - 1; i >= 1; i--) {
+        const from = `${path}.${i}`;
+        const to = `${path}.${i + 1}`;
+        try { await rename(from, to); } catch { /* absent file */ }
+      }
+      await rename(path, `${path}.1`);
+    } catch { /* stat failure means nothing to rotate */ }
   }
 }
 
-function getDefaultAuditPath(): string {
-  const envPath = process.env["MASTERCAM_MCP_AUDIT_PATH"];
-  if (envPath) return envPath;
-  return dirname(fileURLToPath(import.meta.url)) + "/../mastercam-mcp/audit.jsonl";
+function replacer(_key: string, value: unknown): unknown {
+  return value === undefined ? undefined : value;
+}
+void replacer;
+
+/** Verifies a log file's hash chain; used by tests and the doctor command. */
+export async function verifyAuditChain(path: string): Promise<{ ok: boolean; entries: number; brokenAt?: number }> {
+  let text: string;
+  try { text = await readFile(path, "utf8"); } catch { return { ok: true, entries: 0 }; }
+  let previous = GENESIS_HASH;
+  let count = 0;
+  for (const line of text.split("\n")) {
+    if (!line.trim()) continue;
+    count++;
+    let parsed: { entryHash?: string; previousEntryHash?: string; [k: string]: unknown };
+    try { parsed = JSON.parse(line); } catch { return { ok: false, entries: count, brokenAt: count }; }
+    if (parsed.previousEntryHash !== previous) return { ok: false, entries: count, brokenAt: count };
+    const rest = { ...parsed } as Record<string, unknown>;
+    delete rest.entryHash;
+    delete rest.previousEntryHash;
+    const recomputed = sha256Of({ entry: stableStringify(rest), previous });
+    if (recomputed !== parsed.entryHash) return { ok: false, entries: count, brokenAt: count };
+    previous = String(parsed.entryHash);
+  }
+  return { ok: true, entries: count };
 }
 
-export const auditLog = new AuditLog(getDefaultAuditPath());
+export function newTransactionId(): string {
+  return `txn_${randomUUID().replaceAll("-", "")}`;
+}
+
+export function newApprovalToken(): string {
+  return `appr_${randomUUID().replaceAll("-", "")}`;
+}

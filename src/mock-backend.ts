@@ -1,66 +1,60 @@
-// @ts-nocheck
+import net from "node:net";
+import { rmSync } from "node:fs";
 import { MockBackend } from "./backend.js";
 import { defaultPipe } from "./platform.js";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { FrameReader } from "./transport/framing.js";
 
-const pipe = process.env["MASTERCAM_MCP_PIPE"] ?? defaultPipe();
+const pipe = process.env.MASTERCAM_MCP_PIPE ?? defaultPipe();
 const backend = new MockBackend();
+const readers = new WeakMap<net.Socket, FrameReader>();
+const MAX_REQUEST_BYTES = 1024 * 1024;
 
-const net = require("node:net") as any;
-
-function createServer() {
-  if (process.platform === "win32") {
-    return net.createServer((socket: any) => handleSocket(socket));
-  }
-  const socketPath = pipe.endsWith(".sock") ? pipe : join(tmpdir(), `mastercam-mcp-${process.getuid()}.sock`);
-  return net.createServer((socket: any) => handleSocket(socket));
+// On Unix a stale socket file from a previous run would make listen() fail.
+if (process.platform !== "win32" && !pipe.startsWith("\\\\")) {
+  try { rmSync(pipe, { force: true }); } catch { /* best effort */ }
 }
 
-function handleSocket(socket: any) {
+const server = net.createServer(socket => {
+  const reader = new FrameReader(MAX_REQUEST_BYTES);
+  readers.set(socket, reader);
   socket.setEncoding("utf8");
-  let buffer = "";
-  const MAX_BUFFER = 8 * 1024 * 1024;
-  socket.on("data", async (chunk: string) => {
-    buffer += chunk;
-    if (buffer.length > MAX_BUFFER) {
-      socket.write(JSON.stringify({ id: "unknown", result: { ok: false, error: { code: "BUFFER_EXCEEDED", message: "Request buffer exceeded maximum size" } } }) + "\n");
-      buffer = "";
+  socket.on("data", (chunk: string) => {
+    let frames: string[];
+    try { frames = reader.push(chunk); }
+    catch (error) {
+      // Oversized request: answer with an explicit failure and drop the link.
+      socket.write(`${JSON.stringify({ id: null, result: { ok: false, error: { code: "REQUEST_TOO_LARGE", message: error instanceof Error ? error.message : String(error) } } })}\n`);
+      socket.destroy();
       return;
     }
-    let newlineIndex: number;
-    while ((newlineIndex = buffer.indexOf("\n")) >= 0) {
-      const line = buffer.slice(0, newlineIndex);
-      buffer = buffer.slice(newlineIndex + 1);
-      if (!line) continue;
-      try {
-        const req = JSON.parse(line);
-        const result = await backend.call(req);
-        socket.write(JSON.stringify({ id: req.id, result }) + "\n");
-      } catch (e) {
-        socket.write(JSON.stringify({ id: "unknown", result: { ok: false, error: { code: "BAD_REQUEST", message: String(e) } } }) + "\n");
-      }
+    for (const frame of frames) {
+      if (!frame.trim()) continue;
+      void handleFrame(socket, frame);
     }
   });
-}
-
-const server = createServer();
-
-function getSocketPath(): string {
-  if (process.platform === "win32") return pipe;
-  return pipe.endsWith(".sock") ? pipe : join(tmpdir(), `mastercam-mcp-${process.getuid()}.sock`);
-}
-
-const socketPath = getSocketPath();
-server.listen(socketPath);
-server.on("listening", () => {
-  console.error(`Mock Mastercam backend listening on ${socketPath}`);
 });
 
-if (process.platform !== "win32") {
-  process.on("exit", () => {
-    try { require("node:fs").unlinkSync(socketPath); } catch { }
+async function handleFrame(socket: net.Socket, frame: string) {
+  let response: string;
+  try {
+    const req = JSON.parse(frame) as { id?: unknown; tool?: unknown; arguments?: Record<string, unknown> };
+    const result = await backend.call({ id: String(req.id ?? ""), tool: String(req.tool ?? ""), arguments: req.arguments ?? {} });
+    response = `${JSON.stringify({ id: req.id ?? null, result })}\n`;
+  } catch (error) {
+    response = `${JSON.stringify({ id: null, result: { ok: false, error: { code: "INVALID_JSON", message: error instanceof Error ? error.message : String(error) } } })}\n`;
+  }
+  if (!socket.destroyed) socket.write(response);
+}
+
+server.listen(pipe, () => console.error(`Mock Mastercam backend listening on ${pipe}`));
+
+for (const signal of ["SIGINT", "SIGTERM"] as const) {
+  process.on(signal, () => {
+    server.close(() => {
+      if (process.platform !== "win32" && !pipe.startsWith("\\\\")) {
+        try { rmSync(pipe, { force: true }); } catch { /* best effort */ }
+      }
+      process.exit(0);
+    });
   });
-  process.on("SIGINT", () => process.exit(0));
-  process.on("SIGTERM", () => process.exit(0));
 }

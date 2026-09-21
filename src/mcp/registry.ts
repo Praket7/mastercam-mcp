@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { z } from "zod";
 import * as inspection from "../schemas/inspection.js";
 import * as mutations from "../schemas/mutations.js";
@@ -97,7 +96,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   // targeting helpers
   tool("inspect", "Inspect a target and return its current values", inspection.inspectSchema, readAnnotations),
   tool("measure", "Measure one named value on a Mastercam target", inspection.measureSchema, readAnnotations),
-  tool("verify_change", "Reread an operation and verify an expected feed or speed value", z.object({ operationId: OperationIdSchema.optional(), expected: z.object({ feedRate: z.object({ value: z.number().finite().positive(), unit: z.string() }).optional(), spindleSpeed: z.object({ value: z.number().finite().positive(), unit: z.string() }).optional() }).strict().optional(), expectedFeed: z.number().finite().positive().optional() }).strict().refine(value => value.expected !== undefined || value.expectedFeed !== undefined, { message: "verify_change requires an expected value" }), readAnnotations),
+  tool("verify_change", "Reread an operation and verify an expected feed or speed value (requires exact operationId and quantity)", mutations.VerifyChangeSchema, readAnnotations),
   tool("assert", "Verify that a measured value matches an expected value", inspection.assertSchema, readAnnotations),
 
   // shop floor
@@ -111,8 +110,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   tool("apply_operation_parameter_preview", "Apply a previewed change using its approval token; refuses stale state", mutations.ApplyOperationParameterPreviewSchema, mutationAnnotations),
   tool("rollback_change", "Roll back an applied transaction using its server-held receipt", mutations.RollbackChangeSchema, mutationAnnotations),
 
-  // other mutations
-  tool("set_feed_speed", "Legacy direct feed change with exact target requirement", z.object({ operationId: OperationIdSchema.optional(), feed: z.number().finite().positive(), dryRun: z.boolean().optional() }).strict(), mutationAnnotations),
+  // other mutations - set_feed_speed removed: use preview/apply workflow only (audit BUG-03)
   tool("change_tool", "Change the tool assigned to one operation", mutations.ChangeToolSchema, mutationAnnotations),
   tool("regenerate_toolpath", "Regenerate specific operations by exact id", mutations.RegenerateToolpathSchema, mutationAnnotations),
   tool("update_stock", "Update stock dimensions with explicit units", mutations.UpdateStockSchema, mutationAnnotations),

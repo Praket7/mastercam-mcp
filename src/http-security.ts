@@ -1,4 +1,3 @@
-// @ts-nocheck
 export interface RequestVerdict {
   status: 200 | 400 | 401 | 403 | 404 | 413;
   message?: string;

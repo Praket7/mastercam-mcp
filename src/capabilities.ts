@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { TIER_ORDER } from "./contracts.js";
 import type { CapabilityTier } from "./contracts.js";
 
