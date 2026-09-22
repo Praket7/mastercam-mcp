@@ -4,7 +4,8 @@ import {
   classifyAccess,
   classifyRequest,
   hostnameOf,
-  isLocalHost
+  isLocalHost,
+  isLoopbackAddress
 } from "../src/http-security.js";
 
 const localConfig = {
@@ -19,6 +20,10 @@ test("hostname parsing recognizes IPv4, localhost, and bracketed IPv6", () => {
   assert.equal(isLocalHost("127.0.0.1:8787"), true);
   assert.equal(isLocalHost("[::1]:8787"), true);
   assert.equal(isLocalHost("evil.example:8787"), false);
+  assert.equal(isLoopbackAddress("127.12.34.56"), true);
+  assert.equal(isLoopbackAddress("::ffff:127.0.0.1"), true);
+  assert.equal(isLoopbackAddress("0.0.0.0"), false);
+  assert.equal(isLoopbackAddress("192.168.1.10"), false);
 });
 
 test("local MCP and health access reject DNS-rebinding Host values", () => {
@@ -29,6 +34,27 @@ test("local MCP and health access reject DNS-rebinding Host values", () => {
   assert.equal(
     classifyAccess({ host: "evil.example:8787" }, localConfig).status,
     403
+  );
+});
+
+test("local mode rejects a remote socket even with a forged loopback Host", () => {
+  assert.equal(
+    classifyRequest(
+      "POST",
+      "/mcp",
+      { host: "127.0.0.1:8787" },
+      localConfig,
+      "203.0.113.42"
+    ).status,
+    403
+  );
+  assert.equal(
+    classifyAccess(
+      { host: "127.0.0.1:8787" },
+      localConfig,
+      "::ffff:127.0.0.1"
+    ).status,
+    200
   );
 });
 
