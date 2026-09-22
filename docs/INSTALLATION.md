@@ -6,9 +6,9 @@ For end users, run `npx -y mastercam-mcp@latest install -ConfigureClients`. This
 
 Build the external server with `npm install` followed by `npm run build`.
 
-Build the add in from `native/MastercamMcp.Addin` after setting `MASTERCAM_ROOT` to the user supplied Mastercam installation. The project deliberately references the local NET Hook assembly and never copies it into the repository.
+Build the release-specific add in from `native/MastercamMcp.Addin.Legacy` or `native/MastercamMcp.Addin.2027` after setting `MASTERCAM_ROOT` to the user supplied Mastercam installation. The project deliberately references the local NET Hook assembly and never copies it into the repository.
 
-Install the resulting add in in the Mastercam chooks directory for the matching release. Start Mastercam first, load the add in, then start the MCP server with stdio. The default profile is read only. Enable writes only in a dedicated test part with `MASTERCAM_MCP_PROFILE=core` and keep `MASTERCAM_MCP_HARD_READ_ONLY=1` until the safety checks are complete.
+Install the resulting add in in the Mastercam chooks directory for the matching release. Start Mastercam first, load the add in, then start the MCP server with stdio. The default profile is read only. Keep `MASTERCAM_MCP_PROFILE=read` and `MASTERCAM_MCP_HARD_READ_ONLY=1` during initial validation. Enable the write profile only in a dedicated test part with `MASTERCAM_MCP_PROFILE=write` and `MASTERCAM_MCP_HARD_READ_ONLY=0` after the safety checks are complete.
 The installer supports `-ListInstallations` to show all detected Mastercam versions and `-Uninstall -MastercamRoot "..."` to remove only the MCP add in files from a selected installation.
 
 ## macOS and Linux
@@ -28,3 +28,9 @@ Set `MASTERCAM_MCP_BACKEND=mock` when a client configuration needs an explicit v
 ## Cross platform path behavior
 
 The portable layer uses the current working folder and environment values rather than a fixed home folder. Windows live installation uses the selected Mastercam root and its `chooks` folder. Mastercam administrator guidance places shared data under the public documents folder. macOS and Linux do not attempt to create Windows folders.
+
+## Protocol compatibility
+
+The server explicitly supports MCP revision `2026-07-28` through the SDK v2 serving entry points. Legacy 2025-era clients remain supported as a compatibility path, but HTTP legacy serving is stateless and should not be used as evidence that a client negotiated the modern revision. The repository smoke tests pin `2026-07-28` to verify the current protocol path.
+
+Mastercam release-specific add-ins still require the matching locally installed proprietary NET Hook assemblies. Public CI validates only the portable shared projects; a release-specific add-in is not considered live verified until it builds, loads, and passes acceptance testing in a licensed Mastercam installation.

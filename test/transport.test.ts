@@ -45,22 +45,30 @@ test("CircuitBreaker starts in CLOSED state", () => {
 test("CircuitBreaker opens after failure threshold", async () => {
   const cb = new CircuitBreaker({ failureThreshold: 3, timeout: 1000 });
   for (let i = 0; i < 3; i++) {
-    try { await cb.execute(() => Promise.reject(new Error("fail"))); } catch { }
+    try { await cb.execute(() => Promise.reject(new Error("BACKEND_UNAVAILABLE: fail"))); } catch { }
   }
   assert.equal(cb.getState(), CircuitState.OPEN);
 });
 
 test("CircuitBreaker rejects when OPEN", async () => {
   const cb = new CircuitBreaker({ failureThreshold: 1, timeout: 1000 });
-  try { await cb.execute(() => Promise.reject(new Error("fail"))); } catch { }
+  try { await cb.execute(() => Promise.reject(new Error("BACKEND_UNAVAILABLE: fail"))); } catch { }
   await assert.rejects(cb.execute(() => Promise.resolve("ok")), /circuit breaker open/i);
 });
 
 test("CircuitBreaker half-opens after timeout", async () => {
   const cb = new CircuitBreaker({ failureThreshold: 1, timeout: 50 });
-  try { await cb.execute(() => Promise.reject(new Error("fail"))); } catch { }
+  try { await cb.execute(() => Promise.reject(new Error("BACKEND_UNAVAILABLE: fail"))); } catch { }
   assert.equal(cb.getState(), CircuitState.OPEN);
   await new Promise(r => setTimeout(r, 60));
-  await assert.rejects(cb.execute(() => Promise.reject(new Error("fail"))), /fail/);
+  await assert.rejects(cb.execute(() => Promise.reject(new Error("BACKEND_UNAVAILABLE: fail"))), /BACKEND_UNAVAILABLE/);
   assert.equal(cb.getState(), CircuitState.OPEN);
+});
+test("CircuitBreaker ignores semantic failures", async () => {
+  const cb = new CircuitBreaker({ failureThreshold: 1, timeout: 1000 });
+  await assert.rejects(
+    cb.execute(() => Promise.reject(new Error("VALIDATION_FAILED: bad input"))),
+    /VALIDATION_FAILED/
+  );
+  assert.equal(cb.getState(), CircuitState.CLOSED);
 });

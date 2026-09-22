@@ -13,13 +13,6 @@ namespace MastercamMcp.Core
     public sealed class CapabilityRegistry
     {
         private readonly Dictionary<string, Capability> capabilities;
-        private static readonly HashSet<string> KnownReadTools = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-        {
-            "mastercam_status", "mastercam_capabilities", "get_active_part", "list_operations", "get_operation",
-            "find_operations", "explain_operation", "get_operation_risks", "get_operation_parameters", "get_stock",
-            "get_wcs", "list_tools", "get_machine_context", "get_programming_context", "get_version_report"
-        };
-
         public CapabilityRegistry(IMastercamAdapter adapter)
         {
             this.capabilities = new Dictionary<string, Capability>(StringComparer.OrdinalIgnoreCase);
@@ -38,7 +31,8 @@ namespace MastercamMcp.Core
 
         public bool IsRead(string tool)
         {
-            return KnownReadTools.Contains(tool ?? string.Empty);
+            var capability = Find(tool);
+            return capability != null && capability.RiskClass == RiskClass.Read;
         }
 
         public int SupportedCount

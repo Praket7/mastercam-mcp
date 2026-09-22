@@ -1,6 +1,0 @@
-{
-  "feed": 35,
-  "operations": [
-    { "id": 4, "name": "Facing", "type": "mill", "feed": 35 }
-  ]
-}

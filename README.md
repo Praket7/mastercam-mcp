@@ -19,6 +19,12 @@ node work\feature-smoke.mjs
 
 The fixture supports active part inspection, operation search, operation explanation, risk reporting, machine context, feed and speed previews, confirmation gates, reread verification, rollback, regeneration, simulation, collision reporting, visual context, audit history, and diagnostics.
 
+## MCP protocol
+
+The server uses the stable Model Context Protocol TypeScript SDK v2 packages and explicitly serves the current `2026-07-28` protocol revision. Stdio uses the SDK's `serveStdio` entry point and Streamable HTTP uses `createMcpHandler` with the Node adapter, so modern clients negotiate the 2026 per-request protocol rather than silently falling back to the older initialize handshake.
+
+For interoperability, the same endpoints retain a deliberate 2025-era fallback. Stdio can accept a legacy opening and HTTP serves legacy requests statelessly. The 2026 HTTP path does not create or depend on `Mcp-Session-Id`. Automated smoke tests pin `2026-07-28` so a regression to legacy-only serving fails CI.
+
 ## Connect a client
 
 The published package can be started by any local MCP client.
@@ -39,7 +45,7 @@ The installer makes a backup before changing client configuration. It supports i
 
 Start with `discover_capabilities` and `mastercam_doctor`. Inspect the active part and operations. Search for the intended operation. Explain it and review its risks. Preview any change. Request explicit confirmation. Apply the change. Regenerate only the affected operations. Reread the result and keep the receipt.
 
-The default server profile is read only. Writes require a write enabled profile and explicit confirmation. Posting, controller communication, DNC, FTP, cycle start, and arbitrary code execution are not provided.
+The default server profile is read only. Writes require `MASTERCAM_MCP_PROFILE=write` (or `all` for development), `MASTERCAM_MCP_HARD_READ_ONLY=0`, and the preview/approval workflow. Posting, controller communication, DNC, FTP, cycle start, and arbitrary code execution are not provided.
 
 ## Main capabilities
 
