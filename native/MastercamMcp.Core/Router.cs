@@ -40,15 +40,17 @@ namespace MastercamMcp.Core
         private readonly ConcurrentDictionary<string, IdempotencyRecord> idempotency;
         private readonly CapabilityRegistry registry;
         private readonly string mastercamVersion;
+        private const int DefaultMaxQueuedCommands = 256;
         private const int MaxIdempotencyEntries = 1024;
         private static readonly TimeSpan IdempotencyTtl = TimeSpan.FromMinutes(15);
 
-        public RequestRouter(IMastercamAdapter adapter, string mastercamVersion)
+        public RequestRouter(IMastercamAdapter adapter, string mastercamVersion, int maxQueuedCommands = DefaultMaxQueuedCommands)
         {
+            if (maxQueuedCommands <= 0) throw new ArgumentOutOfRangeException(nameof(maxQueuedCommands));
             this.adapter = adapter ?? throw new ArgumentNullException(nameof(adapter));
             this.mastercamVersion = mastercamVersion ?? "unknown";
             this.registry = new CapabilityRegistry(adapter);
-            this.queue = new BlockingCollection<Command>(new ConcurrentQueue<Command>());
+            this.queue = new BlockingCollection<Command>(new ConcurrentQueue<Command>(), maxQueuedCommands);
             this.inFlight = new ConcurrentDictionary<string, Command>(StringComparer.Ordinal);
             this.idempotency = new ConcurrentDictionary<string, IdempotencyRecord>(StringComparer.Ordinal);
             this.worker = new Thread(ExecuteLoop)
@@ -190,7 +192,20 @@ namespace MastercamMcp.Core
                 }
 
                 this.inFlight[request.RequestId] = command;
-                this.queue.Add(command);
+                if (!this.queue.TryAdd(command))
+                {
+                    this.inFlight.TryRemove(request.RequestId, out _);
+                    if (!isRead && !string.IsNullOrWhiteSpace(request.IdempotencyKey) &&
+                        this.idempotency.TryGetValue(request.IdempotencyKey, out var admitted) &&
+                        ReferenceEquals(admitted.Completion, command.Completion.Task))
+                    {
+                        this.idempotency.TryRemove(request.IdempotencyKey, out _);
+                    }
+                    command.Source.Dispose();
+                    return HandleOutcome.Immediate(SerializeResponse(ErrorResponse(
+                        request.RequestId, request.Tool, ErrorCodes.BackendUnavailable,
+                        "Native command queue is full; retry later", true)));
+                }
                 return new HandleOutcome { Pending = AwaitCompletion(command) };
             }
             catch (JsonException ex)
