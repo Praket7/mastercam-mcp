@@ -1,15 +1,18 @@
 import { spawn } from 'node:child_process';
+import { request as httpRequest } from 'node:http';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 
 const PORT = process.env.SMOKE_HTTP_PORT || '18990';
-const URL = `http://127.0.0.1:${PORT}/mcp`;
+const MCP_URL = `http://127.0.0.1:${PORT}/mcp`;
+const MAX_BODY_BYTES = 1024;
 const env = {
   ...process.env,
   MASTERCAM_MCP_BACKEND: 'mock',
   MASTERCAM_MCP_AUDIT: '0',
   MASTERCAM_MCP_PROFILE: 'all',
   MASTERCAM_MCP_HARD_READ_ONLY: '0',
-  MASTERCAM_MCP_HTTP_PORT: String(PORT)
+  MASTERCAM_MCP_HTTP_PORT: String(PORT),
+  MASTERCAM_MCP_HTTP_MAX_BODY_BYTES: String(MAX_BODY_BYTES)
 };
 
 const child = spawn(process.execPath, ['node_modules/tsx/dist/cli.mjs', 'src/http.ts'], {
@@ -23,6 +26,28 @@ const timeout = (ms, label) => new Promise((_, reject) => {
   const timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
   timer.unref?.();
 });
+
+function chunkedOverflowStatus() {
+  return new Promise((resolve, reject) => {
+    const req = httpRequest({
+      hostname: '127.0.0.1',
+      port: Number(PORT),
+      path: '/mcp',
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        accept: 'application/json, text/event-stream'
+      }
+    }, response => {
+      response.resume();
+      response.on('end', () => resolve(response.statusCode));
+    });
+    req.on('error', reject);
+    req.write('x'.repeat(700));
+    req.write('y'.repeat(700));
+    req.end();
+  });
+}
 
 try {
   const started = Date.now();
@@ -45,7 +70,7 @@ try {
     { name: 'http-smoke', version: '1.0.0' },
     { versionNegotiation: { mode: { pin: '2026-07-28' } } }
   );
-  const transport = new StreamableHTTPClientTransport(new URL(URL));
+  const transport = new StreamableHTTPClientTransport(new globalThis.URL(MCP_URL));
   await Promise.race([client.connect(transport), timeout(15000, 'connect')]);
   if (client.getProtocolEra() !== 'modern') {
     throw new Error(`Expected modern MCP era, got ${client.getProtocolEra()}`);
@@ -60,6 +85,12 @@ try {
     client.callTool({ name: 'mastercam_capabilities', arguments: {} }),
     timeout(10000, 'capabilities')
   ]);
+  await client.close().catch(() => undefined);
+
+  const overflowStatus = await Promise.race([
+    chunkedOverflowStatus(),
+    timeout(10000, 'chunked body overflow')
+  ]);
 
   const result = {
     ok: true,
@@ -68,13 +99,19 @@ try {
     toolCount: tools.tools.length,
     hasStatus: tools.tools.some(tool => tool.name === 'mastercam_status'),
     statusOk: status.structuredContent?.ok === true,
-    capabilitiesOk: capabilities.structuredContent?.ok === true
+    capabilitiesOk: capabilities.structuredContent?.ok === true,
+    chunkedBodyLimitStatus: overflowStatus
   };
   console.log(JSON.stringify(result, null, 2));
-  if (!result.hasStatus || !result.statusOk || !result.capabilitiesOk || result.toolCount <= 30) {
+  if (
+    !result.hasStatus ||
+    !result.statusOk ||
+    !result.capabilitiesOk ||
+    result.toolCount <= 30 ||
+    result.chunkedBodyLimitStatus !== 413
+  ) {
     process.exitCode = 1;
   }
-  await client.close().catch(() => undefined);
 } catch (error) {
   console.log(JSON.stringify({ ok: false, error: String(error), stderr: stderr.slice(-400) }, null, 2));
   process.exitCode = 1;
