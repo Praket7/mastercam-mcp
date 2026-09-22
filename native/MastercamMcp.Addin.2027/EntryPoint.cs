@@ -62,7 +62,7 @@ namespace MastercamMcp.Addin.2027
                 {
                     server = new NamedPipeServerStream(
                         pipeName, PipeDirection.InOut, 1, PipeTransmissionMode.Byte,
-                        PipeOptions.Asynchronous, 4096, 4096, PipeSecurity());
+                        PipeOptions.Asynchronous, 32 * 1024, 32 * 1024, PipeSecurity());
                     await server.WaitForConnectionAsync(ct);
                     await HandleConnectionAsync(server, router, ct);
                 }
@@ -82,8 +82,8 @@ namespace MastercamMcp.Addin.2027
 
         private static async Task HandleConnectionAsync(NamedPipeServerStream pipe, RequestRouter router, CancellationToken ct)
         {
-            var buffer = new byte[8192];
-            var pending = new List<byte>();
+            var buffer = new byte[32 * 1024];
+            using var pending = new PooledFrameBuffer(32 * 1024);
             var responseTasks = new List<Task>();
             using var writeLock = new SemaphoreSlim(1, 1);
 
@@ -96,16 +96,13 @@ namespace MastercamMcp.Addin.2027
                     catch { break; }
                     if (read == 0) break;
 
-                    for (var i = 0; i < read; i++) pending.Add(buffer[i]);
-
-                    while (pending.Count >= FrameConstants.FrameHeaderSize)
+                    pending.Append(buffer, 0, read);
+                    while (true)
                     {
-                        var snapshot = pending.ToArray();
-                        ReadOnlyMemory<byte> payload;
-                        int consumed;
+                        string json;
                         try
                         {
-                            if (!FrameCodec.TryDecodeFrame(snapshot, out payload, out consumed)) break;
+                            if (!pending.TryReadUtf8Frame(out json)) break;
                         }
                         catch (Exception ex)
                         {
@@ -113,8 +110,6 @@ namespace MastercamMcp.Addin.2027
                             return;
                         }
 
-                        pending.RemoveRange(0, consumed);
-                        var json = Encoding.UTF8.GetString(payload.ToArray());
                         var outcome = router.Handle(json);
                         if (outcome.IsCancel) continue;
 
@@ -175,7 +170,6 @@ namespace MastercamMcp.Addin.2027
             {
                 if (!pipe.IsConnected) return;
                 await pipe.WriteAsync(frame, 0, frame.Length, ct).ConfigureAwait(false);
-                await pipe.FlushAsync(ct).ConfigureAwait(false);
             }
             finally
             {

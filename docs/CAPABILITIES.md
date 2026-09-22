@@ -6,7 +6,7 @@ The tool manifest is the canonical source of truth for MCP registration, policy 
 Tiers: `UNAVAILABLE` < `DISCOVERED` < `IMPLEMENTED` < `LIVE_READ_VERIFIED` < `LIVE_WRITE_VERIFIED`.
 A tier is raised only after a licensed live acceptance run against the matching Mastercam release.
 
-Counts: 56 capabilities declared, 49 fixture-supported, **0 live verified**.
+Counts: 59 capabilities declared, 52 fixture-supported, **0 live verified**.
 
 | Tool | Fixture supported | Risk | Backends | Tier | Notes |
 | --- | --- | --- | --- | --- | --- |
@@ -54,6 +54,9 @@ Counts: 56 capabilities declared, 49 fixture-supported, **0 live verified**.
 | compare_tool_databases | yes | read | server-local | IMPLEMENTED | Runs entirely in the TypeScript server and is available in fixture or live mode without implying Mastercam API coverage. |
 | compare_nc_files | yes | read | server-local | IMPLEMENTED | Runs entirely in the TypeScript server and is available in fixture or live mode without implying Mastercam API coverage. |
 | validate_machine_profile | yes | read | server-local | IMPLEMENTED | Runs entirely in the TypeScript server and is available in fixture or live mode without implying Mastercam API coverage. |
+| manufacturing_preflight | yes | read | server-local | IMPLEMENTED | Runs entirely in the TypeScript server and is available in fixture or live mode without implying Mastercam API coverage. |
+| analyze_regeneration_impact | yes | read | server-local | IMPLEMENTED | Runs entirely in the TypeScript server and is available in fixture or live mode without implying Mastercam API coverage. |
+| analyze_post_regression | yes | read | server-local | IMPLEMENTED | Runs entirely in the TypeScript server and is available in fixture or live mode without implying Mastercam API coverage. |
 | preview_operation_parameters | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares it. |
 | apply_operation_parameter_preview | yes | mutation | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares it. |
 | rollback_change | yes | mutation | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares it. |

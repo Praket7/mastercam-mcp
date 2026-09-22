@@ -14,7 +14,10 @@ export const SERVER_LOCAL_TOOL_NAMES = new Set([
   "generate_setup_sheet",
   "compare_tool_databases",
   "compare_nc_files",
-  "validate_machine_profile"
+  "validate_machine_profile",
+  "manufacturing_preflight",
+  "analyze_regeneration_impact",
+  "analyze_post_regression"
 ]);
 
 /** Native capabilities implemented by the current Stage-A adapters. */

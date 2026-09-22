@@ -1,8 +1,10 @@
 import net from "node:net";
+import { once } from "node:events";
 import { randomUUID } from "node:crypto";
 import { encodeFrame } from "./protocol.js";
+import { FrameReader } from "./framing.js";
 import { BRIDGE_PROTOCOL_VERSION, encodeRequest, encodeCancel, parseFrame } from "./bridge-protocol.js";
-import type { BridgeResponse } from "./bridge-protocol.js";
+import type { BridgeEvent, BridgeResponse } from "./bridge-protocol.js";
 import { CircuitBreaker, CircuitBreakerOpenError } from "./circuit-breaker.js";
 import type { CircuitBreakerOptions } from "./circuit-breaker.js";
 
@@ -33,6 +35,9 @@ export class BridgeClient {
     maxResponseBytes: number;
     circuitBreaker: CircuitBreakerOptions;
   };
+  private readonly reader: FrameReader;
+  private readonly eventListeners = new Set<(event: BridgeEvent) => void>();
+  private writeChain: Promise<void> = Promise.resolve();
   readonly breaker: CircuitBreaker;
 
   constructor(options: BridgeClientOptions) {
@@ -47,6 +52,7 @@ export class BridgeClient {
         halfOpenSuccesses: 2
       }
     };
+    this.reader = new FrameReader(this.options.maxResponseBytes);
     this.breaker = new CircuitBreaker(this.options.circuitBreaker);
   }
 
@@ -56,6 +62,11 @@ export class BridgeClient {
 
   get pendingCount(): number {
     return this.pending.size;
+  }
+
+  onEvent(listener: (event: BridgeEvent) => void): () => void {
+    this.eventListeners.add(listener);
+    return () => this.eventListeners.delete(listener);
   }
 
   async call(
@@ -92,7 +103,7 @@ export class BridgeClient {
         const sendCancel = () => {
           if (pending.cancelSent) return;
           pending.cancelSent = true;
-          this.safeWrite(socket, encodeFrame(encodeCancel(requestId)));
+          void this.enqueueWrite(socket, encodeFrame(encodeCancel(requestId))).catch(() => undefined);
         };
 
         const onAbort = () => {
@@ -104,6 +115,7 @@ export class BridgeClient {
           sendCancel();
           finish(new Error(`TIMEOUT: ${tool} exceeded ${deadlineMs}ms deadline`));
         }, deadlineMs);
+        pending.timer.unref?.();
         pending.cleanup = () => signal?.removeEventListener("abort", onAbort);
         this.pending.set(requestId, pending);
 
@@ -115,9 +127,9 @@ export class BridgeClient {
           signal.addEventListener("abort", onAbort, { once: true });
         }
 
-        if (!this.safeWrite(socket, encodeFrame(payload))) {
+        void this.enqueueWrite(socket, encodeFrame(payload)).catch(() => {
           finish(new Error("BACKEND_UNAVAILABLE: bridge connection lost before send"));
-        }
+        });
       });
     });
   }
@@ -128,7 +140,7 @@ export class BridgeClient {
       pending.cleanup?.();
       if (this.socket && !this.socket.destroyed && !pending.cancelSent) {
         pending.cancelSent = true;
-        this.safeWrite(this.socket, encodeFrame(encodeCancel(requestId)));
+        void this.enqueueWrite(this.socket, encodeFrame(encodeCancel(requestId))).catch(() => undefined);
       }
       pending.reject(new Error(reason));
     }
@@ -137,6 +149,7 @@ export class BridgeClient {
 
   async close(): Promise<void> {
     this.cancelAll("CANCELLED: bridge client closing");
+    await this.writeChain.catch(() => undefined);
     const socket = this.socket;
     this.socket = undefined;
     this.connecting = undefined;
@@ -145,14 +158,24 @@ export class BridgeClient {
     }
   }
 
-  private safeWrite(socket: net.Socket, payload: string | Buffer): boolean {
-    if (socket.destroyed) return false;
-    try {
-      socket.write(payload);
-      return true;
-    } catch {
-      return false;
-    }
+  private enqueueWrite(socket: net.Socket, payload: string | Buffer): Promise<void> {
+    const write = async () => {
+      if (socket.destroyed) {
+        throw new Error("BACKEND_UNAVAILABLE: bridge socket is closed");
+      }
+      let writable: boolean;
+      try {
+        writable = socket.write(payload);
+      } catch (error) {
+        throw error instanceof Error ? error : new Error(String(error));
+      }
+      if (!writable) {
+        await once(socket, "drain");
+      }
+    };
+    const next = this.writeChain.then(write, write);
+    this.writeChain = next.catch(() => undefined);
+    return next;
   }
 
   private ensureConnected(): Promise<net.Socket> {
@@ -165,6 +188,7 @@ export class BridgeClient {
         socket.destroy();
         reject(new Error("BACKEND_UNAVAILABLE: bridge connection timed out"));
       }, this.options.connectTimeoutMs);
+      timer.unref?.();
 
       socket.once("connect", () => {
         clearTimeout(timer);
@@ -183,34 +207,30 @@ export class BridgeClient {
     return this.connecting;
   }
 
-  private buffer = Buffer.alloc(0);
-
   private attach(socket: net.Socket): void {
     this.socket = socket;
+    this.reader.reset();
     socket.setTimeout(this.options.idleTimeoutMs, () => {
-      this.failAllPending(new Error("BACKEND_UNAVAILABLE: bridge connection idle timeout"));
-      socket.destroy();
+      // A connection may be byte-idle while Mastercam is legitimately executing
+      // a long request. Per-request deadlines own active work; the connection
+      // idle timeout only reaps truly idle bridge connections.
+      if (this.pending.size === 0) socket.destroy();
     });
 
     socket.on("data", (chunk: Buffer) => {
-      this.buffer = Buffer.concat([this.buffer, chunk]);
-      while (this.buffer.length >= 8) {
-        const len = Number(this.buffer.readBigUInt64LE(0));
-        if (!Number.isSafeInteger(len) || len < 0 || len > this.options.maxResponseBytes) {
-          this.failAllPending(new Error(
-            `RESPONSE_TOO_LARGE: frame exceeded ${this.options.maxResponseBytes} bytes`
-          ));
-          socket.destroy();
-          return;
-        }
-        if (this.buffer.length < 8 + len) break;
+      let frames: string[];
+      try {
+        frames = this.reader.push(chunk);
+      } catch (error) {
+        this.failAllPending(error instanceof Error ? error : new Error(String(error)));
+        socket.destroy();
+        return;
+      }
 
-        const payload = this.buffer.subarray(8, 8 + len);
-        this.buffer = this.buffer.subarray(8 + len);
-
+      for (const text of frames) {
         let message: ReturnType<typeof parseFrame>;
         try {
-          message = parseFrame(payload.toString("utf8"));
+          message = parseFrame(text);
         } catch (error) {
           this.failAllPending(new Error(
             `BACKEND_UNAVAILABLE: invalid bridge response: ${error instanceof Error ? error.message : String(error)}`
@@ -219,7 +239,13 @@ export class BridgeClient {
           return;
         }
 
-        if (message.kind === "event") continue;
+        if (message.kind === "event") {
+          for (const listener of this.eventListeners) {
+            try { listener(message.event); } catch { }
+          }
+          continue;
+        }
+
         const response = message.response;
         const pending = this.pending.get(response.requestId);
         if (!pending) continue;
@@ -231,9 +257,11 @@ export class BridgeClient {
         if (response.ok) {
           pending.resolve(response);
         } else {
-          pending.reject(new Error(
+          const error = new Error(
             `${response.error?.code ?? "BACKEND_UNAVAILABLE"}: ${response.error?.message ?? "bridge call failed"}`
-          ));
+          ) as Error & { retryable?: boolean };
+          error.retryable = response.error?.retryable;
+          pending.reject(error);
         }
       }
     });
@@ -243,7 +271,7 @@ export class BridgeClient {
     });
     socket.on("close", () => {
       if (this.socket === socket) this.socket = undefined;
-      this.buffer = Buffer.alloc(0);
+      this.reader.reset();
       this.failAllPending(new Error("BACKEND_UNAVAILABLE: bridge connection closed"));
     });
   }

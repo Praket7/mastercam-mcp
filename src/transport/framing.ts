@@ -2,11 +2,16 @@ import { MAX_FRAME_SIZE } from "./protocol.js";
 export const MAX_FRAME_BYTES = MAX_FRAME_SIZE;
 
 /**
- * FrameReader is now a thin wrapper around the canonical 8-byte protocol.
- * It maintains compatibility with the legacy API while using the new framing.
+ * Incremental frame decoder for the bridge's 8-byte little-endian length
+ * prefix. Unlike Buffer.concat-based accumulation, every payload byte is
+ * copied at most once into its final frame buffer regardless of chunking.
  */
 export class FrameReader {
-  private buffer = Buffer.alloc(0);
+  private readonly header = Buffer.allocUnsafe(8);
+  private headerBytes = 0;
+  private payload: Buffer | undefined;
+  private payloadBytes = 0;
+  private expectedPayloadBytes = -1;
   private readonly maxFrameBytes: number;
 
   constructor(maxFrameBytes = MAX_FRAME_BYTES) {
@@ -15,30 +20,71 @@ export class FrameReader {
 
   push(chunk: string | Buffer): string[] {
     const data = typeof chunk === "string" ? Buffer.from(chunk, "utf8") : chunk;
-    this.buffer = Buffer.concat([this.buffer, data]);
     const frames: string[] = [];
+    let offset = 0;
 
-    while (this.buffer.length >= 8) {
-      const len = Number(this.buffer.readBigUInt64LE(0));
-      if (len < 0 || len > this.maxFrameBytes) {
-        throw new Error(`RESPONSE_TOO_LARGE: frame exceeded ${this.maxFrameBytes} bytes`);
+    while (offset < data.length) {
+      if (this.expectedPayloadBytes < 0) {
+        const headerRemaining = 8 - this.headerBytes;
+        const take = Math.min(headerRemaining, data.length - offset);
+        data.copy(this.header, this.headerBytes, offset, offset + take);
+        this.headerBytes += take;
+        offset += take;
+
+        if (this.headerBytes < 8) break;
+
+        const length = Number(this.header.readBigUInt64LE(0));
+        if (!Number.isSafeInteger(length) || length < 0 || length > this.maxFrameBytes) {
+          this.reset();
+          throw new Error(`RESPONSE_TOO_LARGE: frame exceeded ${this.maxFrameBytes} bytes`);
+        }
+        this.headerBytes = 0;
+        this.expectedPayloadBytes = length;
+        this.payloadBytes = 0;
+        this.payload = length === 0 ? undefined : Buffer.allocUnsafe(length);
+
+        if (length === 0) {
+          frames.push("");
+          this.expectedPayloadBytes = -1;
+          continue;
+        }
       }
-      if (this.buffer.length < 8 + len) break;
 
-      const payload = this.buffer.subarray(8, 8 + len);
-      this.buffer = this.buffer.subarray(8 + len);
-      frames.push(payload.toString("utf8"));
-    }
+      const payload = this.payload;
+      if (!payload) continue;
+      const remaining = this.expectedPayloadBytes - this.payloadBytes;
+      const take = Math.min(remaining, data.length - offset);
+      data.copy(payload, this.payloadBytes, offset, offset + take);
+      this.payloadBytes += take;
+      offset += take;
 
-    if (this.buffer.length > this.maxFrameBytes) {
-      throw new Error(`RESPONSE_TOO_LARGE: buffered data exceeded ${this.maxFrameBytes} bytes without complete frame`);
+      if (this.payloadBytes === this.expectedPayloadBytes) {
+        frames.push(payload.toString("utf8"));
+        this.payload = undefined;
+        this.payloadBytes = 0;
+        this.expectedPayloadBytes = -1;
+      }
     }
 
     return frames;
   }
 
+  reset(): void {
+    this.headerBytes = 0;
+    this.payload = undefined;
+    this.payloadBytes = 0;
+    this.expectedPayloadBytes = -1;
+  }
+
+  get pendingBytes(): number {
+    return this.headerBytes + this.payloadBytes;
+  }
+
+  /** Legacy diagnostic accessor retained for compatibility. */
   get pending(): string {
-    return this.buffer.toString("utf8");
+    if (this.payload && this.payloadBytes > 0) {
+      return this.payload.subarray(0, this.payloadBytes).toString("utf8");
+    }
+    return "";
   }
 }
-

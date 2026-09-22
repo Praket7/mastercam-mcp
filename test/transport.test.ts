@@ -64,11 +64,46 @@ test("CircuitBreaker half-opens after timeout", async () => {
   await assert.rejects(cb.execute(() => Promise.reject(new Error("BACKEND_UNAVAILABLE: fail"))), /BACKEND_UNAVAILABLE/);
   assert.equal(cb.getState(), CircuitState.OPEN);
 });
+
 test("CircuitBreaker ignores semantic failures", async () => {
   const cb = new CircuitBreaker({ failureThreshold: 1, timeout: 1000 });
   await assert.rejects(
     cb.execute(() => Promise.reject(new Error("VALIDATION_FAILED: bad input"))),
     /VALIDATION_FAILED/
   );
+  assert.equal(cb.getState(), CircuitState.CLOSED);
+});
+
+test("CircuitBreaker does not treat a slow Mastercam operation timeout as transport failure", async () => {
+  const cb = new CircuitBreaker({ failureThreshold: 1, timeout: 1000 });
+  await assert.rejects(
+    cb.execute(() => Promise.reject(new Error("TIMEOUT: toolpath inspection exceeded deadline"))),
+    /TIMEOUT/
+  );
+  assert.equal(cb.getState(), CircuitState.CLOSED);
+});
+
+test("CircuitBreaker admits only one half-open transport probe at a time", async () => {
+  const cb = new CircuitBreaker({ failureThreshold: 1, timeout: 10, halfOpenSuccesses: 1 });
+  await assert.rejects(
+    cb.execute(() => Promise.reject(new Error("BACKEND_UNAVAILABLE: fail"))),
+    /BACKEND_UNAVAILABLE/
+  );
+  await new Promise(resolve => setTimeout(resolve, 15));
+
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const probe = cb.execute(async () => {
+    await gate;
+    return "ok";
+  });
+  await Promise.resolve();
+
+  await assert.rejects(
+    cb.execute(() => Promise.resolve("second")),
+    /circuit breaker open/i
+  );
+  release();
+  assert.equal(await probe, "ok");
   assert.equal(cb.getState(), CircuitState.CLOSED);
 });
