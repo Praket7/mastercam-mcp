@@ -30,7 +30,7 @@ interface RecoveredChain {
 
 const GENESIS_HASH = "sha256:genesis";
 const MAX_REDACT_DEPTH = 6;
-const SENSITIVE_KEYS = /(password|secret|authorization|apikey|api_key|credential|approvalToken|rollbackToken|accessToken|refreshToken|idempotencyKey)/i;
+const SENSITIVE_KEYS = /(password|passwd|secret|authorization|api[-_]?key|credential|approval[-_]?token|rollback[-_]?token|access[-_]?token|refresh[-_]?token|idempotency[-_]?key|cookie|session[-_]?id|private[-_]?key|client[-_]?secret)/i;
 
 export function sha256Of(value: unknown): string {
   return `sha256:${createHash("sha256").update(stableStringify(value)).digest("hex")}`;
@@ -46,7 +46,8 @@ export function stableStringify(value: unknown): string {
 }
 
 export function redact(value: unknown, depth = 0): unknown {
-  if (depth > MAX_REDACT_DEPTH || value === null || typeof value !== "object") return value;
+  if (value === null || typeof value !== "object") return value;
+  if (depth > MAX_REDACT_DEPTH) return "[truncated]";
   if (Array.isArray(value)) return value.slice(0, 50).map(item => redact(item, depth + 1));
   const out: Record<string, unknown> = {};
   for (const [key, val] of Object.entries(value as Record<string, unknown>)) {
@@ -177,8 +178,20 @@ export class AuditLog {
     return full;
   }
 
+  /**
+   * Record safety-critical evidence and wait until it is durably appended.
+   * Mutation paths should use this method before returning success.
+   */
+  async recordCritical(entry: Omit<AuditEntry, "sequence" | "timestamp">): Promise<AuditEntry> {
+    const full = this.record(entry);
+    await this.flush();
+    if (this.startupError) throw new Error(this.startupError);
+    return full;
+  }
+
   async flush(): Promise<void> {
     await this.tail;
+    if (this.startupError) throw new Error(this.startupError);
   }
 
   private writeBuffer = "";
