@@ -54,7 +54,7 @@ Counts: 56 capabilities declared, 49 fixture-supported, **0 live verified**.
 | compare_tool_databases | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
 | compare_nc_files | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
 | validate_machine_profile | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
-| preview_operation_parameters | yes | preview | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
+| preview_operation_parameters | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
 | apply_operation_parameter_preview | yes | mutation | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
 | rollback_change | yes | mutation | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
 | change_tool | no | mutation | none | UNAVAILABLE | Direct tool-change mutation is not exposed until it has a preview/approval workflow and a verified backend mapping. |
