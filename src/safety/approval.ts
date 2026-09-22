@@ -57,10 +57,13 @@ export class ApprovalLedger {
   private previews = new Map<string, PreviewRecord>();
   private applied = new Map<string, ApplyRecord>();
   private rollbacks = new Map<string, RollbackRecord>();
+  private idempotency = new Map<string, IdempotencyRecord>();
   private readonly ttlMs: number;
+  private readonly maxLedger: number;
 
-  constructor(ttlMs = DEFAULT_TTL_MS) {
+  constructor(ttlMs = DEFAULT_TTL_MS, maxLedger = MAX_LEDGER) {
     this.ttlMs = ttlMs;
+    this.maxLedger = Math.max(1, maxLedger);
   }
 
   createPreview(input: Omit<PreviewRecord, "approvalToken" | "createdAt" | "expiresAt" | "used">): PreviewRecord {
@@ -75,23 +78,27 @@ export class ApprovalLedger {
       used: false
     };
     this.previews.set(token, record);
+    this.trimOldest(this.previews);
     return record;
   }
 
   /** Non-consuming lookup so the apply path can resolve the target for CAS. */
   peekPreview(token: string): PreviewRecord {
+    this.evict();
     const record = this.previews.get(token);
     if (!record) throw new Error("APPROVAL_TOKEN_INVALID: unknown or already consumed approval token");
+    if (Date.now() > record.expiresAt) {
+      this.previews.delete(token);
+      throw new Error("APPROVAL_TOKEN_EXPIRED: request a fresh preview");
+    }
     return record;
   }
 
   /** Returns the record and marks it used; throws ErrorInfo on any invalid state. */
   consumePreview(token: string, expected: { operationFingerprint: string; documentRevision: string }): PreviewRecord {
-    const record = this.previews.get(token);
-    if (!record) throw new Error("APPROVAL_TOKEN_INVALID: unknown or already consumed approval token");
+    const record = this.peekPreview(token);
     this.previews.delete(token);
     if (record.used) throw new Error("APPROVAL_TOKEN_INVALID: approval token was already used");
-    if (Date.now() > record.expiresAt) throw new Error("APPROVAL_TOKEN_EXPIRED: request a fresh preview");
     if (record.operationFingerprint !== expected.operationFingerprint) {
       throw new Error(`STALE_PREVIEW: operation changed since preview (${record.operationFingerprint} != ${expected.operationFingerprint})`);
     }
@@ -103,44 +110,54 @@ export class ApprovalLedger {
   }
 
   recordApply(record: PreviewRecord): ApplyRecord {
+    this.evict();
     const applied: ApplyRecord = {
       ...record,
       appliedAt: Date.now(),
       transactionId: `txn_${randomBytes(16).toString("base64url")}`
     };
     this.applied.set(applied.transactionId, applied);
+    this.trimOldest(this.applied);
     return applied;
   }
 
   /** Creates a one-use rollback receipt bound to the applied transaction. */
   createRollback(transactionId: string): RollbackRecord {
+    this.evict();
     const applied = this.applied.get(transactionId);
     if (!applied) throw new Error("APPROVAL_TOKEN_INVALID: unknown transaction");
+    const now = Date.now();
     const record: RollbackRecord = {
       transactionId: `txn_${randomBytes(16).toString("base64url")}`,
       rollbackOf: transactionId,
       operationId: applied.operationId,
       restored: applied.before,
       restoredSource: applied.after,
-      appliedAt: Date.now(),
-      expiresAt: Date.now() + this.ttlMs,
+      appliedAt: now,
+      expiresAt: now + this.ttlMs,
       used: false
     };
     this.rollbacks.set(record.transactionId, record);
+    this.trimOldest(this.rollbacks);
     return record;
   }
 
   peekRollback(transactionId: string): RollbackRecord {
+    this.evict();
     const record = this.rollbacks.get(transactionId) ?? [...this.rollbacks.values()].find(r => r.rollbackOf === transactionId && !r.used);
     if (!record) throw new Error("APPROVAL_TOKEN_INVALID: unknown or already consumed rollback transaction");
     if (record.used) throw new Error("APPROVAL_TOKEN_INVALID: rollback was already applied");
-    if (Date.now() > record.expiresAt) throw new Error("APPROVAL_TOKEN_EXPIRED: request a new rollback receipt");
+    if (Date.now() > record.expiresAt) {
+      this.rollbacks.delete(record.transactionId);
+      throw new Error("APPROVAL_TOKEN_EXPIRED: request a new rollback receipt");
+    }
     return record;
   }
 
   consumeRollback(transactionId: string): RollbackRecord {
     const record = this.peekRollback(transactionId);
     record.used = true;
+    this.rollbacks.delete(record.transactionId);
     return record;
   }
 
@@ -155,23 +172,33 @@ export class ApprovalLedger {
   }
 
   rememberIdempotency(key: string, tool: string, targetHash: string, argumentHash: string, result: any): void {
-    if (this.idempotency.size >= MAX_LEDGER) {
-      const first = this.idempotency.keys().next().value;
-      if (first) this.idempotency.delete(first);
-    }
+    if (this.idempotency.has(key)) this.idempotency.delete(key);
     this.idempotency.set(key, { key, tool, targetHash, argumentHash, result });
+    this.trimOldest(this.idempotency);
   }
 
-  private idempotency = new Map<string, IdempotencyRecord>();
-
   private evict(): void {
-    if (this.previews.size < MAX_LEDGER) return;
-    const cutoff = Date.now() - this.ttlMs;
-    for (const [token, record] of this.previews) if (record.used || record.expiresAt < cutoff) this.previews.delete(token);
-    while (this.previews.size >= MAX_LEDGER) {
-      const oldest = this.previews.keys().next().value;
+    const now = Date.now();
+    for (const [token, record] of this.previews) {
+      if (record.used || record.expiresAt <= now) this.previews.delete(token);
+    }
+    for (const [transactionId, record] of this.rollbacks) {
+      if (record.used || record.expiresAt <= now) this.rollbacks.delete(transactionId);
+    }
+    for (const [transactionId, record] of this.applied) {
+      if (record.appliedAt + this.ttlMs <= now) this.applied.delete(transactionId);
+    }
+    this.trimOldest(this.previews);
+    this.trimOldest(this.applied);
+    this.trimOldest(this.rollbacks);
+    this.trimOldest(this.idempotency);
+  }
+
+  private trimOldest<T>(map: Map<string, T>): void {
+    while (map.size > this.maxLedger) {
+      const oldest = map.keys().next().value as string | undefined;
       if (!oldest) break;
-      this.previews.delete(oldest);
+      map.delete(oldest);
     }
   }
 }
