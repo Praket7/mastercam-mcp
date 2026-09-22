@@ -3,6 +3,11 @@ import * as inspection from "./schemas/inspection.js";
 import * as mutations from "./schemas/mutations.js";
 import * as machine from "./schemas/machine.js";
 import { emptySchema } from "./schemas/common.js";
+import {
+  ManufacturingPreflightSchema,
+  PostRegressionSchema,
+  RegenerationImpactSchema
+} from "./manufacturing-intelligence.js";
 import type { CapabilityTier } from "./contracts.js";
 
 export type ManifestCategory = "read" | "preview" | "write" | "advanced" | "forbidden";
@@ -165,8 +170,11 @@ export const TOOL_MANIFEST: readonly ToolManifestEntry[] = [
 
   read("generate_setup_sheet", "Create a revision-ready setup sheet from inspection data", inspection.GenerateSetupSheetSchema),
   read("compare_tool_databases", "Compare two tool database snapshots semantically", inspection.CompareToolDatabasesSchema),
-  read("compare_nc_files", "Compare two NC files with sequence diffing and semantic summary", z.object({ before: z.string(), after: z.string() }).strict()),
+  read("compare_nc_files", "Compare two NC files with sequence diffing and semantic summary", z.object(inspection.compareNcFilesInput).strict()),
   read("validate_machine_profile", "Validate an operation against a declared machine profile", inspection.ValidateMachineProfileSchema, { outputDataSchema: machine.ValidateMachineProfileOutputSchema }),
+  read("manufacturing_preflight", "Run deterministic programming preflight and return blockers, warnings, unknowns, and evidence without claiming machine safety", ManufacturingPreflightSchema),
+  read("analyze_regeneration_impact", "Trace direct and transitive operation dependencies affected by a programming change", RegenerationImpactSchema),
+  read("analyze_post_regression", "Risk-rank semantic NC changes against an approved baseline for human review", PostRegressionSchema),
 
   preview("preview_operation_parameters", "Preview a feed/spindle change and receive a single-use approval token", mutations.PreviewOperationParametersSchema, { outputDataSchema: mutations.previewOperationParametersOutputSchema, requiresExactTarget: true }),
   write("apply_operation_parameter_preview", "Apply a previewed change using its approval token; refuses stale state", mutations.ApplyOperationParameterPreviewSchema, { outputDataSchema: mutations.applyOperationParameterPreviewOutputSchema, requiresRegeneration: true }),
