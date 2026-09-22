@@ -52,6 +52,14 @@ jobs:
         run: pnpm run build
       - name: Tests
         run: pnpm test
+      - name: MCP stdio 2026-07-28 smoke
+        env:
+          MASTERCAM_MCP_BACKEND: mock
+        run: pnpm run smoke
+      - name: MCP HTTP 2026-07-28 smoke
+        env:
+          MASTERCAM_MCP_BACKEND: mock
+        run: pnpm run smoke:http
       - name: Secret scanning - gitleaks
         uses: gitleaks/gitleaks-action@v2
         env:
