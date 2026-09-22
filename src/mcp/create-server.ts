@@ -8,7 +8,7 @@ import { LiveBackend } from "../live-backend.js";
 import { SERVER_LOCAL_TOOL_NAMES, LIVE_NATIVE_STAGE_A_TOOL_NAMES } from "../execution-surface.js";
 import { doctor } from "../diagnostics.js";
 import { VERSION } from "../version.js";
-import { compareJson, compareNc, setupSheet, validateMachine } from "../shop.js";
+import { compareToolDatabases, compareNc, setupSheet, validateMachine } from "../shop.js";
 import { defaultPipe, selectedBackend } from "../platform.js";
 import { TOOL_DEFINITIONS, ToolEnvelopeSchema } from "./registry.js";
 import type { ToolDefinition } from "./registry.js";
@@ -84,9 +84,6 @@ export function createMcpServer(
     }
   );
 
-  // Fixture resources mirror the portable inspection contract. The current
-  // live Stage-A adapter cannot serve these resources, so do not advertise
-  // resources that would deterministically return UNSUPPORTED_CAPABILITY.
   if (backendKind === "mock") {
     server.registerResource(
       "active-part",
@@ -163,7 +160,8 @@ export function createMcpServer(
         const signal = ctx.mcpReq.signal;
         const abortController = new AbortController();
         const onExternalAbort = () => abortController.abort(signal.reason);
-        signal.addEventListener("abort", onExternalAbort, { once: true });
+        if (signal.aborted) abortController.abort(signal.reason);
+        else signal.addEventListener("abort", onExternalAbort, { once: true });
 
         let timedOut = false;
         const deadlineMs = deadlineFor(category);
@@ -175,7 +173,9 @@ export function createMcpServer(
 
         try {
           if (abortController.signal.aborted) {
-            throw new Error("CANCELLED: request aborted before execution");
+            throw abortController.signal.reason instanceof Error
+              ? abortController.signal.reason
+              : new Error("CANCELLED: request aborted before execution");
           }
 
           let result: ToolResult;
@@ -203,7 +203,7 @@ export function createMcpServer(
           } else if (name === "generate_setup_sheet") {
             result = { ok: true, tool: name, data: setupSheet(args as never) };
           } else if (name === "compare_tool_databases") {
-            result = { ok: true, tool: name, data: compareJson(args.left, args.right) };
+            result = { ok: true, tool: name, data: compareToolDatabases(args.left, args.right) };
           } else if (name === "compare_nc_files") {
             result = {
               ok: true,
@@ -230,7 +230,9 @@ export function createMcpServer(
             );
           }
 
-          if (abortController.signal.aborted && !result.ok) {
+          // A backend may ignore cancellation and finish late. Never surface a
+          // result after the request or server-side deadline has been aborted.
+          if (abortController.signal.aborted) {
             throw abortController.signal.reason instanceof Error
               ? abortController.signal.reason
               : new Error("CANCELLED: request aborted");
