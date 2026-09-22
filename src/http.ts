@@ -7,7 +7,11 @@ import { MockBackend } from "./backend.js";
 import { LiveBackend } from "./live-backend.js";
 import { createMcpServer } from "./mcp/create-server.js";
 import { selectedBackend } from "./platform.js";
-import { classifyAccess, classifyRequest } from "./http-security.js";
+import {
+  assertSafeHttpBinding,
+  classifyAccess,
+  classifyRequest
+} from "./http-security.js";
 import type { Backend } from "./backend.js";
 import { AuditLog } from "./audit/audit-log.js";
 import { loadConfig } from "./config.js";
@@ -43,9 +47,15 @@ const port = config.http.port;
 const allowedOrigins = new Set(config.http.allowedOrigins);
 const remote = config.http.allowRemote;
 
+assertSafeHttpBinding(host, remote);
 if (remote && allowedOrigins.size === 0) {
   throw new Error(
     "MASTERCAM_MCP_ALLOWED_ORIGINS is required when remote HTTP access is enabled"
+  );
+}
+if (remote && !token) {
+  throw new Error(
+    "MASTERCAM_MCP_HTTP_TOKEN is required when remote HTTP access is enabled"
   );
 }
 
@@ -72,7 +82,8 @@ function verdict(req: http.IncomingMessage) {
     {
       origin: req.headers.origin,
       host: req.headers.host,
-      authorization: req.headers.authorization
+      authorization: req.headers.authorization,
+      remoteAddress: req.socket.remoteAddress
     },
     { token, allowedOrigins, remote }
   );
@@ -132,13 +143,17 @@ function requestHeaders(req: http.IncomingMessage): Headers {
   return headers;
 }
 
-async function toWebRequest(req: http.IncomingMessage): Promise<Request> {
+async function toWebRequest(
+  req: http.IncomingMessage,
+  signal: AbortSignal
+): Promise<Request> {
   const body = await readBoundedBody(req, config.http.maxRequestBodyBytes);
   const hostHeader = req.headers.host ?? `${host}:${port}`;
   const url = new URL(req.url ?? "/mcp", `http://${hostHeader}`);
   const init: RequestInit = {
     method: req.method ?? "GET",
-    headers: requestHeaders(req)
+    headers: requestHeaders(req),
+    signal
   };
   if (body !== undefined) init.body = body;
   return new Request(url, init);
@@ -146,8 +161,10 @@ async function toWebRequest(req: http.IncomingMessage): Promise<Request> {
 
 async function writeWebResponse(
   res: http.ServerResponse,
-  response: Response
+  response: Response,
+  signal: AbortSignal
 ): Promise<void> {
+  if (signal.aborted || res.destroyed) return;
   res.statusCode = response.status;
   if (response.statusText) res.statusMessage = response.statusText;
   response.headers.forEach((value, name) => res.setHeader(name, value));
@@ -159,15 +176,16 @@ async function writeWebResponse(
 
   const reader = response.body.getReader();
   try {
-    while (true) {
+    while (!signal.aborted && !res.destroyed) {
       const { done, value } = await reader.read();
       if (done) break;
       if (!res.write(Buffer.from(value))) await once(res, "drain");
     }
   } finally {
+    if (signal.aborted) await reader.cancel().catch(() => undefined);
     reader.releaseLock();
   }
-  res.end();
+  if (!signal.aborted && !res.destroyed) res.end();
 }
 
 const server = http.createServer((req, res) => {
@@ -190,7 +208,8 @@ async function handleRequest(
       {
         origin: req.headers.origin,
         host: req.headers.host,
-        authorization: req.headers.authorization
+        authorization: req.headers.authorization,
+        remoteAddress: req.socket.remoteAddress
       },
       { token, allowedOrigins, remote }
     );
@@ -226,18 +245,33 @@ async function handleRequest(
     return;
   }
 
+  const abortController = new AbortController();
+  const abort = () => {
+    if (!abortController.signal.aborted) abortController.abort();
+  };
+  const onResponseClose = () => {
+    if (!res.writableEnded) abort();
+  };
+  req.once("aborted", abort);
+  res.once("close", onResponseClose);
+
   activeRequests++;
   try {
-    const request = await toWebRequest(req);
+    const request = await toWebRequest(req, abortController.signal);
+    if (abortController.signal.aborted) return;
     const response = await mcpHandler.fetch(request);
-    await writeWebResponse(res, response);
+    if (abortController.signal.aborted) return;
+    await writeWebResponse(res, response, abortController.signal);
   } catch (error) {
+    if (abortController.signal.aborted) return;
     if (error instanceof RequestBodyTooLargeError) {
       reject(res, 413, error.message);
       return;
     }
     throw error;
   } finally {
+    req.off("aborted", abort);
+    res.off("close", onResponseClose);
     activeRequests--;
   }
 }
