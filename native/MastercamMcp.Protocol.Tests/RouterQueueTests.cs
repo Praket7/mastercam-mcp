@@ -29,19 +29,20 @@ namespace MastercamMcp.Protocol.Tests
             Assert.NotNull(third.ImmediateResponse);
             Assert.Null(third.Pending);
 
-            var response = JsonSerializer.Deserialize<BridgeResponse>(
-                third.ImmediateResponse,
-                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-            Assert.NotNull(response);
-            Assert.False(response.Ok);
-            Assert.Equal("queue-3", response.RequestId);
-            Assert.Equal(ErrorCodes.BackendUnavailable, response.Error.Code);
-            Assert.True(response.Error.Retryable);
-            Assert.Contains("queue is full", response.Error.Message, StringComparison.OrdinalIgnoreCase);
+            using (var document = JsonDocument.Parse(third.ImmediateResponse))
+            {
+                var root = document.RootElement;
+                Assert.False(root.GetProperty("ok").GetBoolean());
+                Assert.Equal("queue-3", root.GetProperty("requestId").GetString());
+                var error = root.GetProperty("error");
+                Assert.Equal(ErrorCodes.BackendUnavailable, error.GetProperty("code").GetString());
+                Assert.True(error.GetProperty("retryable").GetBoolean());
+                Assert.Contains("queue is full", error.GetProperty("message").GetString().ToLowerInvariant());
+            }
 
             adapter.Release.Set();
-            Assert.True((await first.Pending.ConfigureAwait(false)).Ok);
-            Assert.True((await second.Pending.ConfigureAwait(false)).Ok);
+            Assert.True((await first.Pending).Ok);
+            Assert.True((await second.Pending).Ok);
         }
 
         [Fact]
