@@ -11,6 +11,19 @@ export interface AcceptanceTestResult {
   evidence?: unknown;
 }
 
+export interface AcceptanceReadiness {
+  liveReadReady: boolean;
+  liveWriteReady: boolean;
+  liveReadBlockers: string[];
+  liveWriteBlockers: string[];
+  conclusion:
+    | "FIXTURE_ONLY"
+    | "LIVE_NOT_READY"
+    | "READ_READY_WRITE_NOT_EVALUATED"
+    | "READ_READY_WRITE_BLOCKED"
+    | "READ_WRITE_READY";
+}
+
 export interface AcceptanceReport {
   mode: "mock" | "live";
   writeTestsEnabled: boolean;
@@ -20,6 +33,7 @@ export interface AcceptanceReport {
   timestamp: string;
   tests: Record<string, AcceptanceTestResult>;
   overall: "PASS" | "FAIL" | "PARTIAL";
+  readiness: AcceptanceReadiness;
 }
 
 export interface AcceptanceOptions {
@@ -268,6 +282,32 @@ export async function runAcceptance(backend: Backend, options: AcceptanceOptions
       : "PASS";
 
   const status = ctx.statusInfo ?? {};
+  const readRequirements: AcceptanceTestName[] = ["status", "activePart", "operations", "tools", "stock", "wcs"];
+  const writeRequirements: AcceptanceTestName[] = ["preview", "apply", "verify", "rollback"];
+  const failedRequirements = (names: AcceptanceTestName[]) =>
+    names.filter(name => ctx.results[name]?.status !== "PASS");
+
+  const liveReadBlockers = options.mode === "live"
+    ? failedRequirements(readRequirements)
+    : ["fixture mode does not establish live Mastercam readiness"];
+  const liveWriteBlockers = options.mode === "live" && ctx.allowWrites
+    ? failedRequirements(writeRequirements)
+    : options.mode === "live"
+      ? ["write readiness not evaluated; rerun on a disposable part with --allow-writes"]
+      : ["fixture mode does not establish live Mastercam write readiness"];
+  const liveReadReady = options.mode === "live" && liveReadBlockers.length === 0;
+  const liveWriteReady = options.mode === "live" && ctx.allowWrites && liveWriteBlockers.length === 0;
+  const conclusion: AcceptanceReadiness["conclusion"] =
+    options.mode !== "live"
+      ? "FIXTURE_ONLY"
+      : !liveReadReady
+        ? "LIVE_NOT_READY"
+        : !ctx.allowWrites
+          ? "READ_READY_WRITE_NOT_EVALUATED"
+          : liveWriteReady
+            ? "READ_WRITE_READY"
+            : "READ_READY_WRITE_BLOCKED";
+
   return {
     mode: options.mode,
     writeTestsEnabled: ctx.allowWrites,
@@ -276,7 +316,14 @@ export async function runAcceptance(backend: Backend, options: AcceptanceOptions
     protocolVersion: Number(status.protocolVersion ?? 2),
     timestamp: new Date().toISOString(),
     tests: ctx.results,
-    overall
+    overall,
+    readiness: {
+      liveReadReady,
+      liveWriteReady,
+      liveReadBlockers,
+      liveWriteBlockers,
+      conclusion
+    }
   };
 }
 

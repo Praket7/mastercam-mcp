@@ -45,6 +45,7 @@ if (command === "version" || command === "--version" || command === "-v") {
   console.error(
     "Usage: mastercam-mcp [serve|doctor|benchmark|acceptance|install]\n" +
     "Acceptance: mastercam-mcp acceptance --mock | --live [--allow-writes]\n" +
+    "Live acceptance exits nonzero until required live inspection mappings pass; --allow-writes also gates write readiness.\n" +
     platformGuidance()
   );
   process.exit(2);
@@ -83,6 +84,8 @@ async function runAcceptanceCommand(args: string[]): Promise<void> {
     console.log(JSON.stringify(report, null, 2));
     console.error(`Acceptance report saved to: ${path}`);
     if (report.overall === "FAIL") process.exitCode = 1;
+    if (mode === "live" && !report.readiness.liveReadReady) process.exitCode = 2;
+    if (mode === "live" && allowWrites && !report.readiness.liveWriteReady) process.exitCode = 3;
   } finally {
     if (backend instanceof LiveBackend) await backend.close();
   }

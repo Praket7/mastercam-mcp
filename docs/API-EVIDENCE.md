@@ -1,15 +1,32 @@
 # API evidence
 
-This project records implementation evidence without redistributing protected Mastercam material.
+This project records implementation evidence without redistributing proprietary Mastercam SDK material.
 
-Public evidence reviewed on 2026 09 08 indicates that NET Hook add ins use a `NetHook3App` entry point and return `MCamReturn.NoErrors` from `Run`. Public Mastercam material also documents local NET Script references to the installed `NETHook3_0.dll` for Mastercam 2026.
+## What public evidence establishes
 
-The live machine preflight for this checkout found no installed Mastercam executable or SDK assemblies. Therefore the adapter intentionally uses a local reflection catalog and a capability registry rather than inventing undocumented operation methods. A capability becomes supported only after local assembly inspection and a live acceptance test.
+Public Mastercam NET-Hook examples establish the `NetHook3App` entry model and the use of installed NET-Hook assemblies. A public setup-sheet example also calls:
 
-Sources
+`Mastercam.Support.SearchManager.GetOperations().Any()`
 
-https://www.mastercam.com/community/3rd-party-developers/
+That is enough evidence to treat operation enumeration as a discovered API surface. It is **not** enough evidence to safely define a cross-version serialization contract for operation ids, names, feed/spindle quantities, tools, stock, planes, regeneration state, or mutation methods across Mastercam 2024 through 2027.
 
-https://nethookdocs.mastercam.com/
+For that reason the native adapters currently expose only `mastercam_status` and `mastercam_capabilities`. The richer operation workflow remains fixture/portable until a release-specific adapter is built from the licensed SDK and passes live acceptance.
 
-https://www.emastercam.com/forums/topic/79735-nethook-api-project-examples/
+## Promotion rule
+
+A native capability moves from unavailable to implemented only when all of the following are true:
+
+1. the matching Mastercam SDK/API member is identified for that release family
+2. units and target identity are explicit
+3. the adapter compiles against the intended Mastercam assemblies
+4. a licensed live acceptance run proves the read or mutation behavior
+5. the capability report and generated documentation are updated from the canonical manifest
+
+Mock or fixture success alone never promotes a live capability.
+
+## Public references
+
+- Mastercam third-party developer resources: https://www.mastercam.com/community/3rd-party-developers/
+- Mastercam NET-Hook documentation portal: https://nethookdocs.mastercam.com/
+- eMastercam NET-Hook development forum: https://www.emastercam.com/forums/forum/10-mastercam-c-hook-net-hook-and-vbscript-development/
+- Public SetupSheetXML example using `SearchManager.GetOperations()`: https://github.com/Predatorie/SetupSheetXML

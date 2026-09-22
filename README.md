@@ -47,13 +47,13 @@ Start with `discover_capabilities` and `mastercam_doctor`. Inspect the active pa
 
 The default server profile is read only. Writes require `MASTERCAM_MCP_PROFILE=write` (or `all` for development), `MASTERCAM_MCP_HARD_READ_ONLY=0`, and the preview/approval workflow. Posting, controller communication, DNC, FTP, cycle start, and arbitrary code execution are not provided.
 
-## Main capabilities
+## Capability boundary
 
-Read only inspection includes the active part, geometry, selection, machine groups, operations, tools, stock, WCS, post processor, toolpath state, and cycle estimate.
+The portable fixture backend implements the full inspection and workflow contract: active part, geometry, selection, machine groups, operations, tools, stock, WCS, post processor, toolpath state, cycle estimates, previews, verification, rollback, regeneration, simulation, collision models, visual context, and machine context.
 
-Planning includes operation targeting, plain language explanations, risk reports, feed and speed previews, change verification, audit history, and fixture replay.
+The native Legacy and 2027 adapters currently implement **Stage A environment reporting only**: `mastercam_status` and `mastercam_capabilities`. They do not advertise operation, tool, stock, WCS, simulation, or mutation tools until those mappings are implemented against the matching Mastercam SDK and pass licensed live acceptance.
 
-Advanced workflows include regeneration progress, simulation results, collision result models, visual context, and machine context. Fixture results are clearly marked as synthetic and cannot prove live machine safety.
+This distinction is deliberate. A fixture pass proves the MCP contract and safety pipeline, not live Mastercam behavior. Run `mastercam-mcp acceptance --live` on Windows to see the exact live-readiness blockers for the installed release.
 
 ## Live Mastercam setup
 
@@ -70,7 +70,7 @@ After starting Mastercam run the diagnostic command.
 npx -y mastercam-mcp@latest doctor
 ```
 
-Live operation mappings depend on the installed Mastercam release and its available API. The compatibility report shows what the add in can prove. A fixture pass is not a substitute for licensed live acceptance testing.
+Both native adapter families are present, including the .NET 10 adapter for Mastercam 2027, but only environment reporting is implemented today. The compatibility report and `acceptance --live` command show what the add in can actually prove. A live acceptance run exits nonzero until the required inspection mappings pass, and `--allow-writes` additionally gates preview, apply, verify, and rollback readiness.
 
 ## macOS setup
 

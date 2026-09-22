@@ -57,9 +57,9 @@ Counts: 56 capabilities declared, 50 fixture-supported, **0 live verified**.
 | preview_operation_parameters | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
 | apply_operation_parameter_preview | yes | mutation | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
 | rollback_change | yes | mutation | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
-| change_tool | yes | mutation | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
+| change_tool | no | mutation | none | UNAVAILABLE | Direct tool-change mutation is not exposed until it has a preview/approval workflow and a verified backend mapping. |
 | regenerate_toolpath | yes | mutation | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
-| update_stock | yes | mutation | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
+| update_stock | no | mutation | none | UNAVAILABLE | Direct stock mutation is not exposed until it has a preview/approval workflow and a verified backend mapping. |
 | run_simulation | yes | advanced | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
 | detect_collisions | yes | advanced | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
 | post_program | no | advanced | none | UNAVAILABLE | NC release is intentionally outside project scope for safety |
