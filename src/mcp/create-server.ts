@@ -113,7 +113,8 @@ export function createMcpServer(
         outputSchema: definition.outputSchema,
         annotations: definition.annotations
       },
-      async (args: Record<string, unknown>, ctx) => {
+      async (validatedArgs, ctx) => {
+        const args = validatedArgs as Record<string, unknown>;
         const name = definition.name;
         const category = categoryOf(name);
 
