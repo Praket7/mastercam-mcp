@@ -2,7 +2,7 @@
 
 Mastercam MCP connects an MCP client with a local Mastercam session through a protected Windows named pipe. It gives an assistant a careful workflow for inspection, planning, confirmation, verification, and recovery.
 
-The project includes a safe fixture backend so contributors can run the complete workflow without Mastercam or a license. The live adapter reports only capabilities that are actually mapped and verified. It never pretends that an unimplemented Mastercam action succeeded.
+The project includes a safe fixture backend so contributors can run the portable workflow without Mastercam or a license. The live adapter reports only capabilities that are actually mapped and verified. It never pretends that an unimplemented Mastercam action succeeded.
 
 ## Start without Mastercam
 
@@ -12,12 +12,11 @@ Install Node.js 22 or newer. From this repository run the following commands.
 pnpm install
 pnpm run build
 $env:MASTERCAM_MCP_BACKEND = "mock"
-pnpm run mock
 pnpm test
-node work\feature-smoke.mjs
+pnpm run smoke
 ```
 
-The fixture supports active part inspection, operation search, operation explanation, risk reporting, machine context, feed and speed previews, confirmation gates, reread verification, rollback, regeneration, simulation, collision reporting, visual context, audit history, and diagnostics.
+The fixture supports active part inspection, operation search, operation explanation, risk reporting, machine context, feed and speed previews, confirmation gates, reread verification, rollback, simulation, collision reporting, visual context, audit history, and diagnostics.
 
 ## MCP protocol
 
@@ -43,13 +42,15 @@ The installer makes a backup before changing client configuration. It supports i
 
 ## Safe workflow
 
-Start with `discover_capabilities` and `mastercam_doctor`. Inspect the active part and operations. Search for the intended operation. Explain it and review its risks. Preview any change. Request explicit confirmation. Apply the change. Regenerate only the affected operations. Reread the result and keep the receipt.
+Start with `discover_capabilities` and `mastercam_doctor`. Inspect the active part and operations. Search for the intended operation. Explain it and review its risks. Preview any change. Request explicit confirmation. Apply the change. Reread and verify the result, and keep the server-issued transaction and rollback receipt.
+
+Standalone `regenerate_toolpath` is intentionally not registered yet. Regeneration changes CAM state and must be bound to the exact approved mutation transaction before it is safe to automate. Until that transaction-bound workflow is implemented and verified, regenerate manually in Mastercam when required rather than bypassing the approval boundary.
 
 The default server profile is read only. Writes require `MASTERCAM_MCP_PROFILE=write` (or `all` for development), `MASTERCAM_MCP_HARD_READ_ONLY=0`, and the preview/approval workflow. Posting, controller communication, DNC, FTP, cycle start, and arbitrary code execution are not provided.
 
 ## Capability boundary
 
-The portable fixture backend implements the full inspection and workflow contract: active part, geometry, selection, machine groups, operations, tools, stock, WCS, post processor, toolpath state, cycle estimates, previews, verification, rollback, regeneration, simulation, collision models, visual context, and machine context.
+The portable fixture backend implements the public inspection and safety contract: active part, geometry, selection, machine groups, operations, tools, stock, WCS, post processor, toolpath state, cycle estimates, previews, verification, rollback, simulation, collision models, visual context, and machine context.
 
 The native Legacy and 2027 adapters currently implement **Stage A environment reporting only**: `mastercam_status` and `mastercam_capabilities`. They do not advertise operation, tool, stock, WCS, simulation, or mutation tools until those mappings are implemented against the matching Mastercam SDK and pass licensed live acceptance.
 
@@ -121,7 +122,7 @@ pnpm test
 pnpm pack --dry-run
 ```
 
-Use `MASTERCAM_MCP_FIXTURE` to load a JSON fixture containing a feed value and an operations array. Use `MASTERCAM_MCP_AUDIT_PATH` to select a local audit file.
+Use `MASTERCAM_MCP_FIXTURE` to load a JSON fixture containing a feed value and an operations array. Use `MASTERCAM_MCP_AUDIT_PATH` to select a local audit file. Runtime audit JSONL files are ignored by source control and package rules.
 
 ## Documentation
 
@@ -139,7 +140,7 @@ On PowerShell use `$env:MASTERCAM_MCP_BACKEND = "mock"` before starting the serv
 
 ## Path policy
 
-The live Windows installer checks the selected Mastercam root and its `chooks` folder. Exa verified the standard installation family under `C:\Program Files` and the shared data family under `C:\Users\Public\Documents`. Custom paths are supported through `MastercamRoot`. macOS and Linux use fixture and file workflows because the native Mastercam add in is Windows only.
+The live Windows installer checks the selected Mastercam root and its `chooks` folder. Public Mastercam guidance places standard installations under `C:\Program Files` and shared data under the public documents family. Custom paths are supported through `MastercamRoot`. macOS and Linux use fixture and file workflows because the native Mastercam add in is Windows only.
 
 ## License
 
