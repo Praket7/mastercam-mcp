@@ -90,7 +90,7 @@ function reject(res: http.ServerResponse, status: number, message: string): void
 async function readBoundedBody(
   req: http.IncomingMessage,
   maxBytes: number
-): Promise<Uint8Array | undefined> {
+): Promise<ArrayBuffer | undefined> {
   const method = (req.method ?? "GET").toUpperCase();
   if (method === "GET" || method === "HEAD") return undefined;
 
@@ -112,7 +112,12 @@ async function readBoundedBody(
     }
     chunks.push(buffer);
   }
-  return chunks.length ? Buffer.concat(chunks) : new Uint8Array();
+  if (!chunks.length) return new ArrayBuffer(0);
+  const combined = Buffer.concat(chunks);
+  return combined.buffer.slice(
+    combined.byteOffset,
+    combined.byteOffset + combined.byteLength
+  ) as ArrayBuffer;
 }
 
 function requestHeaders(req: http.IncomingMessage): Headers {
