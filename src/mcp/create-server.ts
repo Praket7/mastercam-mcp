@@ -1,11 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/server";
 import type * as z from "zod/v4";
-import * as contractsModule from "../contracts.js";
-import { allowed, DEFAULT_PROFILE, categoryOf, SUPPORTED_PROTOCOL_REVISIONS } from "../contracts.js";
+import { allowed, DEFAULT_PROFILE, categoryOf, SUPPORTED_PROTOCOL_REVISIONS, FORBIDDEN_TOOLS } from "../contracts.js";
 import type { Profile } from "../contracts.js";
 import type { Backend, ToolResult } from "../backend.js";
 import { LiveBackend } from "../live-backend.js";
+import { SERVER_LOCAL_TOOL_NAMES, LIVE_NATIVE_STAGE_A_TOOL_NAMES } from "../execution-surface.js";
 import { doctor } from "../diagnostics.js";
 import { VERSION } from "../version.js";
 import { compareJson, compareNc, setupSheet, validateMachine } from "../shop.js";
@@ -19,17 +19,20 @@ const WRITE_DEADLINE_MS = 90_000;
 const ADVANCED_DEADLINE_MS = 120_000;
 
 /**
- * The current native adapters are Stage A environment bridges. Keep MCP
- * discovery truthful: a live server must not advertise fixture-only tools.
- * Portable/mock mode continues to expose the complete registered contract.
+ * Portable/mock mode exposes the complete registered contract. Live mode
+ * exposes only (a) native Stage-A capabilities that are genuinely mapped and
+ * (b) utilities implemented entirely by the TypeScript server. It never
+ * advertises an unverified Mastercam operation mapping.
  */
-const LIVE_STAGE_A_TOOL_NAMES = new Set(["mastercam_status", "mastercam_capabilities"]);
-
 export function advertisedToolDefinitions(
   backendKind: "mock" | "live"
 ): ToolDefinition[] {
   if (backendKind === "mock") return TOOL_DEFINITIONS;
-  return TOOL_DEFINITIONS.filter(definition => LIVE_STAGE_A_TOOL_NAMES.has(definition.name));
+  return TOOL_DEFINITIONS.filter(
+    definition =>
+      LIVE_NATIVE_STAGE_A_TOOL_NAMES.has(definition.name) ||
+      SERVER_LOCAL_TOOL_NAMES.has(definition.name)
+  );
 }
 
 function envelope(result: ToolResult, schema: z.ZodType = ToolEnvelopeSchema) {
@@ -76,7 +79,7 @@ export function createMcpServer(
     {
       instructions:
         backendKind === "live"
-          ? "This native adapter is Stage A. Use mastercam_status and mastercam_capabilities only; broader live Mastercam mappings require licensed acceptance before they are advertised."
+          ? "The native adapter is Stage A: only mastercam_status and mastercam_capabilities are native-backed today. Server-local diagnostics, compatibility, planning, setup-sheet, comparison, and validation utilities remain available without claiming unverified Mastercam mappings."
           : "Inspect before mutating. Mutations require preview_operation_parameters then apply_operation_parameter_preview with the returned approvalToken. Rollback uses the server-issued transactionId. Fixture data never proves live Mastercam behavior."
     }
   );
@@ -183,7 +186,17 @@ export function createMcpServer(
             name === "list_tool_categories" ||
             name === "mastercam_plan"
           ) {
-            result = { ok: true, tool: name, data: helpPayload(name, profile, hardReadOnly) };
+            result = {
+              ok: true,
+              tool: name,
+              data: helpPayload(name, profile, hardReadOnly, definitions, backendKind)
+            };
+          } else if (name === "discover_capabilities") {
+            result = {
+              ok: true,
+              tool: name,
+              data: discoverCapabilitiesPayload(args, definitions, backendKind)
+            };
           } else if (name === "get_compatibility_matrix") {
             const { compatibilityReport } = await import("../compatibility.js");
             result = { ok: true, tool: name, data: compatibilityReport() };
@@ -255,47 +268,117 @@ export function createMcpServer(
   return server;
 }
 
-function helpPayload(name: string, profile: Profile, hardReadOnly: boolean) {
-  const { READ_TOOLS, PREVIEW_TOOLS, WRITE_TOOLS, ADVANCED_TOOLS, FORBIDDEN_TOOLS } =
-    contractsModule;
+function namesByCategory(definitions: ToolDefinition[], category: ReturnType<typeof categoryOf>) {
+  return definitions
+    .filter(definition => categoryOf(definition.name) === category)
+    .map(definition => definition.name);
+}
+
+function helpPayload(
+  name: string,
+  profile: Profile,
+  hardReadOnly: boolean,
+  definitions: ToolDefinition[],
+  backendKind: "mock" | "live"
+) {
+  const mutationAvailable = definitions.some(
+    definition => definition.name === "apply_operation_parameter_preview"
+  );
 
   if (name === "mastercam_plan") {
-    return {
-      steps: [
-        "inspect target",
-        "preview_operation_parameters",
-        "apply_operation_parameter_preview with approvalToken",
-        "verify by rereading",
-        "rollback_change with transactionId if needed"
-      ],
-      safeDefault: "read only",
-      profile,
-      hardReadOnly
-    };
+    return mutationAvailable
+      ? {
+          steps: [
+            "inspect target",
+            "preview_operation_parameters",
+            "apply_operation_parameter_preview with approvalToken",
+            "verify by rereading",
+            "rollback_change with transactionId if needed"
+          ],
+          safeDefault: "read only",
+          profile,
+          hardReadOnly,
+          backend: backendKind
+        }
+      : {
+          steps: [
+            "mastercam_status",
+            "mastercam_capabilities",
+            "mastercam_doctor",
+            "run acceptance --live on the licensed workstation before expecting operation mappings"
+          ],
+          safeDefault: "Stage A live environment only",
+          mutationAvailable: false,
+          profile,
+          hardReadOnly,
+          backend: backendKind
+        };
   }
 
   if (name === "list_tool_categories") {
     return {
-      read: READ_TOOLS,
-      preview: PREVIEW_TOOLS,
-      write: WRITE_TOOLS,
-      advanced: ADVANCED_TOOLS,
+      read: namesByCategory(definitions, "read"),
+      preview: namesByCategory(definitions, "preview"),
+      write: namesByCategory(definitions, "write"),
+      advanced: namesByCategory(definitions, "advanced"),
       forbidden: FORBIDDEN_TOOLS,
       profile,
+      backend: backendKind,
       protocolRevisions: SUPPORTED_PROTOCOL_REVISIONS
     };
   }
 
   return {
-    tools: TOOL_DEFINITIONS.map(definition => ({
+    tools: definitions.map(definition => ({
       name: definition.name,
       description: definition.description,
-      annotations: definition.annotations
+      annotations: definition.annotations,
+      execution:
+        SERVER_LOCAL_TOOL_NAMES.has(definition.name)
+          ? "server-local"
+          : backendKind === "live"
+            ? "native-stage-a"
+            : "fixture"
     })),
     profile,
     hardReadOnly,
+    backend: backendKind,
     protocolRevisions: SUPPORTED_PROTOCOL_REVISIONS,
     safety:
-      "Fixture results never prove live Mastercam or machine safety; machine execution tools are permanently unavailable"
+      backendKind === "live"
+        ? "Only native Stage-A tools are backed by Mastercam today; server-local utilities do not imply live operation mappings."
+        : "Fixture results never prove live Mastercam or machine safety; machine execution tools are permanently unavailable"
+  };
+}
+
+function discoverCapabilitiesPayload(
+  args: Record<string, unknown>,
+  definitions: ToolDefinition[],
+  backendKind: "mock" | "live"
+) {
+  const category = typeof args.category === "string" ? args.category : undefined;
+  const available = definitions.map(definition => ({
+    name: definition.name,
+    category: categoryOf(definition.name),
+    execution:
+      SERVER_LOCAL_TOOL_NAMES.has(definition.name)
+        ? "server-local"
+        : backendKind === "live"
+          ? "native-stage-a"
+          : "fixture"
+  }));
+  const filtered = category
+    ? available.filter(item => item.category === category)
+    : available;
+
+  return {
+    backend: backendKind,
+    ...(category ? { category } : {}),
+    tools: filtered,
+    nativeStage: backendKind === "live" ? "Stage A environment only" : "fixture",
+    note:
+      backendKind === "live"
+        ? "Server-local utilities remain available, but only mastercam_status and mastercam_capabilities are native-backed until licensed acceptance promotes additional mappings."
+        : "Fixture capabilities are synthetic contract implementations, not live Mastercam verification."
   };
 }
