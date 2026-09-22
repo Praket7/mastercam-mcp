@@ -27,7 +27,6 @@ async function main() {
     }
 
     console.log('Adding all files...');
-    // Use the add with filepath "." which should add everything
     await add({ fs, dir, filepath: "." });
 
     console.log('Committing...');
@@ -48,7 +47,7 @@ async function main() {
       dir,
       remote,
       ref: 'main',
-      onAuth: () => ({ token })
+      onAuth: () => ({ username: 'x-access-token', password: token })
     });
 
     console.log('✅ Push successful!');
