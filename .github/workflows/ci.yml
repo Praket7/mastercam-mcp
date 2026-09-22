@@ -264,7 +264,7 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request' && false
     steps:
-      - uses: actions/dependency-review-action@v4
+      - uses: actions/dependency-review-action@v5
 
   release:
     name: Release
