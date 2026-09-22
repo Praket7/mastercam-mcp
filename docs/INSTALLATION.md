@@ -2,18 +2,28 @@
 
 Install Node.js 22 or newer and the .NET SDK supported by the installed Mastercam release.
 
-For end users, run `npx -y mastercam-mcp@latest install -ConfigureClients`. This detects Mastercam, builds against its local NET Hook assembly, requests Windows administrator approval, copies both the add in DLL and its function table into `chooks`, and adds safe read only entries to Codex and Claude Desktop.
+For end users, run `npx -y mastercam-mcp@latest install -ConfigureClients`. This detects Mastercam, builds against its local NET Hook assembly, requests Windows administrator approval, copies both the add in DLL and its function table into `chooks`, and adds read-profile entries to Codex and Claude Desktop.
 
-Build the external server with `npm install` followed by `npm run build`.
+Build the external server with `pnpm install` followed by `pnpm run build` when working from source.
 
-Build the release-specific add in from `native/MastercamMcp.Addin.Legacy` or `native/MastercamMcp.Addin.2027` after setting `MASTERCAM_ROOT` to the user supplied Mastercam installation. The project deliberately references the local NET Hook assembly and never copies it into the repository.
+Build the release-specific add in from `native/MastercamMcp.Addin.Legacy` or `native/MastercamMcp.Addin.2027` after setting `MASTERCAM_ROOT` to the user-supplied Mastercam installation. The project deliberately references the local proprietary NET Hook assembly and never copies it into the repository or npm package.
 
-Install the resulting add in in the Mastercam chooks directory for the matching release. Start Mastercam first, load the add in, then start the MCP server with stdio. The default profile is read only. Keep `MASTERCAM_MCP_PROFILE=read` and `MASTERCAM_MCP_HARD_READ_ONLY=1` during initial validation. Enable the write profile only in a dedicated test part with `MASTERCAM_MCP_PROFILE=write` and `MASTERCAM_MCP_HARD_READ_ONLY=0` after the safety checks are complete.
-The installer supports `-ListInstallations` to show all detected Mastercam versions and `-Uninstall -MastercamRoot "..."` to remove only the MCP add in files from a selected installation.
+Install the resulting add in in the Mastercam `chooks` directory for the matching release. Start Mastercam first, load the add in, then start the MCP server with stdio. Keep `MASTERCAM_MCP_PROFILE=read` during initial validation. The current Stage-A adapters expose only `mastercam_status` and `mastercam_capabilities`; installation alone does not make operation inspection or mutation live-ready.
+
+After installation run:
+
+```text
+npx -y mastercam-mcp@latest doctor
+npx -y mastercam-mcp@latest acceptance --live
+```
+
+Do **not** enable the write profile merely because installation or fixture tests passed. Write enablement belongs only on a disposable test part after release-specific live mappings exist and the acceptance report shows the required live reads are ready. Then evaluate writes explicitly with `acceptance --live --allow-writes`. A live write profile should remain disabled unless that controlled acceptance path reports write readiness.
+
+The installer supports `-ListInstallations` to show detected Mastercam versions and `-Uninstall -MastercamRoot "..."` to remove only the MCP add in files from a selected installation.
 
 ## macOS and Linux
 
-The portable server works on macOS and Linux with Node.js 22 or newer. These systems start in fixture mode when no backend is selected. This allows setup sheet generation, tool database comparison, NC comparison, machine validation, MCP stdio, local HTTP, and all automated tests without Mastercam.
+The portable server works on macOS and Linux with Node.js 22 or newer. These systems start in fixture mode when no backend is selected. This allows setup sheet generation, tool database comparison, NC comparison, machine validation, MCP stdio, local HTTP, and automated contract tests without Mastercam.
 
 ```text
 pnpm install
@@ -33,4 +43,4 @@ The portable layer uses the current working folder and environment values rather
 
 The server explicitly supports MCP revision `2026-07-28` through the SDK v2 serving entry points. Legacy 2025-era clients remain supported as a compatibility path, but HTTP legacy serving is stateless and should not be used as evidence that a client negotiated the modern revision. The repository smoke tests pin `2026-07-28` to verify the current protocol path.
 
-Mastercam release-specific add-ins still require the matching locally installed proprietary NET Hook assemblies. Public CI validates only the portable shared projects; a release-specific add-in is not considered live verified until it builds, loads, and passes acceptance testing in a licensed Mastercam installation.
+Mastercam release-specific add-ins still require the matching locally installed proprietary NET Hook assemblies. Public CI validates the portable shared projects and protocol/native contract layers; a release-specific add-in is not considered live verified until it builds, loads, and passes acceptance testing in a licensed Mastercam installation.
