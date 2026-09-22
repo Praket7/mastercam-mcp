@@ -1,4 +1,4 @@
-import { init, addRemote, add, commit, push } from 'isomorphic-git';
+import { init, addRemote, add, commit, push, fetch, merge } from 'isomorphic-git';
 import http from 'isomorphic-git/http/node';
 import fs from 'fs';
 import path from 'path';
@@ -26,6 +26,16 @@ async function main() {
       await addRemote({ fs, dir, remote, url });
     }
 
+    // Try to fetch and merge first
+    console.log('Fetching remote...');
+    try {
+      await fetch({ fs, http, dir, remote, onAuth: () => ({ username: 'x-access-token', password: token }) });
+      console.log('Merging...');
+      await merge({ fs, dir, theirs: 'origin/main', ours: 'main', fastForwardOnly: false });
+    } catch (e) {
+      console.log('Fetch/merge failed, will force push:', e.message);
+    }
+
     console.log('Adding all files...');
     await add({ fs, dir, filepath: "." });
 
@@ -40,13 +50,14 @@ async function main() {
       }
     });
 
-    console.log('Pushing to GitHub...');
+    console.log('Pushing to GitHub (force)...');
     await push({
       fs,
       http,
       dir,
       remote,
       ref: 'main',
+      force: true,
       onAuth: () => ({ username: 'x-access-token', password: token })
     });
 
