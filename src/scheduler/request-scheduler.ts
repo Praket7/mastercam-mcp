@@ -19,7 +19,9 @@ export interface ScheduledTask<T> {
 interface ReadWaiter {
   priority: number;
   sequence: number;
-  resolve: () => void;
+  run: () => Promise<unknown>;
+  resolve: (value: unknown) => void;
+  reject: (error: unknown) => void;
 }
 
 interface MutationWaiter {
@@ -47,7 +49,8 @@ export class Scheduler {
   private readonly maxQueueDepth: number;
   private mutationActive = false;
   private sequence = 0;
-  private draining = false;
+  private drainingMutations = false;
+  private readDrainScheduled = false;
 
   constructor(options: SchedulerOptions = {}) {
     this.maxConcurrentReads = options.maxConcurrentReads ?? 8;
@@ -107,22 +110,49 @@ export class Scheduler {
     queue.sort((left, right) => right.priority - left.priority || left.sequence - right.sequence);
   }
 
-  private async scheduleRead<T>(run: () => Promise<T>, priority: RequestPriority): Promise<T> {
-    if (this.readsInFlight >= this.maxConcurrentReads) {
-      if (this.readQueue.length >= this.maxQueueDepth) throw new Error("RATE_LIMITED: read queue is full");
-      await new Promise<void>(resolve => {
-        this.readQueue.push({ priority: PRIORITY[priority], sequence: this.sequence++, resolve });
-        this.sortQueue(this.readQueue);
+  private scheduleRead<T>(run: () => Promise<T>, priority: RequestPriority): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      if (this.readQueue.length >= this.maxQueueDepth) {
+        reject(new Error("RATE_LIMITED: read queue is full"));
+        return;
+      }
+      this.readQueue.push({
+        priority: PRIORITY[priority],
+        sequence: this.sequence++,
+        run: run as () => Promise<unknown>,
+        resolve: resolve as (value: unknown) => void,
+        reject
       });
-    }
+      this.sortQueue(this.readQueue);
+      this.scheduleReadDrain();
+    });
+  }
 
-    this.readsInFlight++;
+  private scheduleReadDrain(): void {
+    if (this.readDrainScheduled) return;
+    this.readDrainScheduled = true;
+    queueMicrotask(() => {
+      this.readDrainScheduled = false;
+      this.drainReads();
+    });
+  }
+
+  private drainReads(): void {
+    while (this.readsInFlight < this.maxConcurrentReads && this.readQueue.length > 0) {
+      const task = this.readQueue.shift()!;
+      this.readsInFlight++;
+      void this.runRead(task);
+    }
+  }
+
+  private async runRead(task: ReadWaiter): Promise<void> {
     try {
-      return await run();
+      task.resolve(await task.run());
+    } catch (error) {
+      task.reject(error);
     } finally {
       this.readsInFlight--;
-      const next = this.readQueue.shift();
-      next?.resolve();
+      this.scheduleReadDrain();
     }
   }
 
@@ -158,8 +188,8 @@ export class Scheduler {
   }
 
   private async drainMutations(): Promise<void> {
-    if (this.draining) return;
-    this.draining = true;
+    if (this.drainingMutations) return;
+    this.drainingMutations = true;
     try {
       while (this.mutationQueue.length > 0) {
         const task = this.mutationQueue.shift()!;
@@ -170,7 +200,7 @@ export class Scheduler {
         }
       }
     } finally {
-      this.draining = false;
+      this.drainingMutations = false;
     }
   }
 }
