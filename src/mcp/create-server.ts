@@ -9,6 +9,14 @@ import { SERVER_LOCAL_TOOL_NAMES, LIVE_NATIVE_STAGE_A_TOOL_NAMES } from "../exec
 import { doctor } from "../diagnostics.js";
 import { VERSION } from "../version.js";
 import { compareNc, compareToolDatabases, setupSheet, validateMachine } from "../shop.js";
+import {
+  analyzePostRegression,
+  analyzeRegenerationImpact,
+  manufacturingPreflight,
+  ManufacturingPreflightSchema,
+  PostRegressionSchema,
+  RegenerationImpactSchema
+} from "../manufacturing-intelligence.js";
 import { defaultPipe, selectedBackend } from "../platform.js";
 import { TOOL_DEFINITIONS, ToolEnvelopeSchema } from "./registry.js";
 import type { ToolDefinition } from "./registry.js";
@@ -79,8 +87,8 @@ export function createMcpServer(
     {
       instructions:
         backendKind === "live"
-          ? "The native adapter is Stage A: only mastercam_status and mastercam_capabilities are native-backed today. Server-local diagnostics, compatibility, planning, setup-sheet, comparison, and validation utilities remain available without claiming unverified Mastercam mappings."
-          : "Inspect before mutating. Mutations require preview_operation_parameters then apply_operation_parameter_preview with the returned approvalToken. Rollback uses the server-issued transactionId. Fixture data never proves live Mastercam behavior."
+          ? "The native adapter is Stage A: only mastercam_status and mastercam_capabilities are native-backed today. Server-local diagnostics, compatibility, planning, setup-sheet, comparison, deterministic preflight, regeneration-impact, post-regression, and validation utilities remain available without claiming unverified Mastercam mappings."
+          : "Inspect before mutating. Use deterministic manufacturing_preflight and regression tools as review evidence. Mutations require preview_operation_parameters then apply_operation_parameter_preview with the returned approvalToken. Rollback uses the server-issued transactionId. Fixture data never proves live Mastercam behavior."
     }
   );
 
@@ -216,6 +224,24 @@ export function createMcpServer(
                 (args.profile ?? {}) as Record<string, unknown>
               )
             };
+          } else if (name === "manufacturing_preflight") {
+            result = {
+              ok: true,
+              tool: name,
+              data: manufacturingPreflight(ManufacturingPreflightSchema.parse(args))
+            };
+          } else if (name === "analyze_regeneration_impact") {
+            result = {
+              ok: true,
+              tool: name,
+              data: analyzeRegenerationImpact(RegenerationImpactSchema.parse(args))
+            };
+          } else if (name === "analyze_post_regression") {
+            result = {
+              ok: true,
+              tool: name,
+              data: analyzePostRegression(PostRegressionSchema.parse(args))
+            };
           } else {
             result = await backend.call(
               {
@@ -289,9 +315,12 @@ function helpPayload(
       ? {
           steps: [
             "inspect target",
+            "manufacturing_preflight for deterministic blockers and unknowns",
             "preview_operation_parameters",
             "apply_operation_parameter_preview with approvalToken",
             "verify by rereading",
+            "analyze_regeneration_impact when dependency evidence is available",
+            "analyze_post_regression against an approved NC baseline before release",
             "rollback_change with transactionId if needed"
           ],
           safeDefault: "read only",
@@ -304,6 +333,7 @@ function helpPayload(
             "mastercam_status",
             "mastercam_capabilities",
             "mastercam_doctor",
+            "use server-local manufacturing_preflight / regeneration / post-regression tools on supplied evidence",
             "run acceptance --live on the licensed workstation before expecting operation mappings"
           ],
           safeDefault: "Stage A live environment only",
@@ -345,7 +375,7 @@ function helpPayload(
     protocolRevisions: SUPPORTED_PROTOCOL_REVISIONS,
     safety:
       backendKind === "live"
-        ? "Only native Stage-A tools are backed by Mastercam today; server-local utilities do not imply live operation mappings."
+        ? "Only native Stage-A tools are backed by Mastercam today; server-local deterministic evidence utilities do not imply live operation mappings or prove machine safety."
         : "Fixture results never prove live Mastercam or machine safety; machine execution tools are permanently unavailable"
   };
 }
@@ -377,7 +407,7 @@ function discoverCapabilitiesPayload(
     nativeStage: backendKind === "live" ? "Stage A environment only" : "fixture",
     note:
       backendKind === "live"
-        ? "Server-local utilities remain available, but only mastercam_status and mastercam_capabilities are native-backed until licensed acceptance promotes additional mappings."
+        ? "Server-local deterministic evidence utilities remain available, but only mastercam_status and mastercam_capabilities are native-backed until licensed acceptance promotes additional mappings."
         : "Fixture capabilities are synthetic contract implementations, not live Mastercam verification."
   };
 }
