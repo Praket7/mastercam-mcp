@@ -6,7 +6,7 @@ The tool manifest is the canonical source of truth for MCP registration, policy 
 Tiers: `UNAVAILABLE` < `DISCOVERED` < `IMPLEMENTED` < `LIVE_READ_VERIFIED` < `LIVE_WRITE_VERIFIED`.
 A tier is raised only after a licensed live acceptance run against the matching Mastercam release.
 
-Counts: 56 capabilities declared, 50 fixture-supported, **0 live verified**.
+Counts: 56 capabilities declared, 49 fixture-supported, **0 live verified**.
 
 | Tool | Fixture supported | Risk | Backends | Tier | Notes |
 | --- | --- | --- | --- | --- | --- |
@@ -54,11 +54,11 @@ Counts: 56 capabilities declared, 50 fixture-supported, **0 live verified**.
 | compare_tool_databases | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
 | compare_nc_files | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
 | validate_machine_profile | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
-| preview_operation_parameters | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
+| preview_operation_parameters | yes | preview | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
 | apply_operation_parameter_preview | yes | mutation | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
 | rollback_change | yes | mutation | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
 | change_tool | no | mutation | none | UNAVAILABLE | Direct tool-change mutation is not exposed until it has a preview/approval workflow and a verified backend mapping. |
-| regenerate_toolpath | yes | mutation | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
+| regenerate_toolpath | no | mutation | none | UNAVAILABLE | Regeneration is withheld until it is transaction-bound to the exact approved change instead of accepting operation ids alone. |
 | update_stock | no | mutation | none | UNAVAILABLE | Direct stock mutation is not exposed until it has a preview/approval workflow and a verified backend mapping. |
 | run_simulation | yes | advanced | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
 | detect_collisions | yes | advanced | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
@@ -71,5 +71,6 @@ Counts: 56 capabilities declared, 50 fixture-supported, **0 live verified**.
 
 - `IMPLEMENTED` means code exists and fixture/contract tests can exercise it. It is not proof that a real Mastercam release supports the tool.
 - The native Stage A adapters currently advertise only `mastercam_status` and `mastercam_capabilities`; other live tools remain unavailable until release-specific mappings are implemented and accepted.
+- Standalone regeneration is not currently exposed because it must be bound to the exact approved mutation transaction before it is safe to automate.
 - Simulation and collision results from the fixture backend are synthetic and never prove machine safety.
 - Posting, cycle start, DNC, and arbitrary script execution are deliberately unavailable.
