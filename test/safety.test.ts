@@ -75,7 +75,22 @@ test("documentRevision changes when operations change", () => {
 test("audit redaction never reveals deep or generically named secrets", () => {
   const value = {
     token: "top-level-secret",
-    a: { b: { c: { d: { e: { f: { g: { accessToken: "deep-secret", visible: "should-not-leak" } } } } } } } }
+    a: {
+      b: {
+        c: {
+          d: {
+            e: {
+              f: {
+                g: {
+                  accessToken: "deep-secret",
+                  visible: "should-not-leak"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
   };
   const text = JSON.stringify(redact(value));
   assert.equal(text.includes("top-level-secret"), false);
