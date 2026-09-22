@@ -295,7 +295,7 @@ export function summarizeNc(text: string): NcSemanticSummary {
     const plane = line.match(/\bG1[789](?:\.0+)?\b/i)?.[0]?.toUpperCase();
     if (plane === "G17" || plane === "G18" || plane === "G19") summary.plane = plane;
 
-    const workOffsets = allMatches(line, /\bG5[4-9](?:\.0+)?\b/gi);
+    const workOffsets = allMatches(line, /\bG5[4-9](?:\.0+)?\b(?!\.)/gi);
     const extendedOffsets = [...line.matchAll(/\bG54\.1\s*P\s*(\d+)\b/gi)].map(match => `G54.1 P${match[1]}`.toUpperCase());
     for (const offset of [...workOffsets, ...extendedOffsets]) {
       summary.workOffsetEvents.push(offset);
@@ -379,38 +379,57 @@ export interface NcDiffResult {
   semanticSummary: NcSemanticDiffSummary;
 }
 
-function pairNcChanges(changes: NcChange[]): NcChange[] {
-  const paired: NcChange[] = [];
-  for (let i = 0; i < changes.length; i++) {
-    const current = changes[i];
-    if (!current) continue;
-    const next = changes[i + 1];
-    if (
-      current.kind === "removed" &&
-      next?.kind === "added" &&
-      next.line >= current.line &&
-      next.line - current.line <= 2
-    ) {
-      paired.push({ line: current.line, kind: "modified", before: current.before, after: next.after });
-      i++;
+/**
+ * Convert each contiguous Myers edit hunk into manufacturing-friendly changes.
+ * Myers is free to emit all deletes before all inserts in a replacement hunk,
+ * so pairing adjacent raw entries is not correct. We flush only at an equal
+ * boundary and pair deletes/inserts by hunk position.
+ */
+function ncChangesFromOps(ops: DiffOp[]): NcChange[] {
+  const result: NcChange[] = [];
+  let deletes: DiffOp[] = [];
+  let inserts: DiffOp[] = [];
+
+  const flush = () => {
+    if (deletes.length === 0 && inserts.length === 0) return;
+    const paired = Math.min(deletes.length, inserts.length);
+    for (let index = 0; index < paired; index++) {
+      const removed = deletes[index]!;
+      const added = inserts[index]!;
+      result.push({
+        line: removed.line,
+        kind: "modified",
+        before: removed.before,
+        after: added.after
+      });
+    }
+    for (let index = paired; index < deletes.length; index++) {
+      const removed = deletes[index]!;
+      result.push({ line: removed.line, kind: "removed", before: removed.before });
+    }
+    for (let index = paired; index < inserts.length; index++) {
+      const added = inserts[index]!;
+      result.push({ line: added.line, kind: "added", after: added.after });
+    }
+    deletes = [];
+    inserts = [];
+  };
+
+  for (const op of ops) {
+    if (op.type === "equal") {
+      flush();
+    } else if (op.type === "delete") {
+      deletes.push(op);
     } else {
-      paired.push(current);
+      inserts.push(op);
     }
   }
-  return paired;
+  flush();
+  return result;
 }
 
 function sequenceChangeCount(left: Array<string | number>, right: Array<string | number>): number {
-  const leftText = left.map(String);
-  const rightText = right.map(String);
-  const raw = sequenceDiff(leftText, rightText)
-    .filter(op => op.type !== "equal")
-    .map<NcChange>(op =>
-      op.type === "insert"
-        ? { line: op.line, kind: "added", after: op.after }
-        : { line: op.line, kind: "removed", before: op.before }
-    );
-  return pairNcChanges(raw).length;
+  return ncChangesFromOps(sequenceDiff(left.map(String), right.map(String))).length;
 }
 
 function semanticDifference(before: NcSemanticSummary, after: NcSemanticSummary): NcSemanticDiffSummary {
@@ -441,21 +460,14 @@ export function compareNc(left: string, right: string, displayLimit = 200): NcDi
   const a = left.split(/\r?\n/).filter(line => line.trim().length > 0);
   const b = right.split(/\r?\n/).filter(line => line.trim().length > 0);
   const ops = sequenceDiff(a, b);
-  const rawChanges: NcChange[] = [];
   let added = 0;
   let removed = 0;
   for (const op of ops) {
-    if (op.type === "equal") continue;
-    if (op.type === "insert") {
-      added++;
-      rawChanges.push({ line: op.line, kind: "added", after: op.after });
-    } else {
-      removed++;
-      rawChanges.push({ line: op.line, kind: "removed", before: op.before });
-    }
+    if (op.type === "insert") added++;
+    if (op.type === "delete") removed++;
   }
 
-  const allChanges = pairNcChanges(rawChanges);
+  const allChanges = ncChangesFromOps(ops);
   const displayed = allChanges.slice(0, safeLimit);
   const modified = allChanges.filter(change => change.kind === "modified").length;
   const beforeSummary = summarizeNc(left);
