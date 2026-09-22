@@ -16,6 +16,7 @@ jobs:
   lint-and-typecheck:
     name: Lint & TypeCheck
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -36,6 +37,7 @@ jobs:
   test:
     name: Tests
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -51,6 +53,7 @@ jobs:
   build:
     name: Build
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     needs: [lint-and-typecheck, test]
     steps:
       - uses: actions/checkout@v4
@@ -72,6 +75,7 @@ jobs:
   smoke-test:
     name: Smoke Tests
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     needs: build
     steps:
       - uses: actions/checkout@v4
@@ -142,6 +146,7 @@ jobs:
   package-test:
     name: Package Test
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     needs: build
     steps:
       - uses: actions/checkout@v4
@@ -157,15 +162,19 @@ jobs:
       - name: Install package in temp dir
         run: |
           set -euo pipefail
+          archive=$(ls -1 mastercam-mcp-*.tgz | head -n 1)
+          test -n "$archive"
           mkdir /tmp/test-install
           cd /tmp/test-install
-          npm install "${{ github.workspace }}/mastercam-mcp-0.2.0.tgz"
+          npm install "${{ github.workspace }}/$archive"
           npx mastercam-mcp version
           MASTERCAM_MCP_BACKEND=mock npx mastercam-mcp doctor
+          npx mastercam-mcp acceptance --mock
 
   windows-build:
     name: Windows Build
     runs-on: windows-latest
+    timeout-minutes: 25
     if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
     steps:
       - uses: actions/checkout@v4
@@ -203,6 +212,7 @@ jobs:
   macos-build:
     name: macOS Build
     runs-on: macos-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -219,6 +229,7 @@ jobs:
   security:
     name: Security Scan
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     permissions:
       security-events: write
       actions: read
@@ -264,36 +275,7 @@ jobs:
   dependency-review:
     name: Dependency Review
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     if: github.event_name == 'pull_request'
     steps:
       - uses: actions/dependency-review-action@v4
-
-  release:
-    name: Release
-    runs-on: ubuntu-latest
-    needs: [lint-and-typecheck, test, build, smoke-test, package-test, windows-build, macos-build, security]
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    permissions:
-      contents: write
-      id-token: write
-      packages: write
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 11.19.0
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          registry-url: 'https://registry.npmjs.org'
-          cache: 'pnpm'
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm run build
-      - name: Publish to npm
-        run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          generate_release_notes: true
