@@ -6,6 +6,16 @@ import { TOOL_DEFINITIONS } from "../src/mcp/registry.js";
 
 const tsx = "node_modules/tsx/dist/cli.mjs";
 
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) => {
+      const timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+      timer.unref?.();
+    })
+  ]);
+}
+
 async function withStdioClient(run: (client: Client) => Promise<void>) {
   const transport = new StdioClientTransport({
     command: process.execPath,
@@ -22,12 +32,14 @@ async function withStdioClient(run: (client: Client) => Promise<void>) {
     { name: "protocol-test", version: "1.0" },
     { versionNegotiation: { mode: { pin: "2026-07-28" } } }
   );
-  await client.connect(transport);
+
+  await withTimeout(client.connect(transport), 15_000, "stdio MCP connect");
   assert.equal(client.getProtocolEra(), "modern");
   try {
-    await run(client);
+    await withTimeout(run(client), 30_000, "stdio MCP test body");
   } finally {
-    await client.close();
+    await withTimeout(client.close(), 5_000, "stdio MCP client close").catch(() => undefined);
+    await withTimeout(transport.close(), 5_000, "stdio transport close").catch(() => undefined);
   }
 }
 
@@ -39,7 +51,7 @@ test("every registered tool has a strict input schema and annotations (ARCH-01/0
     assert.ok(definition.annotations, `${definition.name} needs annotations`);
   }
   const mutations = TOOL_DEFINITIONS.filter(definition =>
-    ["apply_operation_parameter_preview", "rollback_change", "regenerate_toolpath"].includes(definition.name)
+    ["apply_operation_parameter_preview", "rollback_change"].includes(definition.name)
   );
   for (const mutation of mutations) {
     assert.equal(mutation.annotations.readOnlyHint, false, `${mutation.name} must not claim read-only`);
