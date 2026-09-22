@@ -21,14 +21,16 @@ test("invalid operation id never mutates the first operation (BUG-01)", async ()
   assert.deepEqual((list.data as Array<{ feed: { value: number } }>).map(op => op.feed.value), [30, 60]);
 });
 
-test("missing operationId with ambiguous selection requires a target (BUG-01)", async () => {
+test("missing operationId always requires an explicit target (BUG-01)", async () => {
   const backend = new MockBackend({ operations: [{ id: 1, name: "A", feed: 30 }, { id: 2, name: "B", feed: 60 }] }, tempAudit());
   const result = await backend.call({ id: "t3", tool: "preview_operation_parameters", arguments: { changes: { feedRate: { value: 50, unit: "mm/min" } } } });
   assert.equal(result.ok, false);
   assert.equal(result.error?.code, "TARGET_REQUIRED");
+
   const single = new MockBackend({ operations: [{ id: 7, name: "Only", feed: 30 }] }, tempAudit());
-  const ok = await single.call({ id: "t4", tool: "preview_operation_parameters", arguments: { changes: { feedRate: { value: 50, unit: "mm/min" } } } });
-  assert.equal(ok.ok, true);
+  const stillRequiresId = await single.call({ id: "t4", tool: "preview_operation_parameters", arguments: { changes: { feedRate: { value: 50, unit: "mm/min" } } } });
+  assert.equal(stillRequiresId.ok, false);
+  assert.equal(stillRequiresId.error?.code, "TARGET_REQUIRED");
 });
 
 test("unknown tools fail with UNSUPPORTED_TOOL (BUG-02)", async () => {

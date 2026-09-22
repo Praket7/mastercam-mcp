@@ -144,7 +144,14 @@ export class MockBackend implements Backend {
     const tool = request.tool;
 
     // ---- environment -------------------------------------------------
-    if (tool === "mastercam_status") return this.ok(request, { connected: true, backend: "mock", version: "fixture", live: false });
+    if (tool === "mastercam_status") return this.ok(request, {
+      connected: true,
+      backend: "mock",
+      adapter: "fixture",
+      runtime: `node-${process.version}`,
+      mastercamVersion: "fixture",
+      protocolVersion: 2
+    });
     if (tool === "mastercam_capabilities") return this.ok(request, this.capabilities());
     if (tool === "discover_capabilities") return this.ok(request, this.discoverCapabilities(args));
     if (tool === "get_active_part") return this.ok(request, { name: "fixture-part", path: "fixture://active-part", units: "mm", modified: false, documentRevision: this.revision });
@@ -450,11 +457,10 @@ export class MockBackend implements Backend {
 
   // ---- helpers ---------------------------------------------------------
 
-  /** BUG-01 fix: never fall back to the first operation. */
+  /** Operation-specific tools require an explicit target even when only one operation exists. */
   private resolveTarget(args: Record<string, unknown>): Record<string, unknown> {
-    if (args.operationId === undefined) {
-      if (this.operations.length === 1) return this.operations[0]!;
-      throw new MastercamErrorImpl("TARGET_REQUIRED", "operationId is required when more than one operation exists");
+    if (args.operationId === undefined || args.operationId === null) {
+      throw new MastercamErrorImpl("TARGET_REQUIRED", "operationId is required for operation-specific tools");
     }
     const id = Number(args.operationId);
     const op = this.operations.find(item => item.id === id);
@@ -464,10 +470,7 @@ export class MockBackend implements Backend {
 
   private requireExactTarget(id: unknown): Record<string, unknown> {
     if (id === undefined || id === null) {
-      // With exactly one operation the target is unambiguous by definition;
-      // otherwise mutations require an explicit id (audit BUG-01).
-      if (this.operations.length === 1) return this.operations[0]!;
-      throw new MastercamErrorImpl("TARGET_REQUIRED", "operationId is required when more than one operation exists");
+      throw new MastercamErrorImpl("TARGET_REQUIRED", "operationId is required for mutations");
     }
     const numeric = Number(id);
     const op = this.operations.find(item => item.id === numeric);
@@ -489,15 +492,20 @@ export class MockBackend implements Backend {
   }
 
   private capabilities() {
-    const readTools = ["mastercam_status", "mastercam_capabilities", "get_active_part", "list_operations", "get_operation", "find_operations", "explain_operation", "get_operation_risks", "get_operation_parameters", "get_stock", "get_wcs", "list_tools", "get_machine_context", "get_programming_context", "get_dirty_toolpaths"];
-    const mutationTools = ["preview_operation_parameters", "apply_operation_parameter_preview", "rollback_change", "regenerate_toolpath"];
+    const tools = [
+      ...["mastercam_status", "mastercam_capabilities", "get_active_part", "list_operations", "get_operation", "find_operations", "explain_operation", "get_operation_risks", "get_operation_parameters", "get_stock", "get_wcs", "list_tools", "get_machine_context", "get_programming_context", "get_dirty_toolpaths"].map(name => ({
+        name, supported: true, riskClass: "read", tier: "IMPLEMENTED", mappingVersion: 1
+      })),
+      ...["preview_operation_parameters", "apply_operation_parameter_preview", "rollback_change", "regenerate_toolpath"].map(name => ({
+        name, supported: true, riskClass: "mutation", tier: "IMPLEMENTED", mappingVersion: 1
+      }))
+    ];
     return {
-      profile: "mock",
-      live: false,
-      fixture: true,
-      verificationTier: "IMPLEMENTED",
-      supported: { read: readTools, mutation: mutationTools },
-      unavailable: ["run_simulation", "detect_collisions", "post_program", "cycle_start"],
+      adapterVersion: "fixture",
+      mastercamVersion: "fixture",
+      runtime: `node-${process.version}`,
+      protocol: "bridge-v2",
+      tools,
       note: "Fixture data is synthetic and cannot prove live Mastercam behavior"
     };
   }
