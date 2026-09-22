@@ -43,16 +43,23 @@ namespace MastercamMcp.Protocol
 
     public static class FrameSerializer
     {
-        private static readonly JsonSerializerOptions Options = new()
-        {
-            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-            DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
-            WriteIndented = false
-        };
+        private static readonly JsonSerializerOptions Options = CreateOptions();
 
         public static byte[] Serialize<T>(T value) => JsonSerializer.SerializeToUtf8Bytes(value, Options);
-
         public static T? Deserialize<T>(ReadOnlySpan<byte> data) => JsonSerializer.Deserialize<T>(data, Options);
         public static T? Deserialize<T>(byte[] data) => JsonSerializer.Deserialize<T>(data, Options);
+
+        private static JsonSerializerOptions CreateOptions()
+        {
+            var options = new JsonSerializerOptions
+            {
+                PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+                PropertyNameCaseInsensitive = true,
+                DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+                WriteIndented = false
+            };
+            options.Converters.Add(new JsonStringEnumConverter(JsonNamingPolicy.CamelCase));
+            return options;
+        }
     }
 }

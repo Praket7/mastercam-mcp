@@ -24,6 +24,10 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm run lint
       - run: pnpm run typecheck
+      - name: Verify generated capability docs
+        run: |
+          pnpm run docs:capabilities
+          git diff --exit-code -- docs/CAPABILITIES.md
 
   test:
     name: Tests
@@ -76,30 +80,62 @@ jobs:
           cache: 'pnpm'
       - run: pnpm install --frozen-lockfile
       - run: pnpm run build
-      - name: Test mock backend
+      - name: Test framed mock bridge
+        env:
+          MASTERCAM_MCP_PIPE: /tmp/mastercam-mcp-smoke.sock
         run: |
-          timeout 10 node dist/mock-backend.js &
-          sleep 2
-          node -e "
-            const net = require('net');
-            const socket = net.createConnection('/tmp/mastercam-mcp-1000.sock');
-            socket.on('connect', () => {
-              socket.write(JSON.stringify({id:'1',tool:'mastercam_status',arguments:{}}) + '\n');
-            });
-            socket.on('data', (data) => {
-              const response = JSON.parse(data.toString().trim());
-              console.log('Response:', JSON.stringify(response));
-              if (response.result.ok) process.exit(0);
-              else process.exit(1);
-            });
-            socket.on('error', () => process.exit(1));
-            setTimeout(() => process.exit(1), 5000);
-          "
+          set -euo pipefail
+          timeout 15 node dist/mock-backend.js &
+          backend_pid=$!
+          trap 'kill $backend_pid 2>/dev/null || true' EXIT
+          for i in $(seq 1 30); do
+            [ -S "$MASTERCAM_MCP_PIPE" ] && break
+            sleep 0.1
+          done
+          node <<'NODE'
+          const net = require('node:net');
+          const path = process.env.MASTERCAM_MCP_PIPE;
+          const payload = Buffer.from(JSON.stringify({
+            type: 'request',
+            protocolVersion: 2,
+            requestId: 'smoke-1',
+            tool: 'mastercam_status',
+            arguments: {}
+          }), 'utf8');
+          const frame = Buffer.alloc(8 + payload.length);
+          frame.writeBigUInt64LE(BigInt(payload.length), 0);
+          payload.copy(frame, 8);
+
+          const socket = net.createConnection(path);
+          let buffer = Buffer.alloc(0);
+          const fail = message => { console.error(message); socket.destroy(); process.exit(1); };
+          const timer = setTimeout(() => fail('framed mock smoke timed out'), 5000);
+
+          socket.on('connect', () => socket.write(frame));
+          socket.on('data', chunk => {
+            buffer = Buffer.concat([buffer, chunk]);
+            if (buffer.length < 8) return;
+            const len = Number(buffer.readBigUInt64LE(0));
+            if (buffer.length < 8 + len) return;
+            const response = JSON.parse(buffer.subarray(8, 8 + len).toString('utf8'));
+            clearTimeout(timer);
+            if (!response.ok || response.requestId !== 'smoke-1') fail(JSON.stringify(response));
+            console.log('Framed response:', JSON.stringify(response));
+            socket.end();
+          });
+          socket.on('error', error => fail(error.message));
+          socket.on('close', () => process.exit(0));
+          NODE
       - name: Test HTTP server
+        env:
+          MASTERCAM_MCP_BACKEND: mock
         run: |
+          set -euo pipefail
           node dist/http.js &
-          sleep 3
-          curl -f http://127.0.0.1:8787/mcp -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}' || exit 1
+          http_pid=$!
+          trap 'kill $http_pid 2>/dev/null || true' EXIT
+          sleep 2
+          curl -fsS http://127.0.0.1:8787/mcp             -H "Content-Type: application/json"             -H "Accept: application/json, text/event-stream"             -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}'
 
   package-test:
     name: Package Test
@@ -118,10 +154,12 @@ jobs:
       - run: pnpm pack
       - name: Install package in temp dir
         run: |
+          set -euo pipefail
           mkdir /tmp/test-install
           cd /tmp/test-install
-          npm install ${{ github.workspace }}/mastercam-mcp-0.2.0.tgz
+          npm install "${{ github.workspace }}/mastercam-mcp-0.2.0.tgz"
           npx mastercam-mcp version
+          MASTERCAM_MCP_BACKEND=mock npx mastercam-mcp doctor
 
   windows-build:
     name: Windows Build
@@ -136,23 +174,29 @@ jobs:
         with:
           node-version: '22'
           cache: 'pnpm'
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: |
             8.0.x
-            9.0.x
+            10.0.x
       - run: pnpm install --frozen-lockfile
       - run: pnpm run build
-      - name: Build native projects
+      - name: Build portable native projects
+        shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
           dotnet build native/MastercamMcp.Protocol/MastercamMcp.Protocol.csproj -c Release
-          dotnet build native/MastercamMcp.Core/MastercamMcp.Core.csproj -c Release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           dotnet build native/MastercamMcp.Adapter.Abstractions/MastercamMcp.Adapter.Abstractions.csproj -c Release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet build native/MastercamMcp.Core/MastercamMcp.Core.csproj -c Release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           dotnet build native/MastercamMcp.ApiCatalog/MastercamMcp.ApiCatalog.csproj -c Release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet test native/MastercamMcp.Protocol.Tests/MastercamMcp.Protocol.Tests.csproj -c Release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Run Windows tests
-        run: |
-          pnpm run test
+        run: pnpm run test
 
   macos-build:
     name: macOS Build
@@ -185,40 +229,42 @@ jobs:
         with:
           dotnet-version: |
             8.0.x
-            9.0.x
             10.0.x
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v3
         with:
           languages: javascript-typescript, csharp
           queries: security-extended
-      - name: Autobuild
-        uses: github/codeql-action/autobuild@v3
+      - name: Build portable C# for CodeQL
+        run: |
+          set -euo pipefail
+          dotnet build native/MastercamMcp.Protocol/MastercamMcp.Protocol.csproj -c Release
+          dotnet build native/MastercamMcp.Adapter.Abstractions/MastercamMcp.Adapter.Abstractions.csproj -c Release
+          dotnet build native/MastercamMcp.Core/MastercamMcp.Core.csproj -c Release
+          dotnet build native/MastercamMcp.ApiCatalog/MastercamMcp.ApiCatalog.csproj -c Release
+          dotnet test native/MastercamMcp.Protocol.Tests/MastercamMcp.Protocol.Tests.csproj -c Release
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v3
-        with:
-          category: "/language:javascript-typescript"
       - name: Secret Scan - gitleaks
+        if: always()
         uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Secret Scan - TruffleHog
+        if: always()
         uses: trufflesecurity/trufflehog@main
         with:
           path: ./
-          base: main
+          base: ${{ github.event.before || 'HEAD~1' }}
           head: HEAD
           extra_args: --debug --only-verified
 
-  # Dependency Review requires Dependency Graph to be enabled in repo settings.
-  # Kept as non-required; enable the graph or make this job not required.
   dependency-review:
     name: Dependency Review
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request' && false
     steps:
-      - name: Dependency Review
-        uses: actions/dependency-review-action@v4
+      - uses: actions/dependency-review-action@v4
 
   release:
     name: Release

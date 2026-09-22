@@ -4,15 +4,15 @@ using System.Text.Json.Serialization;
 namespace MastercamMcp.Protocol
 {
     public enum ProtocolVersion { V1 = 1, V2 = 2 }
-
     public enum RequestType { Request, Cancel, Ping }
-
     public enum ResponseType { Response, Event, Error }
 
     public sealed class BridgeRequest
     {
+        public const int CurrentProtocolVersion = 2;
+
         [JsonPropertyName("protocolVersion")]
-        public int ProtocolVersion { get; set; } = 2;
+        public int ProtocolVersion { get; set; } = CurrentProtocolVersion;
 
         [JsonPropertyName("requestId")]
         public string RequestId { get; set; } = string.Empty;
@@ -33,13 +33,13 @@ namespace MastercamMcp.Protocol
         public string? IdempotencyKey { get; set; }
 
         [JsonPropertyName("priority")]
-        public int Priority { get; set; } = 0;
+        public int Priority { get; set; }
     }
 
     public sealed class BridgeResponse
     {
         [JsonPropertyName("protocolVersion")]
-        public int ProtocolVersion { get; set; } = 2;
+        public int ProtocolVersion { get; set; } = BridgeRequest.CurrentProtocolVersion;
 
         [JsonPropertyName("requestId")]
         public string RequestId { get; set; } = string.Empty;
@@ -65,7 +65,6 @@ namespace MastercamMcp.Protocol
         [JsonPropertyName("documentRevision")]
         public string? DocumentRevision { get; set; }
 
-        // Legacy/router-compatible aliases (Router.cs expects these)
         [JsonPropertyName("ok")]
         public bool Ok { get; set; }
 
@@ -88,7 +87,7 @@ namespace MastercamMcp.Protocol
     public sealed class BridgeEvent
     {
         [JsonPropertyName("protocolVersion")]
-        public int ProtocolVersion { get; set; } = 2;
+        public int ProtocolVersion { get; set; } = BridgeRequest.CurrentProtocolVersion;
 
         [JsonPropertyName("eventId")]
         public string EventId { get; set; } = Guid.NewGuid().ToString();

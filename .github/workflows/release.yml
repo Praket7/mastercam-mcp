@@ -27,7 +27,6 @@ jobs:
         with:
           dotnet-version: |
             8.0.x
-            9.0.x
             10.0.x
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -35,6 +34,10 @@ jobs:
         run: pnpm run lint
       - name: Typecheck
         run: pnpm run typecheck
+      - name: Verify generated capability docs
+        run: |
+          pnpm run docs:capabilities
+          git diff --exit-code -- docs/CAPABILITIES.md
       - name: Build native - Protocol
         run: dotnet build native/MastercamMcp.Protocol/MastercamMcp.Protocol.csproj -c Release
       - name: Build native - Abstractions
@@ -43,6 +46,8 @@ jobs:
         run: dotnet build native/MastercamMcp.Core/MastercamMcp.Core.csproj -c Release
       - name: Build native - ApiCatalog
         run: dotnet build native/MastercamMcp.ApiCatalog/MastercamMcp.ApiCatalog.csproj -c Release
+      - name: Native protocol tests
+        run: dotnet test native/MastercamMcp.Protocol.Tests/MastercamMcp.Protocol.Tests.csproj -c Release
       - name: Build TypeScript
         run: pnpm run build
       - name: Tests
@@ -55,7 +60,7 @@ jobs:
         uses: trufflesecurity/trufflehog@main
         with:
           path: ./
-          base: main
+          base: HEAD~1
           head: HEAD
           extra_args: --debug --only-verified
       - name: Generate SBOM
@@ -75,8 +80,14 @@ jobs:
           tar -tzf "$archive" | grep -q 'package/install.ps1'
           tar -tzf "$archive" | grep -q 'package/native/MastercamMcp.Addin.Legacy/MastercamMcp.Addin.ft'
           tar -tzf "$archive" | grep -q 'package/native/MastercamMcp.Addin.2027/MastercamMcp.Addin.ft'
-          if tar -tzf "$archive" | grep -Eiq 'package/(native/.*/(bin|obj)|node_modules)/'; then echo "ERROR: package contains bin/obj/node_modules"; exit 1; fi
-          if tar -tzf "$archive" | grep -Eiq '\.dll$'; then echo "ERROR: package contains .dll (proprietary)"; exit 1; fi
+          if tar -tzf "$archive" | grep -Eiq 'package/(native/.*/(bin|obj)|node_modules)/'; then
+            echo "ERROR: package contains bin/obj/node_modules"
+            exit 1
+          fi
+          if tar -tzf "$archive" | grep -Eiq '\.dll$'; then
+            echo "ERROR: package contains .dll"
+            exit 1
+          fi
           echo "Package contents OK"
       - name: Packed package fresh-install smoke test
         shell: bash
@@ -84,14 +95,12 @@ jobs:
           set -euo pipefail
           archive=$(ls -1 mastercam-mcp-*.tgz | head -n 1)
           tmpdir=$(mktemp -d)
-          echo "Testing fresh install in $tmpdir"
           cd "$tmpdir"
           npm init -y >/dev/null
           npm install "$GITHUB_WORKSPACE/$archive"
           npx mastercam-mcp --version
-          # doctor should succeed in mock mode (Linux without Mastercam uses mock backend)
-          npx mastercam-mcp doctor
-          echo "Fresh install smoke test passed"
+          MASTERCAM_MCP_BACKEND=mock npx mastercam-mcp doctor
+          npx mastercam-mcp acceptance --mock
       - name: Publish package
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

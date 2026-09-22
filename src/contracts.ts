@@ -1,7 +1,5 @@
-/**
- * Capability tiers (audit §66): "reflection found a method" is never allowed to
- * be confused with "we know this works".
- */
+import { TOOL_MANIFEST } from "./tool-manifest.js";
+
 export type CapabilityTier =
   | "UNAVAILABLE"
   | "DISCOVERED"
@@ -19,52 +17,36 @@ export const DEFAULT_PROFILE: Profile = "read";
 export const SUPPORTED_PROTOCOL_REVISIONS = ["2025-06-18"] as const;
 export const CURRENT_PROTOCOL_REVISION = "2025-06-18";
 
-export const READ_TOOLS = [
-  "mastercam_status", "mastercam_capabilities", "get_active_part", "get_geometry_summary", "get_selection",
-  "list_machine_groups", "list_operations", "get_operation", "get_operation_parameters", "get_stock", "get_wcs",
-  "list_tools", "get_tool", "get_toolpath_status", "get_post_processor", "capture_view", "estimate_cycle_time",
-  "compare_toolpaths", "mastercam_doctor", "mastercam_help", "list_tool_categories", "discover_capabilities",
-  "get_compatibility_matrix", "mastercam_plan", "inspect",  "explain_operation", "get_operation_risks", "measure",
-  "assert", "verify_change", "find_operations", "get_version_report", "client_setup_check", "get_audit_history",
-  "get_machine_context", "get_fixture_info", "generate_setup_sheet", "compare_tool_databases", "compare_nc_files",
-  "validate_machine_profile", "get_programming_context", "get_dirty_toolpaths", "get_selected_entities", "get_machine_groups"
-] as const;
-
-/** Preview is a read: it changes nothing in Mastercam. */
-export const PREVIEW_TOOLS = ["preview_operation_parameters"] as const;
-
-/** Applies/rollbacks are the controlled mutation entry points. */
-export const WRITE_TOOLS = [
-  "apply_operation_parameter_preview", "rollback_change", "change_tool", "regenerate_toolpath",
-  "update_stock"
-] as const;
-
-export const ADVANCED_TOOLS = ["run_simulation", "detect_collisions"] as const;
-
-/** Intentionally never callable (audit §60/79): exposed only as unavailable capability metadata. */
-export const FORBIDDEN_TOOLS = ["post_program", "cycle_start", "send_dnc", "execute_script"] as const;
-
 export type ToolCategory = "read" | "preview" | "write" | "advanced" | "forbidden";
 
+function namesFor(category: ToolCategory): readonly string[] {
+  return Object.freeze(TOOL_MANIFEST.filter(entry => entry.category === category).map(entry => entry.name));
+}
+
+export const READ_TOOLS = namesFor("read");
+export const PREVIEW_TOOLS = namesFor("preview");
+export const WRITE_TOOLS = namesFor("write");
+export const ADVANCED_TOOLS = namesFor("advanced");
+export const FORBIDDEN_TOOLS = namesFor("forbidden");
+
+const CATEGORY_BY_NAME = new Map<string, ToolCategory>(
+  TOOL_MANIFEST.map(entry => [entry.name, entry.category])
+);
+const REGISTERED = new Set(
+  TOOL_MANIFEST.filter(entry => entry.registered).map(entry => entry.name)
+);
+
 export function categoryOf(tool: string): ToolCategory {
-  if ((READ_TOOLS as readonly string[]).includes(tool)) return "read";
-  if ((PREVIEW_TOOLS as readonly string[]).includes(tool)) return "preview";
-  if ((WRITE_TOOLS as readonly string[]).includes(tool)) return "write";
-  if ((ADVANCED_TOOLS as readonly string[]).includes(tool)) return "advanced";
-  return "forbidden";
+  return CATEGORY_BY_NAME.get(tool) ?? "forbidden";
 }
 
 export function isRegisteredTool(tool: string): boolean {
-  return categoryOf(tool) !== "forbidden";
+  return REGISTERED.has(tool);
 }
 
-/**
- * Profile policy. The server-side policy is authoritative; annotations are only
- * host hints (audit ARCH-03).
- */
 export function allowed(tool: string, profile: Profile, hardReadOnly: boolean, _dryRun?: boolean): boolean {
   const category = categoryOf(tool);
-  if (category === "forbidden") return false;
+  if (!isRegisteredTool(tool) || category === "forbidden") return false;
   if (hardReadOnly) return category === "read" || category === "preview";
   switch (profile) {
     case "read": return category === "read" || category === "preview";

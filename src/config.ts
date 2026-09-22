@@ -4,7 +4,7 @@ import type { Profile } from "./contracts.js";
 export const ConfigSchema = z.object({
   profile: z.enum(["read", "write", "all"]).default("read"),
   hardReadOnly: z.boolean().default(false),
-  backend: z.enum(["mock", "live"]).default("mock"),
+  backend: z.enum(["auto", "mock", "live", "pipe"]).default("auto"),
   pipe: z.string().default("\\\\.\\pipe\\mastercam-mcp-default"),
   audit: z.object({
     enabled: z.boolean().default(true),
@@ -53,14 +53,14 @@ function parseNumber(value: string | undefined, defaultValue: number, min: numbe
 
 function parseStringArray(value: string | undefined): string[] {
   if (!value) return [];
-  return value.split(",").map(v => v.trim()).filter(Boolean);
+  return value.split(",").map(value => value.trim()).filter(Boolean);
 }
 
 export function loadConfig(): Config {
   const raw = {
     profile: process.env.MASTERCAM_MCP_PROFILE ?? "read",
     hardReadOnly: parseBoolean(process.env.MASTERCAM_MCP_HARD_READ_ONLY, false),
-    backend: (process.env.MASTERCAM_MCP_BACKEND ?? "mock") as "mock" | "live",
+    backend: process.env.MASTERCAM_MCP_BACKEND ?? "auto",
     pipe: process.env.MASTERCAM_MCP_PIPE ?? "\\\\.\\pipe\\mastercam-mcp-default",
     audit: {
       enabled: parseBoolean(process.env.MASTERCAM_MCP_AUDIT, true),
@@ -93,16 +93,15 @@ export function loadConfig(): Config {
 
   const result = ConfigSchema.safeParse(raw);
   if (!result.success) {
-    const errors = result.error.errors.map(e => `${e.path.join(".")}: ${e.message}`).join("; ");
+    const errors = result.error.errors.map(error => `${error.path.join(".")}: ${error.message}`).join("; ");
     throw new Error(`Configuration validation failed: ${errors}`);
   }
-
   return result.data;
 }
 
 export function validateProfileConfig(profile: string, hardReadOnly: string): { profile: Profile; hardReadOnly: boolean } {
   const validProfiles = ["read", "write", "all"] as const;
-  if (!validProfiles.includes(profile as any)) {
+  if (!validProfiles.includes(profile as (typeof validProfiles)[number])) {
     throw new Error(`Invalid profile: ${profile}. Valid profiles: ${validProfiles.join(", ")}`);
   }
   return { profile: profile as Profile, hardReadOnly: hardReadOnly !== "0" };

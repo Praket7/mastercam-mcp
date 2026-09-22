@@ -9,6 +9,50 @@ param(
 )
 $ErrorActionPreference = "Stop"
 
+function Quote-ProcessArgument([string]$Value) {
+  if ($Value -notmatch '[\s"]') { return $Value }
+  return '"' + ($Value -replace '(\\*)"','$1$1\"' -replace '(\\+)$','$1$1') + '"'
+}
+
+function Write-AtomicText([string]$Path, [string]$Content) {
+  if (Test-Path $Path) {
+    $backup = "$Path.$(Get-Date -Format yyyyMMdd-HHmmss).bak"
+    Copy-Item $Path $backup -Force
+    Write-Output "Backed up $Path to $backup"
+  }
+  $temporary = "$Path.$([guid]::NewGuid().ToString('N')).tmp"
+  try {
+    [System.IO.File]::WriteAllText($temporary, $Content, (New-Object System.Text.UTF8Encoding($false)))
+    Move-Item $temporary $Path -Force
+  } catch {
+    if (Test-Path $temporary) { Remove-Item $temporary -Force }
+    throw "Could not update $Path atomically: $($_.Exception.Message)"
+  }
+}
+
+function Resolve-MastercamRelease([string]$Root) {
+  $leaf = Split-Path $Root -Leaf
+  if ($leaf -match 'Mastercam\s+(\d{4})') {
+    return [int]$Matches[1]
+  }
+
+  $exe = Join-Path $Root "Mastercam.exe"
+  if (-not (Test-Path $exe -PathType Leaf)) { return $null }
+
+  try {
+    $product = (Get-Item $exe).VersionInfo.ProductVersion
+    if (-not $product) { return $null }
+    $majorText = $product.Split('.')[0]
+    $major = 0
+    if (-not [int]::TryParse($majorText, [ref]$major)) { return $null }
+    if ($major -ge 2024) { return $major }
+    if ($major -ge 20 -and $major -le 99) { return 2000 + $major }
+  } catch {
+    return $null
+  }
+  return $null
+}
+
 if ($ListInstallations) {
   Get-ChildItem 'C:\Program Files' -Directory -Filter 'Mastercam *' -ErrorAction SilentlyContinue |
     Select-Object @{Name='Version';Expression={$_.Name -replace '^Mastercam\s+', ''}}, FullName,
@@ -34,8 +78,7 @@ if ($Uninstall) {
     else { throw "Mastercam was not found. Pass -MastercamRoot with the installation folder." }
   }
   if (-not (Test-Path $MastercamRoot -PathType Container)) { throw "Mastercam root does not exist: $MastercamRoot" }
-  $env:MASTERCAM_ROOT = (Resolve-Path $MastercamRoot).Path
-  $chooks = Join-Path $env:MASTERCAM_ROOT "chooks"
+  $chooks = Join-Path (Resolve-Path $MastercamRoot).Path "chooks"
   if (-not (Test-Path $chooks)) { throw "The selected Mastercam root has no chooks directory" }
   foreach ($file in @('MastercamMcp.Addin.dll', 'MastercamMcp.Addin.ft')) {
     $target = Join-Path $chooks $file
@@ -66,47 +109,55 @@ if (-not $MastercamRoot) {
 
 if (-not (Test-Path $MastercamRoot -PathType Container)) { throw "Mastercam root does not exist: $MastercamRoot" }
 $env:MASTERCAM_ROOT = (Resolve-Path $MastercamRoot).Path
-
-# Detect Mastercam version from directory name or executable version
-$mastercamVersion = "unknown"
-if ($MastercamRoot -match "Mastercam\s+(\d{4})") { $mastercamVersion = $Matches[1] }
-else {
-  $exe = Join-Path $MastercamRoot "Mastercam.exe"
-  if (Test-Path $exe) {
-    try { $mastercamVersion = (Get-Item $exe).VersionInfo.ProductVersion.Split(".")[0] } catch {}
-  }
+$mastercamRelease = Resolve-MastercamRelease $env:MASTERCAM_ROOT
+if (-not $mastercamRelease) {
+  throw "Could not determine the Mastercam release from '$env:MASTERCAM_ROOT'. Pass a standard Mastercam 2024+ installation folder; the installer will not guess an adapter."
 }
-$use2027 = $false
-if ($mastercamVersion -eq "2027" -or $mastercamVersion -eq "27") { $use2027 = $true }
+if ($mastercamRelease -lt 2024) {
+  throw "Mastercam $mastercamRelease is outside the supported adapter range (2024+)."
+}
 
-if ($use2027) {
+if ($mastercamRelease -ge 2027) {
+  $adapterName = "2027"
   $project = Join-Path $PSScriptRoot "native\MastercamMcp.Addin.2027\MastercamMcp.Addin.2027.csproj"
-  $expectedRuntime = "net10.0-windows"
-  Write-Output "Detected Mastercam $mastercamVersion -> using 2027 adapter ($expectedRuntime)"
+  $targetFramework = "net10.0-windows10.0.17763.0"
+  $ftSource = Join-Path $PSScriptRoot "native\MastercamMcp.Addin.2027\MastercamMcp.Addin.ft"
 } else {
+  $adapterName = "Legacy"
   $project = Join-Path $PSScriptRoot "native\MastercamMcp.Addin.Legacy\MastercamMcp.Addin.Legacy.csproj"
-  $expectedRuntime = "net48"
-  Write-Output "Detected Mastercam $mastercamVersion -> using Legacy adapter (net48, 2024-2026)"
+  $targetFramework = "net48"
+  $ftSource = Join-Path $PSScriptRoot "native\MastercamMcp.Addin.Legacy\MastercamMcp.Addin.ft"
 }
-if (-not (Test-Path $project)) { throw "Adapter project not found: $project" }
+
+Write-Output "Detected Mastercam $mastercamRelease -> adapter $adapterName ($targetFramework)"
+if (-not (Test-Path $project -PathType Leaf)) { throw "Adapter project not found: $project" }
+if (-not (Test-Path $ftSource -PathType Leaf)) { throw "Adapter metadata file not found: $ftSource" }
 
 if (-not $DotnetPath) {
   $dotnetCommand = Get-Command dotnet -ErrorAction SilentlyContinue
   if ($dotnetCommand) { $DotnetPath = $dotnetCommand.Source }
   else { throw "dotnet was not found. Install the .NET SDK or pass -DotnetPath to dotnet.exe" }
 }
+
 & $DotnetPath build $project -c $Configuration -p:MASTERCAM_ROOT=$env:MASTERCAM_ROOT
 if ($LASTEXITCODE -ne 0) { throw "Build failed for $project" }
-$output = if ($use2027) { Join-Path $PSScriptRoot "native\MastercamMcp.Addin.2027\bin\$Configuration\net10.0-windows" } else { Join-Path $PSScriptRoot "native\MastercamMcp.Addin.Legacy\bin\$Configuration\net48" }
-$chooks = Join-Path $env:MASTERCAM_ROOT "chooks"
-if (-not (Test-Path $chooks)) { throw "The selected Mastercam root has no chooks directory" }
-try { Copy-Item (Join-Path $output "MastercamMcp.Addin.dll") $chooks -Force }
-catch [System.UnauthorizedAccessException] {
-  throw "Mastercam is installed under a protected folder. Re-run this script from an administrator PowerShell window to copy the add in into chooks."
+
+$output = Join-Path (Split-Path $project -Parent) "bin\$Configuration\$targetFramework"
+$dllSource = Join-Path $output "MastercamMcp.Addin.dll"
+if (-not (Test-Path $dllSource -PathType Leaf)) {
+  throw "Adapter build completed but expected DLL was not found: $dllSource"
 }
-$ftSource = if ($use2027) { Join-Path $PSScriptRoot "native\MastercamMcp.Addin.2027\MastercamMcp.Addin.ft" } else { Join-Path $PSScriptRoot "native\MastercamMcp.Addin.Legacy\MastercamMcp.Addin.ft" }
-Copy-Item $ftSource $chooks -Force
-Write-Output "Installed the add in into the local Mastercam chooks directory (adapter: $(if ($use2027) { '2027' } else { 'Legacy' }), runtime: $expectedRuntime)"
+
+$chooks = Join-Path $env:MASTERCAM_ROOT "chooks"
+if (-not (Test-Path $chooks -PathType Container)) { throw "The selected Mastercam root has no chooks directory" }
+try {
+  Copy-Item $dllSource $chooks -Force
+  Copy-Item $ftSource $chooks -Force
+} catch [System.UnauthorizedAccessException] {
+  throw "Mastercam is installed under a protected folder. Re-run this script from an administrator PowerShell window."
+}
+
+Write-Output "Installed Mastercam MCP for Mastercam $mastercamRelease (adapter: $adapterName, runtime: $targetFramework)"
 
 if ($ConfigureClients) {
   $codexConfig = Join-Path $env:USERPROFILE ".codex\config.toml"
@@ -122,39 +173,24 @@ enabled = true
 
 [mcp_servers.mastercam.env]
 MASTERCAM_MCP_PROFILE = 'read'
+MASTERCAM_MCP_BACKEND = 'live'
 "@
     Write-AtomicText $codexConfig ($codexText + $codexEntry)
     Write-Output "Added the Mastercam MCP server to the Codex configuration"
   }
+
   $claudeConfig = Join-Path $env:APPDATA "Claude\claude_desktop_config.json"
   $claudeDirectory = Split-Path $claudeConfig -Parent
   if (-not (Test-Path $claudeDirectory)) { New-Item $claudeDirectory -ItemType Directory | Out-Null }
   $claude = if (Test-Path $claudeConfig) { Get-Content $claudeConfig -Raw | ConvertFrom-Json } else { [pscustomobject]@{} }
   if (-not $claude.PSObject.Properties['mcpServers']) { $claude | Add-Member -NotePropertyName mcpServers -NotePropertyValue ([pscustomobject]@{}) }
   if (-not $claude.mcpServers.PSObject.Properties['mastercam']) {
-    $claude.mcpServers | Add-Member -NotePropertyName mastercam -NotePropertyValue ([pscustomobject]@{ command = 'npx.cmd'; args = @('-y','mastercam-mcp@latest','serve'); env = [pscustomobject]@{ MASTERCAM_MCP_PROFILE = 'read' } })
+    $claude.mcpServers | Add-Member -NotePropertyName mastercam -NotePropertyValue ([pscustomobject]@{
+      command = 'npx.cmd'
+      args = @('-y','mastercam-mcp@latest','serve')
+      env = [pscustomobject]@{ MASTERCAM_MCP_PROFILE = 'read'; MASTERCAM_MCP_BACKEND = 'live' }
+    })
     Write-AtomicText $claudeConfig ($claude | ConvertTo-Json -Depth 20)
     Write-Output "Added the Mastercam MCP server to the Claude Desktop configuration"
-  }
-}
-
-function Quote-ProcessArgument([string]$Value) {
-  if ($Value -notmatch '[\s"]') { return $Value }
-  return '"' + ($Value -replace '(\\*)"', '$1$1\"' -replace '(\\+)$', '$1$1') + '"'
-}
-
-function Write-AtomicText([string]$Path, [string]$Content) {
-  if (Test-Path $Path) {
-    $backup = "$Path.$(Get-Date -Format yyyyMMdd-HHmmss).bak"
-    Copy-Item $Path $backup -Force
-    Write-Output "Backed up $Path to $backup"
-  }
-  $temporary = "$Path.$([guid]::NewGuid().ToString('N')).tmp"
-  try {
-    [System.IO.File]::WriteAllText($temporary, $Content, (New-Object System.Text.UTF8Encoding($false)))
-    Move-Item $temporary $Path -Force
-  } catch {
-    if (Test-Path $temporary) { Remove-Item $temporary -Force }
-    throw "Could not update $Path atomically: $($_.Exception.Message)"
   }
 }

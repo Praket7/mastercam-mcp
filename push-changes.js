@@ -9,62 +9,51 @@ const url = 'https://github.com/Praket7/mastercam-mcp.git';
 
 async function getGhToken() {
   const { execSync } = await import('child_process');
-  const token = execSync('gh auth token', { encoding: 'utf8' }).trim();
-  return token;
+  return execSync('gh auth token', { encoding: 'utf8' }).trim();
 }
 
 async function main() {
   try {
     const token = await getGhToken();
-    console.log('Got GitHub token');
+    const onAuth = () => ({ username: 'x-access-token', password: token });
 
-    // Check if .git exists
     const gitDir = path.join(dir, '.git');
     if (!fs.existsSync(gitDir)) {
-      console.log('Initializing new git repository...');
       await init({ fs, dir, defaultBranch: 'main' });
       await addRemote({ fs, dir, remote, url });
     }
 
-    // Try to fetch and merge first
-    console.log('Fetching remote...');
+    await fetch({ fs, http, dir, remote, onAuth });
     try {
-      await fetch({ fs, http, dir, remote, onAuth: () => ({ username: 'x-access-token', password: token }) });
-      console.log('Merging...');
-      await merge({ fs, dir, theirs: 'origin/main', ours: 'main', fastForwardOnly: false });
-    } catch (e) {
-      console.log('Fetch/merge failed, will force push:', e.message);
+      await merge({ fs, dir, theirs: 'origin/main', ours: 'main', fastForwardOnly: true });
+    } catch (error) {
+      throw new Error(`Refusing to push because local main is not a fast-forward of origin/main: ${error.message}`);
     }
 
-    console.log('Adding all files...');
-    await add({ fs, dir, filepath: "." });
-
-    console.log('Committing...');
+    await add({ fs, dir, filepath: '.' });
     await commit({
       fs,
       dir,
-      message: 'Fix P0 architectural issues: unify framing protocol, add output schemas, fix retry/circuit breaker, add acceptance harness, machine profile validation, unified config',
+      message: process.env.MASTERCAM_MCP_COMMIT_MESSAGE ?? 'Update mastercam-mcp',
       author: {
         name: 'Praket7',
         email: 'praket7@users.noreply.github.com'
       }
     });
 
-    console.log('Pushing to GitHub (force)...');
     await push({
       fs,
       http,
       dir,
       remote,
       ref: 'main',
-      force: true,
-      onAuth: () => ({ username: 'x-access-token', password: token })
+      force: false,
+      onAuth
     });
 
-    console.log('✅ Push successful!');
+    console.log('Push successful');
   } catch (error) {
-    console.error('❌ Error:', error.message);
-    console.error(error.stack);
+    console.error('Push failed:', error.message);
     process.exit(1);
   }
 }

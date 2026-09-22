@@ -13,7 +13,11 @@ export class CircuitBreakerOpenError extends Error {
   }
 }
 
-export const CircuitState = { CLOSED: "CLOSED" as const, OPEN: "OPEN" as const, HALF_OPEN: "HALF_OPEN" as const };
+export const CircuitState = {
+  CLOSED: "CLOSED" as const,
+  OPEN: "OPEN" as const,
+  HALF_OPEN: "HALF_OPEN" as const
+};
 export type CircuitState = typeof CircuitState[keyof typeof CircuitState];
 
 export class CircuitBreaker {
@@ -25,16 +29,15 @@ export class CircuitBreaker {
   private readonly cooldownMs: number;
   private readonly requiredHalfOpenSuccesses: number;
 
-  constructor(options: CircuitBreakerOptions & { timeout?: number; failureThreshold?: number } = {}) {
+  constructor(options: CircuitBreakerOptions & { timeout?: number } = {}) {
     this.failureThreshold = options.failureThreshold ?? 3;
-    this.cooldownMs = (options as any).timeout ?? options.cooldownMs ?? 5000;
+    this.cooldownMs = options.timeout ?? options.cooldownMs ?? 5000;
     this.requiredHalfOpenSuccesses = options.halfOpenSuccesses ?? 2;
   }
 
   get currentState(): BreakerState { return this.state; }
   getState(): BreakerState { return this.state; }
 
-  /** Wraps an attempt; throws CircuitBreakerOpenError while open. */
   async execute<T>(attempt: () => Promise<T>): Promise<T> {
     if (this.state === "OPEN") {
       const remaining = this.cooldownMs - (Date.now() - this.openedAt);
@@ -42,59 +45,35 @@ export class CircuitBreaker {
       this.state = "HALF_OPEN";
       this.halfOpenSuccesses = 0;
     }
+
     try {
       const result = await attempt();
       this.onSuccess();
       return result;
     } catch (error) {
-      if (this.isDomainError(error)) {
-        throw error;
-      }
+      if (!this.isTransportError(error)) throw error;
       this.onFailure();
       throw error;
     }
   }
 
-  private isDomainError(error: any): boolean {
-    if (!(error instanceof Error)) return false;
-    const msg = error.message;
-    if (
-      msg.includes("OPERATION_NOT_FOUND") ||
-      msg.includes("INVALID_ARGUMENTS") ||
-      msg.includes("UNSUPPORTED_CAPABILITY") ||
-      msg.includes("PERMISSION_DENIED") ||
-      msg.includes("VALIDATION_FAILED") ||
-      msg.includes("CANCELLED") ||
-      msg.includes("REQUEST_TOO_LARGE") ||
-      msg.includes("RESPONSE_TOO_LARGE") ||
-      msg.includes("STALE_PREVIEW") ||
-      msg.includes("STALE_STATE") ||
-      msg.includes("APPROVAL_TOKEN") ||
-      msg.includes("IDEMPOTENCY") ||
-      msg.includes("UNSUPPORTED_TOOL") ||
-      msg.includes("TARGET_REQUIRED") ||
-      msg.includes("PROFILE_DENIED")
-    ) {
-      return true;
-    }
-    return false;
+  private isTransportError(error: unknown): boolean {
+    const message = error instanceof Error ? error.message : String(error);
+    return [
+      "BACKEND_UNAVAILABLE",
+      "TIMEOUT",
+      "ECONNRESET",
+      "ECONNREFUSED",
+      "EPIPE",
+      "broken pipe",
+      "connection timed out",
+      "connection timeout",
+      "socket hang up",
+      "socket error",
+      "network error",
+      "invalid bridge response"
+    ].some(token => message.includes(token));
   }
-
-  private isTransportError(error: any): boolean {
-    if (!(error instanceof Error)) return false;
-    const msg = error.message;
-    return (
-      msg.includes("ECONNRESET") ||
-      msg.includes("ECONNREFUSED") ||
-      msg.includes("broken pipe") ||
-      msg.includes("connection timeout") ||
-      msg.includes("socket hang up") ||
-      msg.includes("network error") ||
-      msg.includes("read ECONNRESET") ||
-      msg.includes("write ECONNRESET")
-    );
-  }
-
 
   private onSuccess(): void {
     if (this.state === "HALF_OPEN") {

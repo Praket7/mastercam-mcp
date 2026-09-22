@@ -1,7 +1,7 @@
 import { writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { homedir } from "node:os";
-import { MockBackend } from "../backend.js";
+import type { Backend, ToolResult } from "../backend.js";
 
 export interface AcceptanceTestResult {
   test: string;
@@ -12,6 +12,8 @@ export interface AcceptanceTestResult {
 }
 
 export interface AcceptanceReport {
+  mode: "mock" | "live";
+  writeTestsEnabled: boolean;
   mastercamRelease: string;
   adapterVersion: string;
   protocolVersion: number;
@@ -20,22 +22,72 @@ export interface AcceptanceReport {
   overall: "PASS" | "FAIL" | "PARTIAL";
 }
 
-type AcceptanceTestName = "status" | "activePart" | "operations" | "tools" | "stock" | "wcs" | "preview" | "apply" | "verify" | "rollback" | "simulation" | "collisions";
-
-interface TestContext {
-  backend: MockBackend;
-  results: Record<string, AcceptanceTestResult>;
-  partName?: string;
-  operationIds?: number[];
-  toolNumbers?: number[];
+export interface AcceptanceOptions {
+  mode: "mock" | "live";
+  allowWrites?: boolean;
+  mastercamRelease?: string;
+  adapterVersion?: string;
 }
 
-async function runTest(name: AcceptanceTestName, fn: (ctx: TestContext) => Promise<void>, ctx: TestContext): Promise<void> {
+type AcceptanceTestName =
+  | "status" | "activePart" | "operations" | "tools" | "stock" | "wcs"
+  | "preview" | "apply" | "verify" | "rollback" | "simulation" | "collisions";
+
+interface Quantity { value: number; unit: string }
+
+interface TestContext {
+  backend: Backend;
+  results: Record<string, AcceptanceTestResult>;
+  allowWrites: boolean;
+  statusInfo?: Record<string, unknown>;
+  operationIds?: number[];
+  currentFeed?: Quantity;
+  changedFeed?: Quantity;
+  appliedTransactionId?: string;
+}
+
+class NotSupportedError extends Error {}
+
+function unsupported(result: ToolResult): boolean {
+  const code = result.error?.code ?? "";
+  return ["UNSUPPORTED_TOOL", "UNSUPPORTED_CAPABILITY", "CAPABILITY_UNAVAILABLE"].includes(code);
+}
+
+function requireOk(result: ToolResult, tool: string): ToolResult {
+  if (result.ok) return result;
+  if (unsupported(result)) throw new NotSupportedError(`${tool}: ${result.error?.message ?? "not supported"}`);
+  throw new Error(`${tool} failed: ${result.error?.message ?? result.error?.code ?? "unknown error"}`);
+}
+
+async function runTest(
+  name: AcceptanceTestName,
+  fn: (ctx: TestContext) => Promise<unknown>,
+  ctx: TestContext,
+  skipReason?: string
+): Promise<void> {
+  if (skipReason) {
+    ctx.results[name] = { test: name, status: "SKIPPED", message: skipReason };
+    return;
+  }
   const start = Date.now();
   try {
-    await fn(ctx);
-    ctx.results[name] = { test: name, status: "PASS", durationMs: Date.now() - start };
+    const evidence = await fn(ctx);
+    ctx.results[name] = {
+      test: name,
+      status: "PASS",
+      durationMs: Date.now() - start,
+      ...(evidence === undefined ? {} : { evidence })
+    };
   } catch (error) {
+    if (error instanceof NotSupportedError) {
+      ctx.results[name] = {
+        test: name,
+        status: "NOT_SUPPORTED",
+        message: error.message,
+        durationMs: Date.now() - start
+      };
+      return;
+    }
     ctx.results[name] = {
       test: name,
       status: "FAIL",
@@ -45,156 +97,150 @@ async function runTest(name: AcceptanceTestName, fn: (ctx: TestContext) => Promi
   }
 }
 
-async function testStatus(ctx: TestContext): Promise<void> {
-  const result = await ctx.backend.call({ id: "a1", tool: "mastercam_status", arguments: {} });
-  if (!result.ok) throw new Error(`mastercam_status failed: ${result.error?.message}`);
+async function testStatus(ctx: TestContext): Promise<unknown> {
+  const result = requireOk(await ctx.backend.call({ id: "a1", tool: "mastercam_status", arguments: {} }), "mastercam_status");
   if (!result.data || typeof result.data !== "object") throw new Error("mastercam_status missing data");
+  ctx.statusInfo = result.data as Record<string, unknown>;
+  return result.data;
 }
 
-async function testActivePart(ctx: TestContext): Promise<void> {
-  const result = await ctx.backend.call({ id: "a2", tool: "get_active_part", arguments: {} });
-  if (!result.ok) throw new Error(`get_active_part failed: ${result.error?.message}`);
+async function testActivePart(ctx: TestContext): Promise<unknown> {
+  const result = requireOk(await ctx.backend.call({ id: "a2", tool: "get_active_part", arguments: {} }), "get_active_part");
   const data = result.data as { name?: string };
-  if (!data.name) throw new Error("get_active_part missing part name");
-  ctx.partName = data.name;
+  if (!data?.name) throw new Error("get_active_part missing part name");
+  return data;
 }
 
-async function testOperations(ctx: TestContext): Promise<void> {
-  const result = await ctx.backend.call({ id: "a3", tool: "list_operations", arguments: {} });
-  if (!result.ok) throw new Error(`list_operations failed: ${result.error?.message}`);
-  const ops = result.data as Array<{ id: number }>;
-  if (!ops.length) throw new Error("list_operations returned empty list");
-  ctx.operationIds = ops.map(o => o.id);
+async function testOperations(ctx: TestContext): Promise<unknown> {
+  const result = requireOk(await ctx.backend.call({ id: "a3", tool: "list_operations", arguments: {} }), "list_operations");
+  const ops = result.data as Array<{ id: number; feedRate?: Quantity }>;
+  if (!Array.isArray(ops) || !ops.length) throw new Error("list_operations returned empty list");
+  ctx.operationIds = ops.map(op => op.id);
+  const firstFeed = ops[0]?.feedRate;
+  if (firstFeed && Number.isFinite(firstFeed.value) && firstFeed.value > 0 && typeof firstFeed.unit === "string") {
+    ctx.currentFeed = { value: firstFeed.value, unit: firstFeed.unit };
+    ctx.changedFeed = { value: Number((firstFeed.value * 1.01).toPrecision(12)), unit: firstFeed.unit };
+  }
+  return { count: ops.length, firstOperationId: ctx.operationIds[0] };
 }
 
-async function testTools(ctx: TestContext): Promise<void> {
-  const result = await ctx.backend.call({ id: "a4", tool: "list_tools", arguments: {} });
-  if (!result.ok) throw new Error(`list_tools failed: ${result.error?.message}`);
-  const tools = result.data as Array<{ number: number }>;
-  if (!tools.length) throw new Error("list_tools returned empty list");
-  ctx.toolNumbers = tools.map(t => t.number);
+async function testTools(ctx: TestContext): Promise<unknown> {
+  const result = requireOk(await ctx.backend.call({ id: "a4", tool: "list_tools", arguments: {} }), "list_tools");
+  const tools = result.data as unknown[];
+  if (!Array.isArray(tools) || !tools.length) throw new Error("list_tools returned empty list");
+  return { count: tools.length };
 }
 
-async function testStock(ctx: TestContext): Promise<void> {
-  const result = await ctx.backend.call({ id: "a5", tool: "get_stock", arguments: {} });
-  if (!result.ok) throw new Error(`get_stock failed: ${result.error?.message}`);
-  const data = result.data as { dimensions?: { x: number; y: number; z: number } };
-  if (!data.dimensions) throw new Error("get_stock missing dimensions");
+async function testStock(ctx: TestContext): Promise<unknown> {
+  const result = requireOk(await ctx.backend.call({ id: "a5", tool: "get_stock", arguments: {} }), "get_stock");
+  if (!result.data || typeof result.data !== "object") throw new Error("get_stock missing data");
+  return result.data;
 }
 
-async function testWcs(ctx: TestContext): Promise<void> {
-  const result = await ctx.backend.call({ id: "a6", tool: "get_wcs", arguments: {} });
-  if (!result.ok) throw new Error(`get_wcs failed: ${result.error?.message}`);
-  const data = result.data as { name?: string; origin?: number[] };
-  if (!data.name) throw new Error("get_wcs missing name");
+async function testWcs(ctx: TestContext): Promise<unknown> {
+  const result = requireOk(await ctx.backend.call({ id: "a6", tool: "get_wcs", arguments: {} }), "get_wcs");
+  if (!result.data || typeof result.data !== "object") throw new Error("get_wcs missing data");
+  return result.data;
 }
 
-async function testPreview(ctx: TestContext): Promise<void> {
-  if (!ctx.operationIds?.length) throw new Error("No operations available for preview test");
-  const result = await ctx.backend.call({
+async function testPreview(ctx: TestContext): Promise<unknown> {
+  if (!ctx.operationIds?.length) throw new NotSupportedError("No operation is available for preview");
+  if (!ctx.changedFeed) throw new NotSupportedError("First operation has no feed quantity suitable for preview");
+  const result = requireOk(await ctx.backend.call({
     id: "a7",
     tool: "preview_operation_parameters",
     arguments: {
       operationId: ctx.operationIds[0],
-      changes: { feedRate: { value: 100, unit: "mm/min" } }
+      changes: { feedRate: ctx.changedFeed }
     }
-  });
-  if (!result.ok) throw new Error(`preview_operation_parameters failed: ${result.error?.message}`);
+  }), "preview_operation_parameters");
   const data = result.data as { approvalToken?: string };
-  if (!data.approvalToken) throw new Error("preview missing approvalToken");
+  if (!data?.approvalToken) throw new Error("preview missing approvalToken");
+  return { operationId: ctx.operationIds[0], proposedFeed: ctx.changedFeed };
 }
 
-async function testApply(ctx: TestContext): Promise<void> {
-  if (!ctx.operationIds?.length) throw new Error("No operations available for apply test");
-  const preview = await ctx.backend.call({
+async function testApply(ctx: TestContext): Promise<unknown> {
+  if (!ctx.operationIds?.length || !ctx.changedFeed) throw new NotSupportedError("No writable operation/feed is available");
+  const preview = requireOk(await ctx.backend.call({
     id: "a8a",
     tool: "preview_operation_parameters",
     arguments: {
       operationId: ctx.operationIds[0],
-      changes: { feedRate: { value: 200, unit: "mm/min" } }
+      changes: { feedRate: ctx.changedFeed }
     }
-  });
-  if (!preview.ok) throw new Error(`preview for apply failed: ${preview.error?.message}`);
-  const token = (preview.data as { approvalToken: string }).approvalToken;
+  }), "preview_operation_parameters");
+  const token = (preview.data as { approvalToken?: string })?.approvalToken;
+  if (!token) throw new Error("preview for apply missing approvalToken");
 
-  const apply = await ctx.backend.call({
+  const apply = requireOk(await ctx.backend.call({
     id: "a8b",
     tool: "apply_operation_parameter_preview",
     arguments: { approvalToken: token }
-  });
-  if (!apply.ok) throw new Error(`apply_operation_parameter_preview failed: ${apply.error?.message}`);
+  }), "apply_operation_parameter_preview");
+
+  const data = apply.data as { rollback?: { transactionId?: string } };
+  const transactionId = data?.rollback?.transactionId;
+  if (!transactionId) throw new Error("apply did not return rollback transactionId");
+  ctx.appliedTransactionId = transactionId;
+  return { operationId: ctx.operationIds[0], transactionId };
 }
 
-async function testVerify(ctx: TestContext): Promise<void> {
-  if (!ctx.operationIds?.length) throw new Error("No operations available for verify test");
-  const verify = await ctx.backend.call({
+async function testVerify(ctx: TestContext): Promise<unknown> {
+  if (!ctx.operationIds?.length || !ctx.changedFeed || !ctx.appliedTransactionId) {
+    throw new NotSupportedError("No successful acceptance write is available to verify");
+  }
+  const verify = requireOk(await ctx.backend.call({
     id: "a9",
     tool: "verify_change",
     arguments: {
       operationId: ctx.operationIds[0],
-      expected: { feedRate: { value: 200, unit: "mm/min" } }
+      expected: { feedRate: ctx.changedFeed }
     }
-  });
-  if (!verify.ok) throw new Error(`verify_change failed: ${verify.error?.message}`);
+  }), "verify_change");
   const data = verify.data as { pass?: boolean };
-  if (!data.pass) throw new Error("verify_change reported mismatch");
+  if (!data?.pass) throw new Error("verify_change reported mismatch");
+  return data;
 }
 
-async function testRollback(ctx: TestContext): Promise<void> {
-  if (!ctx.operationIds?.length) throw new Error("No operations available for rollback test");
-  const preview = await ctx.backend.call({
-    id: "a10a",
-    tool: "preview_operation_parameters",
-    arguments: {
-      operationId: ctx.operationIds[0],
-      changes: { feedRate: { value: 300, unit: "mm/min" } }
-    }
-  });
-  if (!preview.ok) throw new Error(`preview for rollback failed: ${preview.error?.message}`);
-  const token = (preview.data as { approvalToken: string }).approvalToken;
-
-  const apply = await ctx.backend.call({
-    id: "a10b",
-    tool: "apply_operation_parameter_preview",
-    arguments: { approvalToken: token }
-  });
-  if (!apply.ok) throw new Error(`apply for rollback failed: ${apply.error?.message}`);
-  const rollbackToken = (apply.data as { rollback: { transactionId: string } }).rollback.transactionId;
-
-  const rollback = await ctx.backend.call({
-    id: "a10c",
+async function testRollback(ctx: TestContext): Promise<unknown> {
+  if (!ctx.appliedTransactionId) throw new NotSupportedError("No acceptance transaction is available to roll back");
+  const rollback = requireOk(await ctx.backend.call({
+    id: "a10",
     tool: "rollback_change",
-    arguments: { transactionId: rollbackToken }
-  });
-  if (!rollback.ok) throw new Error(`rollback_change failed: ${rollback.error?.message}`);
-}
+    arguments: { transactionId: ctx.appliedTransactionId }
+  }), "rollback_change");
 
-async function testSimulation(ctx: TestContext): Promise<void> {
-  const result = await ctx.backend.call({ id: "a11", tool: "run_simulation", arguments: {} });
-  if (!result.ok) {
-    if (result.error?.code === "UNSUPPORTED_TOOL") {
-      ctx.results.simulation = { test: "simulation", status: "NOT_SUPPORTED", message: "Simulation not supported by backend" };
-      return;
-    }
-    throw new Error(`run_simulation failed: ${result.error?.message}`);
+  if (ctx.operationIds?.length && ctx.currentFeed) {
+    const verify = requireOk(await ctx.backend.call({
+      id: "a10v",
+      tool: "verify_change",
+      arguments: {
+        operationId: ctx.operationIds[0],
+        expected: { feedRate: ctx.currentFeed }
+      }
+    }), "verify_change after rollback");
+    const data = verify.data as { pass?: boolean };
+    if (!data?.pass) throw new Error("rollback verification did not restore the original feed");
   }
-  ctx.results.simulation = { test: "simulation", status: "PASS", durationMs: 0 };
+  return rollback.data;
 }
 
-async function testCollisions(ctx: TestContext): Promise<void> {
-  const result = await ctx.backend.call({ id: "a12", tool: "detect_collisions", arguments: {} });
-  if (!result.ok) {
-    if (result.error?.code === "UNSUPPORTED_TOOL") {
-      ctx.results.collisions = { test: "collisions", status: "NOT_SUPPORTED", message: "Collision detection not supported by backend" };
-      return;
-    }
-    throw new Error(`detect_collisions failed: ${result.error?.message}`);
-  }
-  ctx.results.collisions = { test: "collisions", status: "PASS", durationMs: 0 };
+async function testSimulation(ctx: TestContext): Promise<unknown> {
+  const result = requireOk(await ctx.backend.call({ id: "a11", tool: "run_simulation", arguments: {} }), "run_simulation");
+  return result.data;
 }
 
-export async function runAcceptance(backend: MockBackend, mastercamRelease: string, adapterVersion: string): Promise<AcceptanceReport> {
-  const ctx: TestContext = { backend, results: {} };
+async function testCollisions(ctx: TestContext): Promise<unknown> {
+  const result = requireOk(await ctx.backend.call({ id: "a12", tool: "detect_collisions", arguments: {} }), "detect_collisions");
+  return result.data;
+}
+
+export async function runAcceptance(backend: Backend, options: AcceptanceOptions): Promise<AcceptanceReport> {
+  const ctx: TestContext = {
+    backend,
+    results: {},
+    allowWrites: options.allowWrites === true
+  };
 
   await runTest("status", testStatus, ctx);
   await runTest("activePart", testActivePart, ctx);
@@ -203,31 +249,41 @@ export async function runAcceptance(backend: MockBackend, mastercamRelease: stri
   await runTest("stock", testStock, ctx);
   await runTest("wcs", testWcs, ctx);
   await runTest("preview", testPreview, ctx);
-  await runTest("apply", testApply, ctx);
-  await runTest("verify", testVerify, ctx);
-  await runTest("rollback", testRollback, ctx);
+
+  const writeSkip = ctx.allowWrites
+    ? undefined
+    : "Write acceptance disabled. Re-run a disposable test part with --live --allow-writes.";
+  await runTest("apply", testApply, ctx, writeSkip);
+  await runTest("verify", testVerify, ctx, writeSkip);
+  await runTest("rollback", testRollback, ctx, writeSkip);
+
   await runTest("simulation", testSimulation, ctx);
   await runTest("collisions", testCollisions, ctx);
 
-  const failed = Object.values(ctx.results).filter(r => r.status === "FAIL").length;
-  const overall: AcceptanceReport["overall"] = failed === 0 ? "PASS" : failed < Object.keys(ctx.results).length ? "PARTIAL" : "FAIL";
+  const statuses = Object.values(ctx.results).map(result => result.status);
+  const overall: AcceptanceReport["overall"] = statuses.includes("FAIL")
+    ? "FAIL"
+    : statuses.some(status => status === "NOT_SUPPORTED" || status === "SKIPPED")
+      ? "PARTIAL"
+      : "PASS";
 
-  const report: AcceptanceReport = {
-    mastercamRelease,
-    adapterVersion,
-    protocolVersion: 2,
+  const status = ctx.statusInfo ?? {};
+  return {
+    mode: options.mode,
+    writeTestsEnabled: ctx.allowWrites,
+    mastercamRelease: String(options.mastercamRelease ?? status.mastercamVersion ?? "unknown"),
+    adapterVersion: String(options.adapterVersion ?? status.adapter ?? status.adapterVersion ?? "unknown"),
+    protocolVersion: Number(status.protocolVersion ?? 2),
     timestamp: new Date().toISOString(),
     tests: ctx.results,
     overall
   };
-
-  return report;
 }
 
 export async function saveAcceptanceReport(report: AcceptanceReport, outputDir?: string): Promise<string> {
   const dir = outputDir ?? join(homedir(), ".mastercam-mcp", "acceptance");
   await mkdir(dir, { recursive: true });
-  const filename = `acceptance-${report.mastercamRelease}-${report.adapterVersion}-${Date.now()}.json`;
+  const filename = `acceptance-${report.mode}-${report.mastercamRelease}-${report.adapterVersion}-${Date.now()}.json`;
   const path = join(dir, filename);
   await writeFile(path, JSON.stringify(report, null, 2), "utf8");
   return path;
@@ -235,6 +291,5 @@ export async function saveAcceptanceReport(report: AcceptanceReport, outputDir?:
 
 export async function loadAcceptanceReport(path: string): Promise<AcceptanceReport> {
   const { readFile } = await import("node:fs/promises");
-  const text = await readFile(path, "utf8");
-  return JSON.parse(text) as AcceptanceReport;
+  return JSON.parse(await readFile(path, "utf8")) as AcceptanceReport;
 }

@@ -1,8 +1,10 @@
 import net from "node:net";
-import { rmSync } from "node:fs";
+import { mkdirSync, rmSync } from "node:fs";
+import { dirname } from "node:path";
 import { MockBackend } from "./backend.js";
 import { defaultPipe } from "./platform.js";
 import { FrameReader } from "./transport/framing.js";
+import { encodeFrame } from "./transport/protocol.js";
 
 const pipe = process.env.MASTERCAM_MCP_PIPE ?? defaultPipe();
 const backend = new MockBackend();
@@ -10,90 +12,96 @@ const readers = new WeakMap<net.Socket, FrameReader>();
 const MAX_REQUEST_BYTES = 1024 * 1024;
 
 if (process.platform !== "win32" && !pipe.startsWith("\\\\")) {
-    try {
-        rmSync(pipe, { force: true });
-    }
-    catch { }
+  mkdirSync(dirname(pipe), { recursive: true });
+  try { rmSync(pipe, { force: true }); } catch { }
 }
 
-const server = net.createServer((socket) => {
-    const reader = new FrameReader(MAX_REQUEST_BYTES);
-    readers.set(socket, reader);
-    socket.on("data", (chunk: Buffer) => {
-        let frames: string[];
-        try {
-            frames = reader.push(chunk);
+const server = net.createServer(socket => {
+  const reader = new FrameReader(MAX_REQUEST_BYTES);
+  readers.set(socket, reader);
+  socket.on("data", (chunk: Buffer) => {
+    let frames: string[];
+    try {
+      frames = reader.push(chunk);
+    } catch (error) {
+      socket.write(encodeFrame(JSON.stringify({
+        protocolVersion: 2,
+        requestId: "",
+        type: "error",
+        ok: false,
+        tool: "",
+        error: {
+          code: "REQUEST_TOO_LARGE",
+          message: error instanceof Error ? error.message : String(error)
         }
-        catch (error) {
-            const response = encodeFrame(JSON.stringify({
-                id: null,
-                result: {
-                    ok: false,
-                    error: {
-                        code: "REQUEST_TOO_LARGE",
-                        message: error instanceof Error ? error.message : String(error)
-                    }
-                }
-            }));
-            socket.write(response);
-            socket.destroy();
-            return;
-        }
-        for (const frame of frames) {
-            if (!frame.trim()) continue;
-            void handleFrame(socket, frame);
-        }
-    });
+      })));
+      socket.destroy();
+      return;
+    }
+    for (const frame of frames) {
+      if (!frame.trim()) continue;
+      void handleFrame(socket, frame);
+    }
+  });
 });
 
-function encodeFrame(payload: string): Buffer {
-    const buf = Buffer.from(payload, "utf8");
-    const frame = Buffer.alloc(8 + buf.length);
-    frame.writeBigUInt64LE(BigInt(buf.length), 0);
-    buf.copy(frame, 8);
-    return frame;
-}
-
 async function handleFrame(socket: net.Socket, frame: string): Promise<void> {
-    let response: Buffer;
-    try {
-        const req = JSON.parse(frame);
-        const result = await backend.call({
-            id: String(req.id ?? ""),
-            tool: String(req.tool ?? ""),
-            arguments: req.arguments ?? {}
-        });
-        response = encodeFrame(JSON.stringify({ id: req.id ?? null, result }));
+  try {
+    const req = JSON.parse(frame) as {
+      type?: string;
+      protocolVersion?: number;
+      requestId?: string;
+      tool?: string;
+      arguments?: Record<string, unknown>;
+    };
+    if (req.type === "cancel") return;
+    if (req.type !== "request" || req.protocolVersion !== 2 || !req.requestId || !req.tool) {
+      throw new Error("INVALID_REQUEST: bridge-v2 request requires type=request, protocolVersion=2, requestId and tool");
     }
-    catch (error) {
-        response = encodeFrame(JSON.stringify({
-            id: null,
-            result: {
-                ok: false,
-                error: {
-                    code: "INVALID_JSON",
-                    message: error instanceof Error ? error.message : String(error)
-                }
-            }
-        }));
-    }
+    const result = await backend.call({
+      id: req.requestId,
+      tool: req.tool,
+      arguments: req.arguments ?? {}
+    });
+    const response = {
+      protocolVersion: 2,
+      requestId: req.requestId,
+      type: result.ok ? "response" : "error",
+      ok: result.ok,
+      tool: req.tool,
+      data: result.data,
+      error: result.error,
+      receipt: result.receipt,
+      live: false,
+      documentRevision: result.documentRevision
+    };
+    if (!socket.destroyed) socket.write(encodeFrame(JSON.stringify(response)));
+  } catch (error) {
     if (!socket.destroyed) {
-        socket.write(response);
+      socket.write(encodeFrame(JSON.stringify({
+        protocolVersion: 2,
+        requestId: "",
+        type: "error",
+        ok: false,
+        tool: "",
+        error: {
+          code: "INVALID_JSON",
+          message: error instanceof Error ? error.message : String(error)
+        }
+      })));
     }
+  }
 }
 
 server.listen(pipe, () => console.error(`Mock Mastercam backend listening on ${pipe}`));
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
-    process.on(signal, () => {
-        server.close(() => {
-            if (process.platform !== "win32" && !pipe.startsWith("\\\\")) {
-                try {
-                    rmSync(pipe, { force: true });
-                }
-                catch { }
-            }
-            process.exit(0);
-        });
+  process.on(signal, () => {
+    server.close(() => {
+      if (process.platform !== "win32" && !pipe.startsWith("\\\\")) {
+        try { rmSync(pipe, { force: true }); } catch { }
+      }
+      process.exit(0);
     });
+  });
 }
