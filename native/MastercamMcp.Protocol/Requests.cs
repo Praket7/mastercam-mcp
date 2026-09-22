@@ -114,6 +114,7 @@ namespace MastercamMcp.Protocol
     public static class ErrorCodes
     {
         public const string BackendUnavailable = "BACKEND_UNAVAILABLE";
+        public const string RateLimited = "RATE_LIMITED";
         public const string Timeout = "TIMEOUT";
         public const string Cancelled = "CANCELLED";
         public const string OperationNotFound = "OPERATION_NOT_FOUND";
