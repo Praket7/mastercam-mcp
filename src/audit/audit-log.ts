@@ -28,9 +28,16 @@ interface RecoveredChain {
   currentFileHash: Hash;
 }
 
+interface VerifiedSegment {
+  chain: ChainState;
+  fileSha256: string;
+  bytes: number;
+  firstRecord?: Record<string, unknown>;
+}
+
 const GENESIS_HASH = "sha256:genesis";
 const MAX_REDACT_DEPTH = 6;
-const SENSITIVE_KEYS = /(password|secret|authorization|apikey|api_key|credential|approvalToken|rollbackToken|accessToken|refreshToken|idempotencyKey)/i;
+const SENSITIVE_KEYS = /(password|passphrase|secret|authorization|api[-_]?key|credential|token|cookie|session|private[-_]?key|idempotency[-_]?key)/i;
 
 export function sha256Of(value: unknown): string {
   return `sha256:${createHash("sha256").update(stableStringify(value)).digest("hex")}`;
@@ -46,7 +53,8 @@ export function stableStringify(value: unknown): string {
 }
 
 export function redact(value: unknown, depth = 0): unknown {
-  if (depth > MAX_REDACT_DEPTH || value === null || typeof value !== "object") return value;
+  if (value === null || typeof value !== "object") return value;
+  if (depth >= MAX_REDACT_DEPTH) return "[truncated]";
   if (Array.isArray(value)) return value.slice(0, 50).map(item => redact(item, depth + 1));
   const out: Record<string, unknown> = {};
   for (const [key, val] of Object.entries(value as Record<string, unknown>)) {
@@ -87,38 +95,125 @@ function isEnoent(error: unknown): boolean {
   return error instanceof Error && (error as NodeJS.ErrnoException).code === "ENOENT";
 }
 
-function recoverChain(path: string): RecoveredChain {
-  let text: string;
-  try {
-    text = fsSync.readFileSync(path, "utf8");
-  } catch (error) {
-    if (isEnoent(error)) {
-      return {
-        chain: { sequence: 0, previousEntryHash: GENESIS_HASH },
-        currentFileBytes: 0,
-        currentFileHash: createHash("sha256")
-      };
-    }
-    throw error;
-  }
-
-  let expectedPrevious: string | undefined;
+function verifySegmentText(
+  text: string,
+  expectedPrevious: string | undefined,
+  expectedSequence: number | undefined
+): VerifiedSegment {
+  let previous = expectedPrevious;
+  let sequence = expectedSequence;
   let state: ChainState | undefined;
+  let firstRecord: Record<string, unknown> | undefined;
 
   for (const line of text.split("\n")) {
     if (!line.trim()) continue;
-    const parsed = JSON.parse(line) as Record<string, unknown>;
-    const verified = verifyLine(parsed, expectedPrevious);
-    if (!verified.ok) throw new Error("AUDIT_CHAIN_CORRUPT: existing audit log failed verification");
-    expectedPrevious = verified.entryHash;
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(line) as Record<string, unknown>;
+    } catch {
+      throw new Error("AUDIT_CHAIN_CORRUPT: audit segment contains invalid JSON");
+    }
+    firstRecord ??= parsed;
+    const verified = verifyLine(parsed, previous);
+    if (!verified.ok) {
+      throw new Error("AUDIT_CHAIN_CORRUPT: retained audit segment failed hash verification");
+    }
+    if (sequence !== undefined && verified.sequence !== sequence + 1) {
+      throw new Error("AUDIT_CHAIN_CORRUPT: audit sequence is not contiguous");
+    }
+    previous = verified.entryHash;
+    sequence = verified.sequence;
     state = { sequence: verified.sequence, previousEntryHash: verified.entryHash };
   }
 
-  const currentFileHash = createHash("sha256");
-  currentFileHash.update(text, "utf8");
   return {
-    chain: state ?? { sequence: 0, previousEntryHash: GENESIS_HASH },
-    currentFileBytes: Buffer.byteLength(text, "utf8"),
+    chain: state ?? {
+      sequence: expectedSequence ?? 0,
+      previousEntryHash: expectedPrevious ?? GENESIS_HASH
+    },
+    fileSha256: `sha256:${createHash("sha256").update(text, "utf8").digest("hex")}`,
+    bytes: Buffer.byteLength(text, "utf8"),
+    ...(firstRecord ? { firstRecord } : {})
+  };
+}
+
+function rotationPreviousFileSha(firstRecord: Record<string, unknown> | undefined): string | undefined {
+  if (!firstRecord || firstRecord.tool !== "audit_rotation") return undefined;
+  const policy = firstRecord.policy;
+  if (!policy || typeof policy !== "object" || Array.isArray(policy)) return undefined;
+  const hash = (policy as Record<string, unknown>).previousFileSha256;
+  return typeof hash === "string" ? hash : undefined;
+}
+
+function recoverChain(path: string, maxRotatedFiles: number): RecoveredChain {
+  const activeExists = fsSync.existsSync(path);
+  const rotatedIndices: number[] = [];
+  for (let index = 1; index <= maxRotatedFiles; index++) {
+    if (fsSync.existsSync(`${path}.${index}`)) rotatedIndices.push(index);
+  }
+
+  if (!activeExists && rotatedIndices.length === 0) {
+    return {
+      chain: { sequence: 0, previousEntryHash: GENESIS_HASH },
+      currentFileBytes: 0,
+      currentFileHash: createHash("sha256")
+    };
+  }
+
+  if (rotatedIndices.length > 0) {
+    const highest = Math.max(...rotatedIndices);
+    for (let index = 1; index <= highest; index++) {
+      if (!rotatedIndices.includes(index)) {
+        throw new Error("AUDIT_CHAIN_CORRUPT: retained audit rotation contains a missing segment");
+      }
+    }
+    if (!activeExists) {
+      throw new Error("AUDIT_CHAIN_CORRUPT: active audit segment is missing while rotated segments remain");
+    }
+  }
+
+  const segmentPaths = [
+    ...rotatedIndices.sort((a, b) => b - a).map(index => `${path}.${index}`),
+    ...(activeExists ? [path] : [])
+  ];
+
+  let previousState: ChainState | undefined;
+  let previousFileSha256: string | undefined;
+  let activeText = "";
+
+  for (let index = 0; index < segmentPaths.length; index++) {
+    const segmentPath = segmentPaths[index]!;
+    const text = fsSync.readFileSync(segmentPath, "utf8");
+    if (segmentPath === path) activeText = text;
+
+    const isOldestRetained = index === 0 && rotatedIndices.length > 0;
+    const expectedPrevious = isOldestRetained
+      ? undefined
+      : previousState?.previousEntryHash ?? GENESIS_HASH;
+    const expectedSequence = isOldestRetained ? undefined : previousState?.sequence ?? 0;
+    const verified = verifySegmentText(text, expectedPrevious, expectedSequence);
+
+    if (index > 0) {
+      const declaredPreviousFileSha = rotationPreviousFileSha(verified.firstRecord);
+      if (!declaredPreviousFileSha || declaredPreviousFileSha !== previousFileSha256) {
+        throw new Error("AUDIT_CHAIN_CORRUPT: rotation file hash anchor does not match retained predecessor");
+      }
+    } else if (rotatedIndices.length === 0 && verified.firstRecord) {
+      const firstPrevious = verified.firstRecord.previousEntryHash;
+      if (firstPrevious !== GENESIS_HASH) {
+        throw new Error("AUDIT_CHAIN_CORRUPT: active audit chain does not begin at genesis");
+      }
+    }
+
+    previousState = verified.chain;
+    previousFileSha256 = verified.fileSha256;
+  }
+
+  const currentFileHash = createHash("sha256");
+  currentFileHash.update(activeText, "utf8");
+  return {
+    chain: previousState ?? { sequence: 0, previousEntryHash: GENESIS_HASH },
+    currentFileBytes: Buffer.byteLength(activeText, "utf8"),
     currentFileHash
   };
 }
@@ -143,7 +238,7 @@ export class AuditLog {
 
     if (this.enabled && this.path) {
       try {
-        const recovered = recoverChain(this.path);
+        const recovered = recoverChain(this.path, this.maxRotatedFiles);
         this.chain = recovered.chain;
         this.currentFileBytes = recovered.currentFileBytes;
         this.currentFileHash = recovered.currentFileHash;
@@ -172,13 +267,24 @@ export class AuditLog {
     this.chain = { sequence: full.sequence, previousEntryHash: entryHash };
     if (this.enabled && this.path) {
       const line = `${JSON.stringify({ ...full, previousEntryHash: previousHash, entryHash })}\n`;
-      void this.write(line);
+      this.write(line);
     }
+    return full;
+  }
+
+  /**
+   * Records a safety-critical event and does not resolve until its audit append
+   * (and any required rotation) is durable from the process perspective.
+   */
+  async recordCritical(entry: Omit<AuditEntry, "sequence" | "timestamp">): Promise<AuditEntry> {
+    const full = this.record(entry);
+    await this.flush();
     return full;
   }
 
   async flush(): Promise<void> {
     await this.tail;
+    if (this.startupError) throw new Error(this.startupError);
   }
 
   private writeBuffer = "";
@@ -206,8 +312,6 @@ export class AuditLog {
     const path = this.path!;
     const previousFileSha256 = `sha256:${this.currentFileHash.digest("hex")}`;
 
-    // Remove the oldest retained segment first so rename behavior is identical
-    // on Windows and POSIX, including maxRotatedFiles === 1.
     await rm(`${path}.${this.maxRotatedFiles}`, { force: true });
     for (let i = this.maxRotatedFiles - 1; i >= 1; i--) {
       const from = `${path}.${i}`;
@@ -244,6 +348,7 @@ export async function verifyAuditChain(path: string): Promise<{ ok: boolean; ent
   try { text = await readFile(path, "utf8"); } catch { return { ok: true, entries: 0 }; }
 
   let expectedPrevious: string | undefined;
+  let expectedSequence: number | undefined;
   let anchor: string | undefined;
   let finalHash: string | undefined;
   let count = 0;
@@ -257,8 +362,12 @@ export async function verifyAuditChain(path: string): Promise<{ ok: boolean; ent
 
     const verified = verifyLine(parsed, expectedPrevious);
     if (!verified.ok) return { ok: false, entries: count, brokenAt: count, anchor, finalHash };
+    if (expectedSequence !== undefined && verified.sequence !== expectedSequence + 1) {
+      return { ok: false, entries: count, brokenAt: count, anchor, finalHash };
+    }
     if (anchor === undefined) anchor = verified.previousEntryHash;
     expectedPrevious = verified.entryHash;
+    expectedSequence = verified.sequence;
     finalHash = verified.entryHash;
   }
 
