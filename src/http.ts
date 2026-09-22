@@ -109,26 +109,73 @@ async function readBoundedBody(
   if (typeof contentLength === "string") {
     const declared = Number(contentLength);
     if (Number.isFinite(declared) && declared > maxBytes) {
+      // Keep the socket usable long enough to return a 413. Destroying or
+      // abandoning IncomingMessage here can prevent the client from receiving
+      // the response, especially for keep-alive/chunked clients.
+      req.resume();
       throw new RequestBodyTooLargeError(`Request body exceeds ${maxBytes} bytes`);
     }
   }
 
-  const chunks: Buffer[] = [];
-  let total = 0;
-  for await (const chunk of req) {
-    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-    total += buffer.length;
-    if (total > maxBytes) {
-      throw new RequestBodyTooLargeError(`Request body exceeds ${maxBytes} bytes`);
-    }
-    chunks.push(buffer);
-  }
-  if (!chunks.length) return new ArrayBuffer(0);
-  const combined = Buffer.concat(chunks);
-  return combined.buffer.slice(
-    combined.byteOffset,
-    combined.byteOffset + combined.byteLength
-  ) as ArrayBuffer;
+  return await new Promise<ArrayBuffer>((resolve, rejectBody) => {
+    const chunks: Buffer[] = [];
+    let total = 0;
+    let settled = false;
+
+    const cleanup = () => {
+      req.off("data", onData);
+      req.off("end", onEnd);
+      req.off("error", onError);
+      req.off("aborted", onAborted);
+    };
+
+    const fail = (error: Error, drain = false) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if (drain && !req.destroyed) req.resume();
+      rejectBody(error);
+    };
+
+    const onData = (chunk: Buffer | string) => {
+      if (settled) return;
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      total += buffer.length;
+      if (total > maxBytes) {
+        fail(
+          new RequestBodyTooLargeError(`Request body exceeds ${maxBytes} bytes`),
+          true
+        );
+        return;
+      }
+      chunks.push(buffer);
+    };
+
+    const onEnd = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if (!chunks.length) {
+        resolve(new ArrayBuffer(0));
+        return;
+      }
+      const combined = Buffer.concat(chunks);
+      resolve(
+        combined.buffer.slice(
+          combined.byteOffset,
+          combined.byteOffset + combined.byteLength
+        ) as ArrayBuffer
+      );
+    };
+
+    const onError = (error: Error) => fail(error);
+    const onAborted = () => fail(new Error("Request body was aborted by the client"));
+
+    req.on("data", onData);
+    req.once("end", onEnd);
+    req.once("error", onError);
+    req.once("aborted", onAborted);
+  });
 }
 
 function requestHeaders(req: http.IncomingMessage): Headers {
