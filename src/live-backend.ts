@@ -22,6 +22,12 @@ const IDEMPOTENT_READS = new Set([
   "find_operations", "verify_change"
 ]);
 
+const REVISION_CACHEABLE_READS = new Set([
+  "get_active_part", "list_operations", "get_operation", "get_operation_parameters",
+  "list_tools", "get_stock", "get_wcs", "get_machine_context", "get_programming_context",
+  "find_operations", "verify_change"
+]);
+
 const READ_DEADLINES_MS: Record<string, number> = {
   mastercam_status: 2000,
   mastercam_capabilities: 5000,
@@ -30,8 +36,14 @@ const READ_DEADLINES_MS: Record<string, number> = {
 const DEFAULT_READ_DEADLINE_MS = 10_000;
 const MUTATION_DEADLINE_MS = 60_000;
 const FAST_CACHE_TTL_MS = 250;
+const REVISION_CACHE_TTL_MS = 1000;
 
 type CachedRead = { expiresAt: number; response: BridgeResponse };
+type ReadFlight = {
+  promise: Promise<BridgeResponse>;
+  controller: AbortController;
+  waiters: number;
+};
 
 function canonical(value: unknown): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
@@ -45,16 +57,16 @@ export type LiveBackendOptions = BridgeClientOptions;
 export class LiveBackend implements Backend {
   private readonly client: BridgeClient;
   private readonly scheduler = new Scheduler({ maxConcurrentReads: 4, maxConcurrentMutations: 1 });
-  private readonly inFlightReads = new Map<string, Promise<BridgeResponse>>();
-  private readonly fastCache = new Map<string, CachedRead>();
+  private readonly inFlightReads = new Map<string, ReadFlight>();
+  private readonly readCache = new Map<string, CachedRead>();
   private readonly unsubscribeEvents: () => void;
 
   constructor(options: LiveBackendOptions) {
     this.client = new BridgeClient(options);
     this.unsubscribeEvents = this.client.onEvent(() => {
-      // Native document/selection/toolpath events become authoritative cache
-      // invalidation once release-specific adapters begin emitting them.
-      this.fastCache.clear();
+      // Release adapters can emit document/selection/toolpath events. Until
+      // then, revision-bound entries also carry a short TTL as a fail-safe.
+      this.readCache.clear();
     });
   }
 
@@ -91,7 +103,7 @@ export class LiveBackend implements Backend {
         )
       });
 
-      if (lane === "mutation") this.fastCache.clear();
+      if (lane === "mutation") this.readCache.clear();
       return this.envelope(request, response);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -127,33 +139,91 @@ export class LiveBackend implements Backend {
   ): Promise<BridgeResponse> {
     if (!idempotentRead) {
       return withRetry(
-        { idempotent: false, maxAttempts: 1 },
-        () => this.client.call(tool, args, deadlineMs, signal, idempotencyKey)
+        { idempotent: false, maxAttempts: 1, deadlineMs },
+        (_attempt, remainingMs) => this.client.call(tool, args, remainingMs, signal, idempotencyKey)
       );
     }
 
     const key = `${tool}:${canonical(args ?? {})}`;
-    const cached = this.fastCache.get(key);
-    if (cached && cached.expiresAt > Date.now()) return Promise.resolve(cached.response);
-    if (cached) this.fastCache.delete(key);
+    const cached = this.readCache.get(key);
+    if (cached && cached.expiresAt > Date.now()) return this.resolveCached(cached.response, signal);
+    if (cached) this.readCache.delete(key);
 
-    const existing = this.inFlightReads.get(key);
-    if (existing) return existing;
+    let flight = this.inFlightReads.get(key);
+    if (!flight) {
+      const controller = new AbortController();
+      const promise = withRetry(
+        { idempotent: true, maxAttempts: 3, deadlineMs },
+        (_attempt, remainingMs) => this.client.call(
+          tool,
+          args,
+          remainingMs,
+          controller.signal,
+          idempotencyKey
+        )
+      ).then(response => {
+        this.cacheSuccessfulRead(key, tool, response);
+        return response;
+      }).finally(() => {
+        const current = this.inFlightReads.get(key);
+        if (current?.promise === promise) this.inFlightReads.delete(key);
+      });
+      flight = { promise, controller, waiters: 0 };
+      this.inFlightReads.set(key, flight);
+    }
 
-    const promise = withRetry(
-      { idempotent: true, maxAttempts: 3, deadlineMs },
-      (_attempt, remainingMs) => this.client.call(tool, args, remainingMs, signal, idempotencyKey)
-    ).then(response => {
-      if (tool === "mastercam_status" || tool === "mastercam_capabilities") {
-        this.fastCache.set(key, { expiresAt: Date.now() + FAST_CACHE_TTL_MS, response });
+    return this.waitForFlight(flight, signal);
+  }
+
+  private cacheSuccessfulRead(key: string, tool: string, response: BridgeResponse): void {
+    if (tool === "mastercam_status" || tool === "mastercam_capabilities") {
+      this.readCache.set(key, { expiresAt: Date.now() + FAST_CACHE_TTL_MS, response });
+      return;
+    }
+    if (response.documentRevision && REVISION_CACHEABLE_READS.has(tool)) {
+      this.readCache.set(key, { expiresAt: Date.now() + REVISION_CACHE_TTL_MS, response });
+    }
+  }
+
+  private resolveCached(response: BridgeResponse, signal?: AbortSignal): Promise<BridgeResponse> {
+    if (signal?.aborted) {
+      return Promise.reject(new Error("CANCELLED: request cancelled by client"));
+    }
+    return Promise.resolve(response);
+  }
+
+  private waitForFlight(flight: ReadFlight, signal?: AbortSignal): Promise<BridgeResponse> {
+    flight.waiters++;
+    return new Promise<BridgeResponse>((resolve, reject) => {
+      let settled = false;
+
+      const finish = (error?: unknown, response?: BridgeResponse) => {
+        if (settled) return;
+        settled = true;
+        signal?.removeEventListener("abort", onAbort);
+        flight.waiters = Math.max(0, flight.waiters - 1);
+        if (error !== undefined) reject(error);
+        else if (response) resolve(response);
+        else reject(new Error("BACKEND_UNAVAILABLE: shared read completed without a response"));
+      };
+
+      const onAbort = () => {
+        finish(new Error("CANCELLED: request cancelled by client"));
+        if (flight.waiters === 0 && !flight.controller.signal.aborted) {
+          flight.controller.abort(new Error("CANCELLED: all coalesced read callers cancelled"));
+        }
+      };
+
+      if (signal?.aborted) {
+        onAbort();
+        return;
       }
-      return response;
-    }).finally(() => {
-      if (this.inFlightReads.get(key) === promise) this.inFlightReads.delete(key);
+      signal?.addEventListener("abort", onAbort, { once: true });
+      flight.promise.then(
+        response => finish(undefined, response),
+        error => finish(error)
+      );
     });
-
-    this.inFlightReads.set(key, promise);
-    return promise;
   }
 
   private envelope(request: { id: string; tool: string }, response: BridgeResponse): ToolResult {
@@ -170,7 +240,10 @@ export class LiveBackend implements Backend {
 
   async close(): Promise<void> {
     this.unsubscribeEvents();
-    this.fastCache.clear();
+    this.readCache.clear();
+    for (const flight of this.inFlightReads.values()) {
+      if (!flight.controller.signal.aborted) flight.controller.abort();
+    }
     this.inFlightReads.clear();
     await this.client.close();
   }
