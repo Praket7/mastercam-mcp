@@ -134,6 +134,14 @@ export class ApprovalLedger {
     return record;
   }
 
+  /** Removes a transaction and any rollback receipts if a mutation is compensated. */
+  discardApplied(transactionId: string): void {
+    this.applied.delete(transactionId);
+    for (const [rollbackId, rollback] of this.rollbacks) {
+      if (rollback.rollbackOf === transactionId) this.rollbacks.delete(rollbackId);
+    }
+  }
+
   /** Creates a one-use rollback receipt bound to the applied transaction. */
   createRollback(transactionId: string): RollbackRecord {
     this.evict();
@@ -181,9 +189,16 @@ export class ApprovalLedger {
 
   consumeRollback(transactionId: string): RollbackRecord {
     const record = this.peekRollback(transactionId);
-    record.used = true;
-    this.rollbacks.delete(record.transactionId);
+    this.commitRollback(record.transactionId);
     return record;
+  }
+
+  /** Commit a rollback receipt that was already validated before the state change. */
+  commitRollback(transactionId: string): void {
+    const record = this.rollbacks.get(transactionId);
+    if (!record) throw new Error("APPROVAL_TOKEN_INVALID: rollback receipt disappeared before commit");
+    record.used = true;
+    this.rollbacks.delete(transactionId);
   }
 
   /** Idempotency: repeat calls with the same key return the original outcome only if identity matches. */
