@@ -23,6 +23,7 @@ ProgramData/
 *.bak
 *.tmp
 *.log
+*.jsonl
 user-data/
 credentials.json
 cookies.sqlite
