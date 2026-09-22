@@ -47,6 +47,43 @@ namespace MastercamMcp.Protocol.Tests
         }
     }
 
+    internal sealed class BlockingAdapter : IMastercamAdapter, IDisposable
+    {
+        private readonly ManualResetEventSlim entered = new ManualResetEventSlim(false);
+        private readonly ManualResetEventSlim release = new ManualResetEventSlim(false);
+
+        public AdapterInfo Info => new AdapterInfo
+        {
+            AdapterVersion = "blocking-1.0",
+            MastercamVersion = "2026",
+            Runtime = "test",
+            ProtocolVersion = BridgeRequest.CurrentProtocolVersion
+        };
+
+        public IReadOnlyList<Capability> Capabilities() => new List<Capability>
+        {
+            new Capability { Name = "mastercam_status", Supported = true, RiskClass = RiskClass.Read, Tier = CapabilityTier.LiveReadVerified, MappingVersion = 1 }
+        };
+
+        public AdapterResult Invoke(string tool, string argumentsJson, string requestId, CancellationToken cancellationToken)
+        {
+            entered.Set();
+            // Intentionally ignores the token while blocked. This models a vendor API
+            // call that cannot be interrupted until it returns to a safe boundary.
+            release.Wait(TimeSpan.FromSeconds(10));
+            return AdapterResult.Success(new { connected = true });
+        }
+
+        public bool WaitUntilEntered(TimeSpan timeout) => entered.Wait(timeout);
+        public void Release() => release.Set();
+        public void Dispose()
+        {
+            release.Set();
+            entered.Dispose();
+            release.Dispose();
+        }
+    }
+
     public class RouterTests
     {
         private static RequestRouter NewRouter() => new RequestRouter(new StubAdapter(), "2026");
@@ -159,6 +196,43 @@ namespace MastercamMcp.Protocol.Tests
             Assert.NotNull(conflict.ImmediateResponse);
             Assert.Contains("IDEMPOTENCY_CONFLICT", conflict.ImmediateResponse);
             Assert.Equal(1, adapter.MutationInvocations);
+        }
+
+        [Fact]
+        public async Task QueueOverloadIsRejectedInsteadOfGrowingWithoutBound()
+        {
+            using var adapter = new BlockingAdapter();
+            using var router = new RequestRouter(adapter, "2026", maxQueuedCommands: 1);
+
+            var active = router.Handle("{\"type\":\"request\",\"protocolVersion\":2,\"requestId\":\"q1\",\"tool\":\"mastercam_status\",\"arguments\":{}}");
+            Assert.True(adapter.WaitUntilEntered(TimeSpan.FromSeconds(2)));
+
+            var queued = router.Handle("{\"type\":\"request\",\"protocolVersion\":2,\"requestId\":\"q2\",\"tool\":\"mastercam_status\",\"arguments\":{}}");
+            Assert.NotNull(queued.Pending);
+
+            var rejected = router.Handle("{\"type\":\"request\",\"protocolVersion\":2,\"requestId\":\"q3\",\"tool\":\"mastercam_status\",\"arguments\":{}}");
+            Assert.NotNull(rejected.ImmediateResponse);
+            Assert.Contains("RATE_LIMITED", rejected.ImmediateResponse);
+
+            adapter.Release();
+            Assert.True((await active.Pending).Ok);
+            Assert.True((await queued.Pending).Ok);
+        }
+
+        [Fact]
+        public async Task LateAdapterSuccessAfterCancellationIsReportedAsCancelled()
+        {
+            using var adapter = new BlockingAdapter();
+            using var router = new RequestRouter(adapter, "2026", maxQueuedCommands: 1);
+
+            var outcome = router.Handle("{\"type\":\"request\",\"protocolVersion\":2,\"requestId\":\"late\",\"tool\":\"mastercam_status\",\"arguments\":{}}");
+            Assert.True(adapter.WaitUntilEntered(TimeSpan.FromSeconds(2)));
+            router.Cancel("late");
+            adapter.Release();
+
+            var response = await outcome.Pending;
+            Assert.False(response.Ok);
+            Assert.Equal(ErrorCodes.Cancelled, response.Error.Code);
         }
     }
 }

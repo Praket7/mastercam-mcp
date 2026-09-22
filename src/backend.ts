@@ -48,7 +48,6 @@ const RPM = "rpm" as const;
 
 function toFeed(value: unknown): FeedRate {
   if (typeof value === "number" && Number.isFinite(value) && value > 0) return { value, unit: MM_PER_MIN };
-  // Already a structured quantity: keep it, validating the shape.
   if (value && typeof value === "object") {
     const candidate = value as { value?: unknown; unit?: unknown };
     if (typeof candidate.value === "number" && Number.isFinite(candidate.value) && candidate.value > 0 && typeof candidate.unit === "string") {
@@ -81,12 +80,11 @@ function errorResult(tool: string, error: MastercamErrorImpl | Error): ToolResul
   if (error instanceof MastercamErrorImpl) {
     return { ok: false, tool, error: { code: error.code, message: error.message, retryable: error.retryable, ...(error.remediation ? { remediation: error.remediation } : {}) } };
   }
-  // Errors thrown as "CODE: message" (e.g. from the approval ledger) keep their code.
   const match = /^([A-Z_]+):\s*(.+)$/.exec(error.message);
   if (match) {
     const code = match[1] ?? "BACKEND_UNAVAILABLE";
     const message = match[2] ?? error.message;
-    const retryable = code === "TIMEOUT" || code === "BACKEND_UNAVAILABLE" || code === "RATE_LIMITED";
+    const retryable = code === "TIMEOUT" || code === "BACKEND_UNAVAILABLE" || code === "RATE_LIMITED" || code === "AUDIT_WRITE_FAILED";
     return { ok: false, tool, error: { code, message, retryable } };
   }
   return { ok: false, tool, error: { code: "BACKEND_UNAVAILABLE", message: error.message, retryable: true } };
@@ -143,7 +141,6 @@ export class MockBackend implements Backend {
     const args = (request.arguments ?? {}) as Record<string, unknown>;
     const tool = request.tool;
 
-    // ---- environment -------------------------------------------------
     if (tool === "mastercam_status") return this.ok(request, {
       connected: true,
       backend: "mock",
@@ -233,8 +230,13 @@ export class MockBackend implements Backend {
     if (tool === "verify_change") {
       const op = this.resolveTarget(args);
       const expected = args.expected as { feedRate?: unknown; spindleSpeed?: unknown } | undefined;
-      const documentRevision = typeof args.documentRevision === "string" ? args.documentRevision : undefined;
+      const expectedRevision = typeof args.documentRevision === "string" ? args.documentRevision : undefined;
+      const transactionId = typeof args.transactionId === "string" ? args.transactionId : undefined;
+      const linkedTransaction = transactionId ? this.ledger.peekApplied(transactionId) : undefined;
 
+      if (linkedTransaction && linkedTransaction.operationId !== Number(op.id)) {
+        throw new MastercamErrorImpl("VALIDATION_FAILED", "transactionId belongs to a different operation");
+      }
       if (!expected || typeof expected !== "object") {
         throw new MastercamErrorImpl("VALIDATION_FAILED", "verify_change requires an expected object containing feedRate or spindleSpeed");
       }
@@ -262,10 +264,21 @@ export class MockBackend implements Backend {
         throw new MastercamErrorImpl("VALIDATION_FAILED", "verify_change expected object must contain feedRate or spindleSpeed");
       }
 
-      if (documentRevision && documentRevision !== this.revision) {
+      if (expectedRevision && expectedRevision !== this.revision) {
         overallPass = false;
-        checks.documentRevision = { pass: false, expected: documentRevision, actual: this.revision };
+        checks.documentRevision = { pass: false, expected: expectedRevision, actual: this.revision };
       }
+
+      await this.audit.recordCritical({
+        requestId: request.id,
+        ...(transactionId ? { transactionId } : {}),
+        tool: request.tool,
+        target: { operationId: op.id },
+        policy: { action: "verify", reread: true },
+        ...(linkedTransaction ? { beforeHash: linkedTransaction.beforeHash } : {}),
+        afterHash: sha256Of({ feedRate: currentFeed, spindleSpeed: currentSpeed, documentRevision: this.revision }),
+        verified: overallPass
+      });
 
       return {
         ok: overallPass,
@@ -276,7 +289,8 @@ export class MockBackend implements Backend {
           checks,
           reread: true,
           documentRevision: this.revision,
-          verification: overallPass ? "verified" : "mismatch"
+          verification: overallPass ? "verified" : "mismatch",
+          ...(transactionId ? { transactionId } : {})
         }
       };
     }
@@ -295,25 +309,20 @@ export class MockBackend implements Backend {
       return { ok: pass, tool: request.tool, data: { pass, path, actual: value, expected: args.equals, operationId: op.id } };
     }
 
-    // ---- mutation workflow -------------------------------------------
     if (tool === "preview_operation_parameters") return this.scheduler.schedule({ lane: "read", documentKey: this.documentKey, run: () => this.previewOperation(request, args) });
     if (tool === "apply_operation_parameter_preview") return this.scheduler.schedule({ lane: "mutation", documentKey: this.documentKey, run: () => this.applyPreview(request, args) });
     if (tool === "rollback_change") return this.scheduler.schedule({ lane: "mutation", documentKey: this.documentKey, run: () => this.rollback(request, args) });
 
-    // ---- advanced ------------------------------------------------------
     if (tool === "regenerate_toolpath") return this.scheduler.schedule({ lane: "mutation", documentKey: this.documentKey, run: () => this.regenerate(request, args) });
     if (tool === "run_simulation") return this.ok(request, { state: "complete", seconds: 3, collisions: 0, warnings: [], provenance: { fixture: true, note: "Fixture simulation is not evidence of live machine safety" } });
     if (tool === "detect_collisions") return this.ok(request, { collisions: [], checkedOperations: this.targetIds(args) });
 
-    // ---- diagnostics / shop -------------------------------------------
     if (tool === "get_version_report") return this.ok(request, { mastercam: "fixture", netHook: "fixture", supported: ["mock"], liveMappingsVerified: false });
     if (tool === "get_fixture_info") return this.ok(request, { backend: "mock", fixture: true, replayable: true, liveMastercamRequired: false, limitations: ["Geometry and kinematics are synthetic", "Collision results are not evidence of machine safety"] });
     if (tool === "get_audit_history") return this.ok(request, { note: "Audit entries are append-only on disk; see MASTERCAM_MCP_AUDIT_PATH", documentRevision: this.revision });
 
     return { ok: false, tool, error: { code: "UNSUPPORTED_TOOL", message: `Tool ${tool} is not implemented by the mock backend`, remediation: "See mastercam_capabilities for supported tools" } };
   }
-
-  // ---- mutation internals ---------------------------------------------
 
   private async previewOperation(request: Request, args: Record<string, unknown>): Promise<ToolResult> {
     const op = this.requireExactTarget(args.operationId);
@@ -384,6 +393,25 @@ export class MockBackend implements Backend {
     this.revision = documentRevision(this.operations);
     const applied = this.ledger.recordApply(preview);
     const rollback = this.ledger.createRollback(applied.transactionId);
+
+    try {
+      await this.audit.recordCritical({
+        requestId: request.id,
+        transactionId: applied.transactionId,
+        tool: request.tool,
+        target: { operationId: op.id },
+        policy: { action: "apply", idempotencyKey },
+        beforeHash: applied.beforeHash,
+        afterHash: applied.afterHash,
+        verified: false
+      });
+    } catch (error) {
+      applyQuantity(op, applied.before);
+      this.revision = documentRevision(this.operations);
+      this.ledger.discardApplied(applied.transactionId);
+      throw new Error(`AUDIT_WRITE_FAILED: mutation was reverted because its critical audit record could not be persisted: ${error instanceof Error ? error.message : String(error)}`);
+    }
+
     const responseData = {
       applied: true,
       operationId: op.id,
@@ -402,17 +430,6 @@ export class MockBackend implements Backend {
     if (idempotencyKey) {
       this.ledger.rememberIdempotency(idempotencyKey, request.tool, actionIdentity, actionIdentity, responseData);
     }
-
-    this.audit.record({
-      requestId: request.id,
-      transactionId: applied.transactionId,
-      tool: request.tool,
-      target: { operationId: op.id },
-      policy: { action: "apply", idempotencyKey },
-      beforeHash: applied.beforeHash,
-      afterHash: applied.afterHash,
-      verified: true
-    });
     return this.ok(request, responseData);
   }
 
@@ -431,18 +448,35 @@ export class MockBackend implements Backend {
     const op = this.requireExactTarget(record.operationId);
     const currentFeed = operationFeed(op);
     const currentSpeed = operationSpeed(op);
-    const after = record.restoredSource ?? record.restored;
+    const sourceState = record.restoredSource ?? record.restored;
     const matchesAfter =
-      (after.feedRate === undefined || sameFeed(currentFeed, after.feedRate as FeedRate)) &&
-      (after.spindleSpeed === undefined ||
-        (currentSpeed.value === after.spindleSpeed.value && currentSpeed.unit === after.spindleSpeed.unit));
+      (sourceState.feedRate === undefined || sameFeed(currentFeed, sourceState.feedRate as FeedRate)) &&
+      (sourceState.spindleSpeed === undefined ||
+        (currentSpeed.value === sourceState.spindleSpeed.value && currentSpeed.unit === sourceState.spindleSpeed.unit));
     if (!matchesAfter) {
       throw new MastercamErrorImpl("STALE_PREVIEW", "Operation state changed after the transaction; rollback refused");
     }
 
-    this.ledger.consumeRollback(transactionId);
     const restored = applyQuantity(op, record.restored);
     this.revision = documentRevision(this.operations);
+    try {
+      await this.audit.recordCritical({
+        requestId: request.id,
+        transactionId: record.transactionId,
+        tool: request.tool,
+        target: { operationId: op.id },
+        policy: { action: "rollback", idempotencyKey, rollbackOf: record.rollbackOf },
+        beforeHash: sha256Of(sourceState),
+        afterHash: sha256Of(record.restored),
+        verified: false
+      });
+    } catch (error) {
+      applyQuantity(op, sourceState);
+      this.revision = documentRevision(this.operations);
+      throw new Error(`AUDIT_WRITE_FAILED: rollback was reverted because its critical audit record could not be persisted: ${error instanceof Error ? error.message : String(error)}`);
+    }
+
+    this.ledger.commitRollback(record.transactionId);
     const responseData = {
       applied: true,
       operationId: op.id,
@@ -454,14 +488,6 @@ export class MockBackend implements Backend {
     if (idempotencyKey) {
       this.ledger.rememberIdempotency(idempotencyKey, request.tool, actionIdentity, actionIdentity, responseData);
     }
-    this.audit.record({
-      requestId: request.id,
-      transactionId: record.transactionId,
-      tool: request.tool,
-      target: { operationId: op.id },
-      policy: { action: "rollback", idempotencyKey },
-      verified: true
-    });
     return this.ok(request, responseData);
   }
 
@@ -478,27 +504,45 @@ export class MockBackend implements Backend {
     }
 
     const targets = ids.map(id => this.requireExactTarget(id));
+    const beforeState = targets.map(op => ({ id: op.id, toolpathDirty: op.toolpathDirty }));
     for (const op of targets) op.toolpathDirty = false;
+    this.revision = documentRevision(this.operations);
+    const afterState = targets.map(op => ({ id: op.id, toolpathDirty: op.toolpathDirty }));
+
+    try {
+      await this.audit.recordCritical({
+        requestId: request.id,
+        tool: request.tool,
+        target: { operationIds: targets.map(op => op.id) },
+        policy: { action: "regenerate", idempotencyKey },
+        beforeHash: sha256Of(beforeState),
+        afterHash: sha256Of(afterState),
+        verified: false
+      });
+    } catch (error) {
+      for (let index = 0; index < targets.length; index++) {
+        const op = targets[index];
+        const previous = beforeState[index]?.toolpathDirty;
+        if (!op) continue;
+        if (previous === undefined) delete op.toolpathDirty;
+        else op.toolpathDirty = previous;
+      }
+      this.revision = documentRevision(this.operations);
+      throw new Error(`AUDIT_WRITE_FAILED: regeneration state was reverted because its critical audit record could not be persisted: ${error instanceof Error ? error.message : String(error)}`);
+    }
+
     const responseData = {
       operationIds: targets.map(op => op.id),
       regenerated: true,
-      progress: ["queued", "generating", "complete"]
+      progress: ["queued", "generating", "complete"],
+      documentRevision: this.revision
     };
     if (idempotencyKey) {
       this.ledger.rememberIdempotency(idempotencyKey, request.tool, targetHash, argumentHash, responseData);
     }
-    this.audit.record({
-      requestId: request.id,
-      tool: request.tool,
-      target: { operationIds: targets.map(op => op.id) },
-      policy: { action: "regenerate", idempotencyKey }
-    });
     return this.ok(request, responseData);
   }
 
-  // ---- helpers ---------------------------------------------------------
-
-  /** Operation-specific tools require an explicit target even when only one operation exists. */
   private resolveTarget(args: Record<string, unknown>): Record<string, unknown> {
     if (args.operationId === undefined || args.operationId === null) {
       throw new MastercamErrorImpl("TARGET_REQUIRED", "operationId is required for operation-specific tools");
@@ -579,10 +623,8 @@ export class MockBackend implements Backend {
       safety: { liveVerified: false, note: "Fixture context cannot prove live machine safety" }
     };
   }
-
 }
 
 export function request(tool: string, args: Record<string, unknown> = {}): Request { return { id: randomUUID(), tool, arguments: args }; }
 
-// Re-export shared formatting for callers that want human summaries.
 export { formatFeed, formatSpindle, feedToMmPerMinute, newApprovalToken };

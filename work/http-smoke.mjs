@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import { request as httpRequest } from 'node:http';
+import { once } from 'node:events';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 
 const PORT = process.env.SMOKE_HTTP_PORT || '18990';
@@ -47,6 +48,17 @@ function chunkedOverflowStatus() {
     req.write('y'.repeat(700));
     req.end();
   });
+}
+
+async function stopChild() {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  child.kill('SIGTERM');
+  try {
+    await Promise.race([once(child, 'exit'), timeout(3000, 'HTTP smoke child shutdown')]);
+  } catch {
+    child.kill('SIGKILL');
+    await Promise.race([once(child, 'exit'), timeout(3000, 'HTTP smoke child kill')]).catch(() => undefined);
+  }
 }
 
 try {
@@ -116,5 +128,5 @@ try {
   console.log(JSON.stringify({ ok: false, error: String(error), stderr: stderr.slice(-400) }, null, 2));
   process.exitCode = 1;
 } finally {
-  child.kill();
+  await stopChild();
 }

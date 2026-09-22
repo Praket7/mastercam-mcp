@@ -28,7 +28,8 @@ namespace MastercamMcp.Core
     /// <summary>
     /// Parses bridge-v2 request/cancel envelopes and serializes all adapter execution
     /// through one worker thread. Transport reading remains independent so cancel
-    /// frames can be processed while a command is in flight.
+    /// frames can be processed while a command is in flight. Queue admission is
+    /// bounded so a blocked Mastercam API call cannot create unbounded memory growth.
     /// </summary>
     public sealed class RequestRouter : IDisposable
     {
@@ -41,14 +42,16 @@ namespace MastercamMcp.Core
         private readonly CapabilityRegistry registry;
         private readonly string mastercamVersion;
         private const int MaxIdempotencyEntries = 1024;
+        public const int DefaultMaxQueuedCommands = 128;
         private static readonly TimeSpan IdempotencyTtl = TimeSpan.FromMinutes(15);
 
-        public RequestRouter(IMastercamAdapter adapter, string mastercamVersion)
+        public RequestRouter(IMastercamAdapter adapter, string mastercamVersion, int maxQueuedCommands = DefaultMaxQueuedCommands)
         {
+            if (maxQueuedCommands <= 0) throw new ArgumentOutOfRangeException(nameof(maxQueuedCommands));
             this.adapter = adapter ?? throw new ArgumentNullException(nameof(adapter));
             this.mastercamVersion = mastercamVersion ?? "unknown";
             this.registry = new CapabilityRegistry(adapter);
-            this.queue = new BlockingCollection<Command>(new ConcurrentQueue<Command>());
+            this.queue = new BlockingCollection<Command>(new ConcurrentQueue<Command>(), maxQueuedCommands);
             this.inFlight = new ConcurrentDictionary<string, Command>(StringComparer.Ordinal);
             this.idempotency = new ConcurrentDictionary<string, IdempotencyRecord>(StringComparer.Ordinal);
             this.worker = new Thread(ExecuteLoop)
@@ -163,6 +166,7 @@ namespace MastercamMcp.Core
 
                 var isRead = capability.RiskClass == RiskClass.Read;
                 var command = new Command(request, isRead, this);
+                string admittedIdempotencyKey = null;
 
                 if (!isRead && !string.IsNullOrWhiteSpace(request.IdempotencyKey))
                 {
@@ -187,16 +191,36 @@ namespace MastercamMcp.Core
                         }
                         return new HandleOutcome { Pending = Replay(existing.Completion, request.RequestId) };
                     }
+                    admittedIdempotencyKey = request.IdempotencyKey;
                 }
 
                 this.inFlight[request.RequestId] = command;
-                this.queue.Add(command);
+                if (!this.queue.TryAdd(command))
+                {
+                    this.inFlight.TryRemove(request.RequestId, out _);
+                    if (!string.IsNullOrWhiteSpace(admittedIdempotencyKey))
+                    {
+                        this.idempotency.TryRemove(admittedIdempotencyKey, out _);
+                    }
+                    command.Source.Dispose();
+                    return HandleOutcome.Immediate(SerializeResponse(ErrorResponse(
+                        request.RequestId,
+                        request.Tool,
+                        ErrorCodes.RateLimited,
+                        "Mastercam command queue is full; retry after current work completes",
+                        true)));
+                }
                 return new HandleOutcome { Pending = AwaitCompletion(command) };
             }
             catch (JsonException ex)
             {
                 return HandleOutcome.Immediate(SerializeResponse(ErrorResponse(
                     null, null, ErrorCodes.InvalidJson, ex.Message)));
+            }
+            catch (InvalidOperationException ex)
+            {
+                return HandleOutcome.Immediate(SerializeResponse(ErrorResponse(
+                    null, null, ErrorCodes.BackendUnavailable, ex.Message, true)));
             }
             catch (Exception ex)
             {
@@ -307,6 +331,7 @@ namespace MastercamMcp.Core
                 command.Source.Token.ThrowIfCancellationRequested();
                 var arguments = request.Arguments?.ToJsonString() ?? "{}";
                 var result = this.adapter.Invoke(request.Tool, arguments, request.RequestId, command.Source.Token);
+                command.Source.Token.ThrowIfCancellationRequested();
                 if (result == null)
                 {
                     return ErrorResponse(request.RequestId, request.Tool, ErrorCodes.MastercamApiError, "Adapter returned no result");

@@ -54,7 +54,8 @@ export const VerifyChangeSchema = z.object({
     feedRate: FeedRateSchema.optional(),
     spindleSpeed: SpindleSpeedSchema.optional()
   }).strict().refine(v => v.feedRate !== undefined || v.spindleSpeed !== undefined, "At least one expected value must be provided"),
-  documentRevision: z.string().min(1).max(128).optional()
+  documentRevision: z.string().min(1).max(128).optional(),
+  transactionId: RollbackTokenSchema.optional()
 }).strict();
 
 export const verifyChangeOutputSchema = z.object({
@@ -63,7 +64,8 @@ export const verifyChangeOutputSchema = z.object({
   checks: z.record(z.string(), z.unknown()),
   reread: z.boolean(),
   documentRevision: z.string(),
-  verification: z.string()
+  verification: z.string(),
+  transactionId: z.string().optional()
 });
 
 export const previewOperationParametersOutputSchema = z.object({
