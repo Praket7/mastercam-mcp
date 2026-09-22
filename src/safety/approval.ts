@@ -126,6 +126,14 @@ export class ApprovalLedger {
     return applied;
   }
 
+  /** Validated lookup used to bind a later reread verification to the write it verifies. */
+  peekApplied(transactionId: string): ApplyRecord {
+    this.evict();
+    const record = this.applied.get(transactionId);
+    if (!record) throw new Error("APPROVAL_TOKEN_INVALID: unknown or expired applied transaction");
+    return record;
+  }
+
   /** Creates a one-use rollback receipt bound to the applied transaction. */
   createRollback(transactionId: string): RollbackRecord {
     this.evict();
