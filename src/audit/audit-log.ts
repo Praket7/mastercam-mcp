@@ -1,5 +1,5 @@
-import { createHash, randomUUID } from "node:crypto";
-import { appendFile, mkdir, stat, rename, readFile } from "node:fs/promises";
+import { createHash, randomUUID, type Hash } from "node:crypto";
+import { appendFile, mkdir, rename, readFile, rm } from "node:fs/promises";
 import * as fsSync from "node:fs";
 import { dirname, join } from "node:path";
 
@@ -20,6 +20,12 @@ export interface AuditEntry {
 interface ChainState {
   sequence: number;
   previousEntryHash: string;
+}
+
+interface RecoveredChain {
+  chain: ChainState;
+  currentFileBytes: number;
+  currentFileHash: Hash;
 }
 
 const GENESIS_HASH = "sha256:genesis";
@@ -77,9 +83,25 @@ function verifyLine(
   return { ok: recomputed === entryHash, sequence, entryHash, previousEntryHash };
 }
 
-function recoverChain(path: string): ChainState {
-  if (!fsSync.existsSync(path)) return { sequence: 0, previousEntryHash: GENESIS_HASH };
-  const text = fsSync.readFileSync(path, "utf8");
+function isEnoent(error: unknown): boolean {
+  return error instanceof Error && (error as NodeJS.ErrnoException).code === "ENOENT";
+}
+
+function recoverChain(path: string): RecoveredChain {
+  let text: string;
+  try {
+    text = fsSync.readFileSync(path, "utf8");
+  } catch (error) {
+    if (isEnoent(error)) {
+      return {
+        chain: { sequence: 0, previousEntryHash: GENESIS_HASH },
+        currentFileBytes: 0,
+        currentFileHash: createHash("sha256")
+      };
+    }
+    throw error;
+  }
+
   let expectedPrevious: string | undefined;
   let state: ChainState | undefined;
 
@@ -92,7 +114,13 @@ function recoverChain(path: string): ChainState {
     state = { sequence: verified.sequence, previousEntryHash: verified.entryHash };
   }
 
-  return state ?? { sequence: 0, previousEntryHash: GENESIS_HASH };
+  const currentFileHash = createHash("sha256");
+  currentFileHash.update(text, "utf8");
+  return {
+    chain: state ?? { sequence: 0, previousEntryHash: GENESIS_HASH },
+    currentFileBytes: Buffer.byteLength(text, "utf8"),
+    currentFileHash
+  };
 }
 
 export class AuditLog {
@@ -102,6 +130,8 @@ export class AuditLog {
   private readonly maxFileBytes: number;
   private readonly maxRotatedFiles: number;
   private startupError: string | undefined;
+  private currentFileBytes = 0;
+  private currentFileHash: Hash = createHash("sha256");
 
   constructor(options: AuditLogOptions = {}) {
     this.enabled = options.enabled ?? process.env.MASTERCAM_MCP_AUDIT !== "0";
@@ -113,7 +143,10 @@ export class AuditLog {
 
     if (this.enabled && this.path) {
       try {
-        this.chain = recoverChain(this.path);
+        const recovered = recoverChain(this.path);
+        this.chain = recovered.chain;
+        this.currentFileBytes = recovered.currentFileBytes;
+        this.currentFileHash = recovered.currentFileHash;
       } catch (error) {
         this.startupError = error instanceof Error ? error.message : String(error);
       }
@@ -159,6 +192,8 @@ export class AuditLog {
       if (!payload) return;
       await mkdir(dirname(this.path!), { recursive: true });
       await appendFile(this.path!, payload, "utf8");
+      this.currentFileBytes += Buffer.byteLength(payload, "utf8");
+      this.currentFileHash.update(payload, "utf8");
       await this.rotateIfNeeded();
     }).catch(error => {
       this.startupError = `AUDIT_WRITE_FAILED: ${error instanceof Error ? error.message : String(error)}`;
@@ -166,14 +201,22 @@ export class AuditLog {
   }
 
   private async rotateIfNeeded(): Promise<void> {
-    const path = this.path!;
-    const info = await stat(path);
-    if (info.size < this.maxFileBytes) return;
+    if (this.currentFileBytes < this.maxFileBytes) return;
 
+    const path = this.path!;
+    const previousFileSha256 = `sha256:${this.currentFileHash.digest("hex")}`;
+
+    // Remove the oldest retained segment first so rename behavior is identical
+    // on Windows and POSIX, including maxRotatedFiles === 1.
+    await rm(`${path}.${this.maxRotatedFiles}`, { force: true });
     for (let i = this.maxRotatedFiles - 1; i >= 1; i--) {
       const from = `${path}.${i}`;
       const to = `${path}.${i + 1}`;
-      try { await rename(from, to); } catch { }
+      try {
+        await rename(from, to);
+      } catch (error) {
+        if (!isEnoent(error)) throw error;
+      }
     }
     await rename(path, `${path}.1`);
 
@@ -184,17 +227,15 @@ export class AuditLog {
       requestId: "audit-rotation",
       tool: "audit_rotation",
       target: { previousFile: `${path}.1` },
-      policy: {
-        previousFileSha256: `sha256:${createHash("sha256").update(await readFile(`${path}.1`)).digest("hex")}`
-      }
+      policy: { previousFileSha256 }
     };
     const entryHash = sha256Of({ entry: stableStringify(rotationBody), previous: previousHash });
     this.chain = { sequence: rotationBody.sequence, previousEntryHash: entryHash };
-    await appendFile(
-      path,
-      `${JSON.stringify({ ...rotationBody, previousEntryHash: previousHash, entryHash })}\n`,
-      "utf8"
-    );
+    const rotationLine = `${JSON.stringify({ ...rotationBody, previousEntryHash: previousHash, entryHash })}\n`;
+    await appendFile(path, rotationLine, "utf8");
+    this.currentFileBytes = Buffer.byteLength(rotationLine, "utf8");
+    this.currentFileHash = createHash("sha256");
+    this.currentFileHash.update(rotationLine, "utf8");
   }
 }
 
