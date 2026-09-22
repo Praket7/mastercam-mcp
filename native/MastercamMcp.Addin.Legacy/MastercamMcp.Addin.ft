@@ -1,0 +1,16 @@
+# NET-Hook function table
+#----------------------------------------------------------
+# Name      MastercamMcp.Addin.ft
+# NETHook   MastercamMcp.Addin.dll
+#
+# Notes     This file must remain beside the add in in the Mastercam chooks folder.
+#----------------------------------------------------------
+
+APPLICATION "MastercamMcp"
+FUNC_DLL   "MastercamMcp.Addin.dll"
+RES_DLL    "SAME"
+CATEGORY   "Mastercam MCP"
+
+FUNCTION NET "Run"
+    dnTIP  "Mastercam MCP"
+END_FUNCTION

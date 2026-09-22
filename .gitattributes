@@ -1,0 +1,6 @@
+# Normalize line endings across OSes; the repo is developed on Windows, macOS,
+# and Linux and tests compare generated files byte-for-byte.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.ico binary

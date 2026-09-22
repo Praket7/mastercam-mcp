@@ -1,0 +1,66 @@
+{
+  "name": "mastercam-mcp",
+  "version": "0.2.0",
+  "description": "A secure local MCP bridge for a live Mastercam session",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Praket7/mastercam-mcp.git"
+  },
+  "homepage": "https://github.com/Praket7/mastercam-mcp#readme",
+  "bugs": {
+    "url": "https://github.com/Praket7/mastercam-mcp/issues"
+  },
+  "type": "module",
+  "packageManager": "pnpm@11.19.0",
+  "bin": {
+    "mastercam-mcp": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "native/MastercamMcp.Protocol/**/*",
+    "native/MastercamMcp.Core/**/*",
+    "native/MastercamMcp.Adapter.Abstractions/**/*",
+    "native/MastercamMcp.Addin.Legacy/**/*",
+    "native/MastercamMcp.Addin.2027/**/*",
+    "native/MastercamMcp.ApiCatalog/**/*",
+    "docs",
+    "install.ps1",
+    "README.md",
+    "LICENSE",
+    "SECURITY.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "node --test --import tsx test/*.test.ts test/integration/*.test.ts",
+    "lint": "eslint src test",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "docs:capabilities": "tsx scripts/generate-capabilities.ts",
+    "start": "node dist/server.js",
+    "start:http": "node dist/http.js",
+    "mock": "node dist/mock-backend.js",
+    "catalog": "node dist/catalog.js",
+    "smoke": "node work/smoke.mjs",
+    "smoke:http": "node work/http-smoke.mjs",
+    "prepack": "pnpm build"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "isomorphic-git": "^1.42.2",
+    "zod": "3.25.76"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "@types/node": "^22.15.0",
+    "eslint": "^9.39.5",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3",
+    "typescript-eslint": "^8.70.0"
+  },
+  "license": "Apache-2.0"
+}

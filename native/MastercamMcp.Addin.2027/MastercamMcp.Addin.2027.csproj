@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows10.0.17763.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <OutputType>Library</OutputType>
+    <AssemblyName>MastercamMcp.Addin</AssemblyName>
+    <RootNamespace>MastercamMcp.Addin</RootNamespace>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\MastercamMcp.Protocol\MastercamMcp.Protocol.csproj" />
+    <ProjectReference Include="..\MastercamMcp.Core\MastercamMcp.Core.csproj" />
+    <ProjectReference Include="..\MastercamMcp.Adapter.Abstractions\MastercamMcp.Adapter.Abstractions.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <Reference Include="Mastercam.App.Types">
+      <HintPath>$(MASTERCAM_ROOT)\NETHook10_0.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+  </ItemGroup>
+</Project>
