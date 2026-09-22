@@ -113,10 +113,10 @@ async function testActivePart(ctx: TestContext): Promise<unknown> {
 
 async function testOperations(ctx: TestContext): Promise<unknown> {
   const result = requireOk(await ctx.backend.call({ id: "a3", tool: "list_operations", arguments: {} }), "list_operations");
-  const ops = result.data as Array<{ id: number; feedRate?: Quantity }>;
+  const ops = result.data as Array<{ id: number; feedRate?: Quantity; feed?: Quantity }>;
   if (!Array.isArray(ops) || !ops.length) throw new Error("list_operations returned empty list");
   ctx.operationIds = ops.map(op => op.id);
-  const firstFeed = ops[0]?.feedRate;
+  const firstFeed = ops[0]?.feedRate ?? ops[0]?.feed;
   if (firstFeed && Number.isFinite(firstFeed.value) && firstFeed.value > 0 && typeof firstFeed.unit === "string") {
     ctx.currentFeed = { value: firstFeed.value, unit: firstFeed.unit };
     ctx.changedFeed = { value: Number((firstFeed.value * 1.01).toPrecision(12)), unit: firstFeed.unit };

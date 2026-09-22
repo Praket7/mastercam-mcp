@@ -121,7 +121,7 @@ export class MockBackend implements Backend {
       ? fixture.operations.map((operation, index) => ({
           id: typeof operation.id === "number" ? operation.id : index + 1,
           ...operation,
-          feed: toFeed(operation.feed ?? initialFeed),
+          feed: toFeed(operation.feed ?? operation.feedRate ?? initialFeed),
           spindleSpeed: operation.spindleSpeed !== undefined ? toSpeed(operation.spindleSpeed) : toSpeed(12000)
         }))
       : [{ id: 4, name: "Facing", type: "mill", feed: toFeed(initialFeed), spindleSpeed: toSpeed(12000), tool: 1 }];
@@ -151,14 +151,21 @@ export class MockBackend implements Backend {
     if (tool === "get_geometry_summary") return this.ok(request, { solids: 1, surfaces: 6, curves: 12, boundingBox: { x: 100, y: 80, z: 25, unit: "mm" }, units: "mm" });
     if (tool === "get_selection") return this.ok(request, { operationIds: this.selected, count: this.selected.length });
     if (tool === "list_machine_groups" || tool === "get_machine_groups") return this.ok(request, [{ id: "mill", name: "Mill machine group", type: "mill" }]);
-    if (tool === "list_operations") return this.ok(request, this.operations.map(item => ({ ...item, feed: operationFeed(item), spindleSpeed: operationSpeed(item) })));
+    if (tool === "list_operations") return this.ok(request, this.operations.map(item => {
+      const feedRate = operationFeed(item);
+      return { ...item, feed: feedRate, feedRate, spindleSpeed: operationSpeed(item) };
+    }));
     if (tool === "find_operations") {
       const query = String(args.query ?? "").toLowerCase();
-      return this.ok(request, this.operations.filter(item => !query || JSON.stringify(item).toLowerCase().includes(query)).map(item => ({ ...item, feed: operationFeed(item), spindleSpeed: operationSpeed(item) })));
+      return this.ok(request, this.operations.filter(item => !query || JSON.stringify(item).toLowerCase().includes(query)).map(item => {
+        const feedRate = operationFeed(item);
+        return { ...item, feed: feedRate, feedRate, spindleSpeed: operationSpeed(item) };
+      }));
     }
     if (tool === "get_operation" || tool === "inspect") {
       const op = this.resolveTarget(args);
-      return this.ok(request, { ...op, feed: operationFeed(op), spindleSpeed: operationSpeed(op), documentRevision: this.revision, operationFingerprint: this.fingerprint(op) });
+      const feedRate = operationFeed(op);
+      return this.ok(request, { ...op, feed: feedRate, feedRate, spindleSpeed: operationSpeed(op), documentRevision: this.revision, operationFingerprint: this.fingerprint(op) });
     }
     if (tool === "explain_operation") {
       const op = this.resolveTarget(args);
