@@ -29,19 +29,14 @@ export function isLocalHost(hostHeader: string | undefined): boolean {
 }
 
 /**
- * Origin validation happens before authentication. Browser requests always
- * carry an Origin header; a non-browser MCP client normally sends none. Any
- * Origin that is not explicitly allow-listed is rejected with 403 (DNS
- * rebinding protection, audit HTTP-01/SEC-05); localhost requests without an
- * Origin stay reachable without a token for local development.
+ * Shared network boundary for every HTTP endpoint, including /health.
+ * Host/Origin validation precedes authentication so hostile browser/DNS
+ * rebinding traffic never reaches MCP or readiness handlers.
  */
-export function classifyRequest(
-  method: string | undefined,
-  url: string | undefined,
+export function classifyAccess(
   headers: { origin?: unknown; host?: unknown; authorization?: unknown },
   config: SecurityConfig
 ): RequestVerdict {
-  if (url !== "/mcp") return { status: 404, message: "Not found" };
   const origin = typeof headers.origin === "string" ? headers.origin : undefined;
   const host = typeof headers.host === "string" ? headers.host : undefined;
 
@@ -62,4 +57,14 @@ export function classifyRequest(
   }
 
   return { status: 200 };
+}
+
+export function classifyRequest(
+  _method: string | undefined,
+  url: string | undefined,
+  headers: { origin?: unknown; host?: unknown; authorization?: unknown },
+  config: SecurityConfig
+): RequestVerdict {
+  if (url !== "/mcp") return { status: 404, message: "Not found" };
+  return classifyAccess(headers, config);
 }

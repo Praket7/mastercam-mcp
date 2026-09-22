@@ -7,7 +7,7 @@ import { MockBackend } from "./backend.js";
 import { LiveBackend } from "./live-backend.js";
 import { createMcpServer } from "./mcp/create-server.js";
 import { selectedBackend } from "./platform.js";
-import { classifyRequest } from "./http-security.js";
+import { classifyAccess, classifyRequest } from "./http-security.js";
 import type { Backend } from "./backend.js";
 import { AuditLog } from "./audit/audit-log.js";
 import { loadConfig } from "./config.js";
@@ -109,6 +109,18 @@ async function handleRequest(
   res: http.ServerResponse
 ): Promise<void> {
   if (req.url === "/health") {
+    const access = classifyAccess(
+      {
+        origin: req.headers.origin,
+        host: req.headers.host,
+        authorization: req.headers.authorization
+      },
+      { token, allowedOrigins, remote }
+    );
+    if (access.status !== 200) {
+      reject(res, access.status, access.message ?? "Rejected");
+      return;
+    }
     res.writeHead(200, { "content-type": "application/json" });
     res.end(
       JSON.stringify({
