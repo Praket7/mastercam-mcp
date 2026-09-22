@@ -1,4 +1,4 @@
-import { z } from "zod";
+import * as z from "zod/v4";
 
 export const LinearTravelSchema = z.object({
   x: z.number().finite().positive().max(10_000),
@@ -114,10 +114,10 @@ export const ValidateMachineProfileOutputSchema = z.object({
     actual: z.unknown().optional(),
     severity: z.enum(["error", "warning", "info"]),
     message: z.string().optional()
-  })),
+  }).strict()),
   summary: z.object({
     errors: z.number().int().nonnegative(),
     warnings: z.number().int().nonnegative(),
     info: z.number().int().nonnegative()
-  })
+  }).strict()
 }).strict();

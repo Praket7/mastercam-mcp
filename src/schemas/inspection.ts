@@ -1,4 +1,4 @@
-import { z } from "zod";
+import * as z from "zod/v4";
 import { OperationIdSchema, OperationIdsSchema, ToolIdSchema, BoundedStringArray, OptionalText, emptySchema } from "./common.js";
 import { ValidateMachineProfileInputSchema } from "./machine.js";
 
@@ -45,6 +45,7 @@ export const listOperationsOutputSchema = z.array(z.object({
   name: z.string(),
   type: z.string(),
   feedRate: z.unknown(),
+  feed: z.unknown().optional(),
   spindleSpeed: z.unknown(),
   tool: z.number().optional(),
   toolpathDirty: z.boolean().optional()
@@ -64,7 +65,7 @@ export const getOperationOutputSchema = z.object({
 export const getOperationParametersSchema = z.object({ operationId: OperationIdSchema }).strict();
 export const getOperationParametersOutputSchema = z.object({
   operationId: z.number(),
-  parameters: z.record(z.unknown()),
+  parameters: z.record(z.string(), z.unknown()),
   documentRevision: z.string()
 });
 
@@ -88,7 +89,7 @@ export const getMachineContextSchema = emptySchema;
 export const getDirtyToolpathsSchema = z.object({ operationIds: optionalOperationIds }).strict();
 export const getSelectedEntitiesSchema = emptySchema;
 
-export const getToolpathStatusSchema = z.object({ operationId: optionalOperationId }).strict();
+export const getToolpathStatusSchema = z.object({ operationId: OperationIdSchema }).strict();
 export const estimateCycleTimeSchema = z.object({ operationIds: optionalOperationIds }).strict();
 export const compareToolpathsSchema = z.object({
   beforeOperationId: OperationIdSchema,
@@ -117,17 +118,17 @@ export const getFixtureInfoSchema = emptySchema;
 export const getMachineGroupsSchema = listMachineGroupsSchema;
 
 export const inspectSchema = z.object({
-  operationId: optionalOperationId,
+  operationId: OperationIdSchema,
   path: OptionalText(256)
 }).strict();
 
 export const measureSchema = z.object({
-  operationId: optionalOperationId,
+  operationId: OperationIdSchema,
   path: z.string().min(1).max(256).default("operation.feed")
 }).strict();
 
 export const assertSchema = z.object({
-  operationId: optionalOperationId,
+  operationId: OperationIdSchema,
   path: z.string().min(1).max(256).default("operation.feed"),
   equals: z.union([z.string().max(4096), z.number().finite(), z.boolean()]).optional()
 }).strict();
@@ -145,12 +146,12 @@ export const CompareToolDatabasesSchema = z.object({
 export const ValidateMachineProfileSchema = ValidateMachineProfileInputSchema;
 
 export const GenerateSetupSheetSchema = z.object({
-  part: z.record(z.unknown()).optional(),
-  machine: z.record(z.unknown()).optional(),
-  stock: z.record(z.unknown()).optional(),
-  wcs: z.record(z.unknown()).optional(),
-  operations: z.array(z.record(z.unknown())).max(500).optional(),
-  tools: z.array(z.record(z.unknown())).max(500).optional(),
+  part: z.record(z.string(), z.unknown()).optional(),
+  machine: z.record(z.string(), z.unknown()).optional(),
+  stock: z.record(z.string(), z.unknown()).optional(),
+  wcs: z.record(z.string(), z.unknown()).optional(),
+  operations: z.array(z.record(z.string(), z.unknown())).max(500).optional(),
+  tools: z.array(z.record(z.string(), z.unknown())).max(500).optional(),
   notes: BoundedStringArray(100).optional()
 }).strict();
 

@@ -91,3 +91,41 @@ test("AuditLog verifies hash chain", async () => {
   const verification = await verifyAuditChain(path);
   assert.ok(verification.ok);
 });
+
+test("AuditLog resumes a valid chain across restart", async () => {
+  const path = join(tmpdir(), `test-audit-restart-${Date.now()}.jsonl`);
+  const first = new AuditLog({ path, enabled: true });
+  first.record({ requestId: "r1", tool: "first" });
+  await first.flush();
+
+  const second = new AuditLog({ path, enabled: true });
+  assert.equal(second.integrityError, undefined);
+  second.record({ requestId: "r2", tool: "second" });
+  await second.flush();
+
+  const { verifyAuditChain } = await import("../src/audit/audit-log.js");
+  const verdict = await verifyAuditChain(path);
+  assert.equal(verdict.ok, true);
+  assert.equal(verdict.entries, 2);
+});
+
+test("AuditLog rotation preserves an anchored hash chain", async () => {
+  const path = join(tmpdir(), `test-audit-rotate-${Date.now()}.jsonl`);
+  const log = new AuditLog({ path, enabled: true, maxFileBytes: 350, maxRotatedFiles: 2 });
+  for (let i = 0; i < 8; i++) {
+    log.record({ requestId: `rot-${i}`, tool: "rotation_test", target: { i, padding: "x".repeat(80) } });
+  }
+  await log.flush();
+
+  const fs = await import("node:fs/promises");
+  const { verifyAuditChain } = await import("../src/audit/audit-log.js");
+  const current = await verifyAuditChain(path);
+  const rotated = await verifyAuditChain(`${path}.1`);
+  assert.equal(current.ok, true);
+  assert.equal(rotated.ok, true);
+  assert.ok(current.anchor);
+  assert.equal(current.anchor, rotated.finalHash);
+  await fs.rm(path, { force: true });
+  await fs.rm(`${path}.1`, { force: true });
+  await fs.rm(`${path}.2`, { force: true });
+});

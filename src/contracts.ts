@@ -14,13 +14,17 @@ export const TIER_ORDER: readonly CapabilityTier[] = [
 export type Profile = "read" | "write" | "all";
 export const DEFAULT_PROFILE: Profile = "read";
 
-export const SUPPORTED_PROTOCOL_REVISIONS = ["2025-06-18"] as const;
-export const CURRENT_PROTOCOL_REVISION = "2025-06-18";
+export const SUPPORTED_PROTOCOL_REVISIONS = ["2026-07-28", "2025-11-25", "2025-06-18"] as const;
+export const CURRENT_PROTOCOL_REVISION = "2026-07-28";
 
 export type ToolCategory = "read" | "preview" | "write" | "advanced" | "forbidden";
 
 function namesFor(category: ToolCategory): readonly string[] {
-  return Object.freeze(TOOL_MANIFEST.filter(entry => entry.category === category).map(entry => entry.name));
+  return Object.freeze(
+    TOOL_MANIFEST
+      .filter(entry => entry.category === category && (category === "forbidden" || entry.registered))
+      .map(entry => entry.name)
+  );
 }
 
 export const READ_TOOLS = namesFor("read");

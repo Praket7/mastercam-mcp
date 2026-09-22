@@ -1,4 +1,4 @@
-import { z } from "zod";
+import * as z from "zod/v4";
 import { categoryOf } from "../contracts.js";
 import { TOOL_MANIFEST, type ToolManifestEntry } from "../tool-manifest.js";
 
@@ -13,8 +13,8 @@ export interface ToolDefinition {
   name: string;
   title?: string;
   description: string;
-  inputSchema: z.ZodTypeAny;
-  outputSchema: z.ZodTypeAny;
+  inputSchema: z.ZodType;
+  outputSchema: z.ZodType;
   annotations: ToolAnnotations;
 }
 
@@ -34,7 +34,7 @@ export const ToolEnvelopeSchema = z.object({
   operationFingerprint: z.string().optional()
 }).strict();
 
-function outputEnvelope(dataSchema?: z.ZodTypeAny): z.ZodTypeAny {
+function outputEnvelope(dataSchema?: z.ZodType): z.ZodType {
   if (!dataSchema) return ToolEnvelopeSchema;
   return ToolEnvelopeSchema.extend({ data: dataSchema.optional() });
 }

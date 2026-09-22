@@ -65,3 +65,27 @@ test("non-loopback host with token is rejected when not remote", () => {
   const verdict = classifyRequest("POST", "/mcp", { host: "192.168.1.5:8787", authorization: "Bearer secret-token-123" }, config);
   assert.equal(verdict.status, 403);
 });
+
+test("non-loopback Host is rejected even when local mode has no token", () => {
+  const verdict = classifyRequest("POST", "/mcp", { host: "attacker.example:8787" }, baseConfig);
+  assert.equal(verdict.status, 403);
+});
+
+test("remote mode permits an allow-listed origin with a valid bearer", () => {
+  const config: SecurityConfig = {
+    token: "secret-token-123",
+    allowedOrigins: new Set(["https://client.example"]),
+    remote: true
+  };
+  const verdict = classifyRequest(
+    "POST",
+    "/mcp",
+    {
+      origin: "https://client.example",
+      host: "api.example:8787",
+      authorization: "Bearer secret-token-123"
+    },
+    config
+  );
+  assert.equal(verdict.status, 200);
+});

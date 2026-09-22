@@ -59,7 +59,7 @@ export async function doctor(pipe: string, backend: string) {
   const nodeMajor = Number(process.versions.node.split(".")[0]);
   const checks: Record<string, DoctorCheck> = {
     node: { ok: nodeMajor >= 22, value: process.version },
-    mcpSdk: { ok: true, value: "@modelcontextprotocol/sdk" },
+    mcpSdk: { ok: true, value: "@modelcontextprotocol/server@2 + @modelcontextprotocol/node@2" },
     serverVersion: { ok: true, value: VERSION },
     platform: { ok: backend === "mock" || process.platform === "win32", value: process.platform, required: backend === "mock" ? "informational" : "windows" },
     pipe: { ok: pipeReachable, value: backend === "mock" ? "mock" : pipe },

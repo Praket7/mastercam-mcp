@@ -79,7 +79,7 @@ export class BridgeClient {
           ...(idempotencyKey ? { idempotencyKey } : {})
         });
 
-        let pending: Pending;
+        const pending = { resolve, reject } as Pending;
         const finish = (error?: Error, response?: BridgeResponse) => {
           clearTimeout(pending.timer);
           if (this.pending.get(requestId) === pending) this.pending.delete(requestId);
@@ -100,17 +100,11 @@ export class BridgeClient {
           finish(new Error("CANCELLED: request cancelled by client"));
         };
 
-        const timer = setTimeout(() => {
+        pending.timer = setTimeout(() => {
           sendCancel();
           finish(new Error(`TIMEOUT: ${tool} exceeded ${deadlineMs}ms deadline`));
         }, deadlineMs);
-
-        pending = {
-          resolve,
-          reject,
-          timer,
-          cleanup: () => signal?.removeEventListener("abort", onAbort)
-        };
+        pending.cleanup = () => signal?.removeEventListener("abort", onAbort);
         this.pending.set(requestId, pending);
 
         if (signal) {

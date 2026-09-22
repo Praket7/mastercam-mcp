@@ -47,14 +47,8 @@ namespace MastercamMcp.Protocol
         [JsonPropertyName("type")]
         public ResponseType Type { get; set; } = ResponseType.Response;
 
-        [JsonPropertyName("result")]
-        public object? Result { get; set; }
-
         [JsonPropertyName("error")]
         public BridgeError? Error { get; set; }
-
-        [JsonPropertyName("executionDurationMs")]
-        public long? ExecutionDurationMs { get; set; }
 
         [JsonPropertyName("adapterVersion")]
         public string? AdapterVersion { get; set; }
@@ -141,6 +135,7 @@ namespace MastercamMcp.Protocol
         public const string ApprovalTokenExpired = "APPROVAL_TOKEN_EXPIRED";
         public const string TransactionNotFound = "TRANSACTION_NOT_FOUND";
         public const string StaleState = "STALE_STATE";
+        public const string IdempotencyConflict = "IDEMPOTENCY_CONFLICT";
         public const string ProfileDenied = "PROFILE_DENIED";
         public const string ConfirmationRequired = "CONFIRMATION_REQUIRED";
         public const string ApprovalTokenRequired = "APPROVAL_TOKEN_REQUIRED";

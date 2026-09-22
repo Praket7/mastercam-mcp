@@ -2,29 +2,55 @@
 
 ## Fixture verification
 
-The fixture mode is intended for contributors who do not have Mastercam. It exercises the MCP contract and safety flow with synthetic data.
+Fixture mode is for contributors who do not have Mastercam. It exercises the MCP contract and safety flow with synthetic data.
 
 ```text
 $env:MASTERCAM_MCP_BACKEND = "mock"
 pnpm run build
 pnpm test
-node work\feature-smoke.mjs
+pnpm run smoke
+pnpm run smoke:http
 ```
 
-The fixture marks geometry, kinematics, workholding, simulation, and collision information as synthetic. A passing fixture check proves the bridge contract only.
+The fixture marks geometry, kinematics, workholding, simulation, and collision information as synthetic. A passing fixture check proves the portable contract only. It does not establish live Mastercam readiness.
 
 ## Inspection
 
-Use `discover_capabilities` first. Call `mastercam_doctor`, `get_active_part`, `list_operations`, `get_machine_context`, and `get_operation_risks`. Use `find_operations` before passing an operation ID to another tool.
+Use `discover_capabilities` first. Call `mastercam_doctor`, then inspect the active part and the capabilities actually advertised by the connected backend. In fixture mode, useful reads include `get_active_part`, `list_operations`, `get_machine_context`, `get_operation_risks`, and `find_operations` before passing an exact operation ID to another tool.
 
-## Safe editing
+On a live Stage-A adapter, only `mastercam_status` and `mastercam_capabilities` are currently mapped. Other live inspection calls remain unavailable until release-specific SDK mappings pass licensed acceptance.
 
-Call `preview_change` with the intended feed. Review the returned before and after values. Call `set_feed_speed` only with explicit confirmation. Call `regenerate_toolpath` for affected operations. Finish with `verify_change` and retain the receipt from `get_audit_history`.
+## Safe parameter editing
+
+The public parameter mutation path is deliberately narrow:
+
+1. Inspect the exact operation and current values.
+2. Call `preview_operation_parameters` with an explicit `operationId` and unit-bearing feed and/or spindle quantity.
+3. Review the returned before/after values, risks, document revision, operation fingerprint, expiration, and server-minted `approvalToken`.
+4. Call `apply_operation_parameter_preview` with that `approvalToken`. The server rejects stale, expired, reused, or mismatched approvals.
+5. Call `verify_change` to reread the operation and compare the expected unit-bearing values.
+6. Keep the returned transaction/rollback receipt. If the change must be reversed and the state has not diverged, call `rollback_change` with the server-issued transaction identifier.
+
+There is no direct `set_feed_speed` tool. `change_tool` and `update_stock` are also withheld until they have equivalent preview/approval workflows and verified backends.
+
+## Regeneration boundary
+
+`regenerate_toolpath` is currently not registered as an MCP tool. Regeneration mutates CAM state and previously accepted operation IDs without being bound to the exact approved parameter transaction. Until transaction-bound regeneration is implemented and verified, regenerate manually in Mastercam when a parameter change requires it.
+
+## Live acceptance
+
+Run the live acceptance harness only on a licensed Windows Mastercam workstation with the matching release adapter loaded:
+
+```text
+npx -y mastercam-mcp@latest acceptance --live
+```
+
+The command exits nonzero until the required live inspection mappings pass. Write readiness is evaluated separately on a disposable test part with `--allow-writes`; fixture success never promotes a live capability.
 
 ## Live boundary
 
-The native add in returns `UNSUPPORTED_CAPABILITY` for operation mappings that have not been validated against the installed Mastercam API. This is intentional. Live acceptance requires a licensed Windows Mastercam workstation and a matching release adapter.
+The native add in returns `UNSUPPORTED_CAPABILITY` for operation mappings that have not been validated against the installed Mastercam API. This is intentional. The current Legacy and 2027 adapters are Stage A environment bridges, not proof that the broader fixture workflow works live.
 
 ## Compatibility evidence
 
-Mastercam developer examples show that operation iteration and NET Hook assembly references are tied to the installed release. The installer therefore detects the installation path and the compatibility report keeps the detected version visible.
+Public Mastercam developer examples establish NET-Hook entry points and at least basic operation enumeration, but many operation properties and mutation APIs are release-specific and documented through the installed/licensed SDK. The installer therefore detects the installation path and release, while the compatibility and acceptance reports keep unsupported mappings explicit rather than guessing.

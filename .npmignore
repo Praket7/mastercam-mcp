@@ -8,3 +8,4 @@ test/
 work/
 tsconfig.json
 pnpm-lock.yaml
+*.jsonl

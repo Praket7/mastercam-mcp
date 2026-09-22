@@ -8,9 +8,14 @@ on:
   schedule:
     - cron: "0 6 * * 1"
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   analyze:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       security-events: write
       contents: read

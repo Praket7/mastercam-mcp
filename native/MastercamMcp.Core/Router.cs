@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Concurrent;
+using System.Linq;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -35,8 +37,11 @@ namespace MastercamMcp.Core
         private readonly BlockingCollection<Command> queue;
         private readonly Thread worker;
         private readonly ConcurrentDictionary<string, Command> inFlight;
+        private readonly ConcurrentDictionary<string, IdempotencyRecord> idempotency;
         private readonly CapabilityRegistry registry;
         private readonly string mastercamVersion;
+        private const int MaxIdempotencyEntries = 1024;
+        private static readonly TimeSpan IdempotencyTtl = TimeSpan.FromMinutes(15);
 
         public RequestRouter(IMastercamAdapter adapter, string mastercamVersion)
         {
@@ -45,6 +50,7 @@ namespace MastercamMcp.Core
             this.registry = new CapabilityRegistry(adapter);
             this.queue = new BlockingCollection<Command>(new ConcurrentQueue<Command>());
             this.inFlight = new ConcurrentDictionary<string, Command>(StringComparer.Ordinal);
+            this.idempotency = new ConcurrentDictionary<string, IdempotencyRecord>(StringComparer.Ordinal);
             this.worker = new Thread(ExecuteLoop)
             {
                 IsBackground = true,
@@ -148,7 +154,41 @@ namespace MastercamMcp.Core
                         "This live Mastercam tool has no verified mapping on the installed release")));
                 }
 
-                var command = new Command(request, this.registry.IsRead(request.Tool), this);
+                if (this.inFlight.ContainsKey(request.RequestId))
+                {
+                    return HandleOutcome.Immediate(SerializeResponse(ErrorResponse(
+                        request.RequestId, request.Tool, ErrorCodes.InvalidRequest,
+                        "requestId is already in flight")));
+                }
+
+                var isRead = capability.RiskClass == RiskClass.Read;
+                var command = new Command(request, isRead, this);
+
+                if (!isRead && !string.IsNullOrWhiteSpace(request.IdempotencyKey))
+                {
+                    PruneIdempotency();
+                    var identity = ActionIdentity(request);
+                    var record = new IdempotencyRecord(identity, command.Completion.Task, DateTimeOffset.UtcNow);
+
+                    if (!this.idempotency.TryAdd(request.IdempotencyKey, record))
+                    {
+                        command.Source.Dispose();
+                        if (!this.idempotency.TryGetValue(request.IdempotencyKey, out var existing))
+                        {
+                            return HandleOutcome.Immediate(SerializeResponse(ErrorResponse(
+                                request.RequestId, request.Tool, ErrorCodes.BackendUnavailable,
+                                "Idempotency state changed during request admission", true)));
+                        }
+                        if (!string.Equals(existing.Identity, identity, StringComparison.Ordinal))
+                        {
+                            return HandleOutcome.Immediate(SerializeResponse(ErrorResponse(
+                                request.RequestId, request.Tool, ErrorCodes.IdempotencyConflict,
+                                "The idempotency key was already used for a different mutation")));
+                        }
+                        return new HandleOutcome { Pending = Replay(existing.Completion, request.RequestId) };
+                    }
+                }
+
                 this.inFlight[request.RequestId] = command;
                 this.queue.Add(command);
                 return new HandleOutcome { Pending = AwaitCompletion(command) };
@@ -186,6 +226,7 @@ namespace MastercamMcp.Core
         {
             this.queue.CompleteAdding();
             CancelAll();
+            this.idempotency.Clear();
             try { this.worker.Join(1500); } catch { }
             this.queue.Dispose();
         }
@@ -201,6 +242,20 @@ namespace MastercamMcp.Core
                 command.Router.inFlight.TryRemove(command.Request.RequestId, out _);
                 command.Source.Dispose();
             }
+        }
+
+        private sealed class IdempotencyRecord
+        {
+            public IdempotencyRecord(string identity, Task<BridgeResponse> completion, DateTimeOffset createdAt)
+            {
+                Identity = identity;
+                Completion = completion;
+                CreatedAt = createdAt;
+            }
+
+            public string Identity { get; }
+            public Task<BridgeResponse> Completion { get; }
+            public DateTimeOffset CreatedAt { get; }
         }
 
         private sealed class Command
@@ -293,6 +348,66 @@ namespace MastercamMcp.Core
             {
                 return ErrorResponse(request.RequestId, request.Tool, ErrorCodes.MastercamApiError, ex.Message);
             }
+        }
+
+        private async Task<BridgeResponse> Replay(Task<BridgeResponse> originalTask, string requestId)
+        {
+            var original = await originalTask.ConfigureAwait(false);
+            return new BridgeResponse
+            {
+                ProtocolVersion = original.ProtocolVersion,
+                RequestId = requestId,
+                Type = original.Type,
+                Ok = original.Ok,
+                Tool = original.Tool,
+                Data = original.Data,
+                Error = original.Error == null ? null : new BridgeError
+                {
+                    Code = original.Error.Code,
+                    Message = original.Error.Message,
+                    Retryable = original.Error.Retryable,
+                    Remediation = original.Error.Remediation
+                },
+                Receipt = original.Receipt,
+                Live = original.Live,
+                MastercamVersion = original.MastercamVersion,
+                AdapterVersion = original.AdapterVersion,
+                DocumentRevision = original.DocumentRevision,
+                DurationMs = original.DurationMs
+            };
+        }
+
+        private void PruneIdempotency()
+        {
+            var cutoff = DateTimeOffset.UtcNow - IdempotencyTtl;
+            foreach (var pair in this.idempotency)
+            {
+                if (pair.Value.Completion.IsCompleted && pair.Value.CreatedAt < cutoff)
+                {
+                    this.idempotency.TryRemove(pair.Key, out _);
+                }
+            }
+
+            if (this.idempotency.Count < MaxIdempotencyEntries) return;
+            var overflow = this.idempotency
+                .Where(pair => pair.Value.Completion.IsCompleted)
+                .OrderBy(pair => pair.Value.CreatedAt)
+                .Take(Math.Max(1, this.idempotency.Count - MaxIdempotencyEntries + 1))
+                .Select(pair => pair.Key)
+                .ToArray();
+
+            foreach (var key in overflow)
+            {
+                this.idempotency.TryRemove(key, out _);
+            }
+        }
+
+        private static string ActionIdentity(BridgeRequest request)
+        {
+            var arguments = request.Arguments?.ToJsonString() ?? "{}";
+            var material = Encoding.UTF8.GetBytes((request.Tool ?? string.Empty) + "\n" + arguments);
+            using var sha = SHA256.Create();
+            return BitConverter.ToString(sha.ComputeHash(material)).Replace("-", string.Empty).ToLowerInvariant();
         }
 
         private static bool DeadlineExpired(BridgeRequest request)

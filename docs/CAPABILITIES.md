@@ -6,62 +6,62 @@ The tool manifest is the canonical source of truth for MCP registration, policy 
 Tiers: `UNAVAILABLE` < `DISCOVERED` < `IMPLEMENTED` < `LIVE_READ_VERIFIED` < `LIVE_WRITE_VERIFIED`.
 A tier is raised only after a licensed live acceptance run against the matching Mastercam release.
 
-Counts: 56 capabilities declared, 52 fixture-supported, **0 live verified**.
+Counts: 56 capabilities declared, 49 fixture-supported, **0 live verified**.
 
 | Tool | Fixture supported | Risk | Backends | Tier | Notes |
 | --- | --- | --- | --- | --- | --- |
 | mastercam_status | yes | read | mock+legacy-adapter+2027-adapter | IMPLEMENTED | Native environment adapter is implemented; LIVE_* verification requires a licensed acceptance run. |
 | mastercam_capabilities | yes | read | mock+legacy-adapter+2027-adapter | IMPLEMENTED | Native environment adapter is implemented; LIVE_* verification requires a licensed acceptance run. |
-| mastercam_help | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
-| list_tool_categories | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
-| discover_capabilities | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
-| get_compatibility_matrix | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
-| mastercam_plan | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
-| mastercam_doctor | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
-| get_version_report | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
-| client_setup_check | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
-| get_fixture_info | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
-| get_audit_history | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
-| get_active_part | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
-| get_geometry_summary | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
-| get_selection | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
-| get_selected_entities | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
-| list_machine_groups | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
-| get_machine_groups | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
-| get_machine_context | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
-| get_stock | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
-| get_wcs | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
-| get_post_processor | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
-| get_programming_context | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
-| list_operations | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
-| get_operation | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
-| get_operation_parameters | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
-| find_operations | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
-| explain_operation | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
-| get_operation_risks | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
-| get_dirty_toolpaths | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
-| get_toolpath_status | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
-| estimate_cycle_time | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
-| compare_toolpaths | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
-| list_tools | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
-| get_tool | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
-| capture_view | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
-| inspect | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
-| measure | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
-| verify_change | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
-| assert | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
-| generate_setup_sheet | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
-| compare_tool_databases | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
-| compare_nc_files | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
-| validate_machine_profile | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
-| preview_operation_parameters | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
-| apply_operation_parameter_preview | yes | mutation | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
-| rollback_change | yes | mutation | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
-| change_tool | yes | mutation | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
-| regenerate_toolpath | yes | mutation | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
-| update_stock | yes | mutation | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
-| run_simulation | yes | advanced | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
-| detect_collisions | yes | advanced | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
+| mastercam_help | yes | read | server-local | IMPLEMENTED | Runs entirely in the TypeScript server and is available in fixture or live mode without implying Mastercam API coverage. |
+| list_tool_categories | yes | read | server-local | IMPLEMENTED | Runs entirely in the TypeScript server and is available in fixture or live mode without implying Mastercam API coverage. |
+| discover_capabilities | yes | read | server-local | IMPLEMENTED | Runs entirely in the TypeScript server and is available in fixture or live mode without implying Mastercam API coverage. |
+| get_compatibility_matrix | yes | read | server-local | IMPLEMENTED | Runs entirely in the TypeScript server and is available in fixture or live mode without implying Mastercam API coverage. |
+| mastercam_plan | yes | read | server-local | IMPLEMENTED | Runs entirely in the TypeScript server and is available in fixture or live mode without implying Mastercam API coverage. |
+| mastercam_doctor | yes | read | server-local | IMPLEMENTED | Runs entirely in the TypeScript server and is available in fixture or live mode without implying Mastercam API coverage. |
+| get_version_report | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares it. |
+| client_setup_check | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares it. |
+| get_fixture_info | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares it. |
+| get_audit_history | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares it. |
+| get_active_part | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares it. |
+| get_geometry_summary | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares it. |
+| get_selection | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares it. |
+| get_selected_entities | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares it. |
+| list_machine_groups | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares it. |
+| get_machine_groups | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares it. |
+| get_machine_context | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares it. |
+| get_stock | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares it. |
+| get_wcs | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares it. |
+| get_post_processor | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares it. |
+| get_programming_context | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares it. |
+| list_operations | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares it. |
+| get_operation | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares it. |
+| get_operation_parameters | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares it. |
+| find_operations | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares it. |
+| explain_operation | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares it. |
+| get_operation_risks | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares it. |
+| get_dirty_toolpaths | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares it. |
+| get_toolpath_status | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares it. |
+| estimate_cycle_time | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares it. |
+| compare_toolpaths | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares it. |
+| list_tools | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares it. |
+| get_tool | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares it. |
+| capture_view | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares it. |
+| inspect | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares it. |
+| measure | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares it. |
+| verify_change | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares it. |
+| assert | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares it. |
+| generate_setup_sheet | yes | read | server-local | IMPLEMENTED | Runs entirely in the TypeScript server and is available in fixture or live mode without implying Mastercam API coverage. |
+| compare_tool_databases | yes | read | server-local | IMPLEMENTED | Runs entirely in the TypeScript server and is available in fixture or live mode without implying Mastercam API coverage. |
+| compare_nc_files | yes | read | server-local | IMPLEMENTED | Runs entirely in the TypeScript server and is available in fixture or live mode without implying Mastercam API coverage. |
+| validate_machine_profile | yes | read | server-local | IMPLEMENTED | Runs entirely in the TypeScript server and is available in fixture or live mode without implying Mastercam API coverage. |
+| preview_operation_parameters | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares it. |
+| apply_operation_parameter_preview | yes | mutation | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares it. |
+| rollback_change | yes | mutation | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares it. |
+| change_tool | no | mutation | none | UNAVAILABLE | Direct tool-change mutation is not exposed until it has a preview/approval workflow and a verified backend mapping. |
+| regenerate_toolpath | no | mutation | none | UNAVAILABLE | Regeneration is withheld until it is transaction-bound to the exact approved change instead of accepting operation ids alone. |
+| update_stock | no | mutation | none | UNAVAILABLE | Direct stock mutation is not exposed until it has a preview/approval workflow and a verified backend mapping. |
+| run_simulation | yes | advanced | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares it. |
+| detect_collisions | yes | advanced | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares it. |
 | post_program | no | advanced | none | UNAVAILABLE | NC release is intentionally outside project scope for safety |
 | cycle_start | no | advanced | none | UNAVAILABLE | Machine execution is intentionally outside project scope for safety |
 | send_dnc | no | advanced | none | UNAVAILABLE | Direct machine communication is intentionally outside project scope for safety |
@@ -69,7 +69,9 @@ Counts: 56 capabilities declared, 52 fixture-supported, **0 live verified**.
 
 ## Reading this table honestly
 
-- `IMPLEMENTED` means code exists and fixture/contract tests can exercise it. It is not proof that a real Mastercam release supports the tool.
-- The native Stage A adapters currently advertise only `mastercam_status` and `mastercam_capabilities`; other live tools remain unavailable until release-specific mappings are implemented and accepted.
+- `IMPLEMENTED` means code exists and contract tests can exercise it. It is not proof that a real Mastercam release supports the tool.
+- `server-local` means the tool runs entirely in the TypeScript server and can be used alongside either backend; it does not imply a live Mastercam API mapping.
+- The native Stage A adapters map only `mastercam_status` and `mastercam_capabilities`; other native Mastercam tools remain unavailable until release-specific mappings are implemented and accepted.
+- Standalone regeneration is withheld until it is transaction-bound to the exact approved mutation rather than accepting operation ids alone.
 - Simulation and collision results from the fixture backend are synthetic and never prove machine safety.
 - Posting, cycle start, DNC, and arbitrary script execution are deliberately unavailable.

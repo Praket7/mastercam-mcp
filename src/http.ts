@@ -1,70 +1,79 @@
 import http from "node:http";
+import { once } from "node:events";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { createMcpHandler } from "@modelcontextprotocol/server";
 import { MockBackend } from "./backend.js";
 import { LiveBackend } from "./live-backend.js";
 import { createMcpServer } from "./mcp/create-server.js";
 import { selectedBackend } from "./platform.js";
-import { classifyRequest } from "./http-security.js";
+import { classifyAccess, classifyRequest } from "./http-security.js";
 import type { Backend } from "./backend.js";
 import { AuditLog } from "./audit/audit-log.js";
 import { loadConfig } from "./config.js";
+import { CURRENT_PROTOCOL_REVISION } from "./contracts.js";
 
 const config = loadConfig();
-const profile = config.profile;
-const hardReadOnly = config.hardReadOnly;
 const audit = new AuditLog(config.audit);
-const mode = selectedBackend(config.backend);
-if (mode === "live" && process.platform !== "win32") {
-  throw new Error("Live Mastercam backend requires Windows. Set MASTERCAM_MCP_BACKEND=mock on this platform.");
+if (audit.integrityError) {
+  throw new Error(`Audit log integrity check failed: ${audit.integrityError}`);
 }
 
-const backend: Backend = mode === "mock"
-  ? new MockBackend(loadFixture(), audit)
-  : new LiveBackend({
-      endpoint: config.pipe,
-      connectTimeoutMs: config.transport.connectTimeoutMs,
-      idleTimeoutMs: config.transport.idleTimeoutMs,
-      maxResponseBytes: config.transport.maxResponseBytes,
-      circuitBreaker: config.transport.circuitBreaker
-    });
+const mode = selectedBackend(config.backend);
+if (mode === "live" && process.platform !== "win32") {
+  throw new Error(
+    "Live Mastercam backend requires Windows. Set MASTERCAM_MCP_BACKEND=mock on this platform."
+  );
+}
+
+const backend: Backend =
+  mode === "mock"
+    ? new MockBackend(loadFixture(), audit)
+    : new LiveBackend({
+        endpoint: config.pipe,
+        connectTimeoutMs: config.transport.connectTimeoutMs,
+        idleTimeoutMs: config.transport.idleTimeoutMs,
+        maxResponseBytes: config.transport.maxResponseBytes,
+        circuitBreaker: config.transport.circuitBreaker
+      });
 
 const token = config.http.token;
 const host = config.http.host;
 const port = config.http.port;
 const allowedOrigins = new Set(config.http.allowedOrigins);
 const remote = config.http.allowRemote;
+
 if (remote && allowedOrigins.size === 0) {
-  throw new Error("MASTERCAM_MCP_ALLOWED_ORIGINS is required when remote HTTP access is enabled");
+  throw new Error(
+    "MASTERCAM_MCP_ALLOWED_ORIGINS is required when remote HTTP access is enabled"
+  );
 }
 
-const maxRequestBodyBytes = config.http.maxRequestBodyBytes;
-const maxConcurrentRequests = config.http.maxConcurrency;
-const requestTimeoutMs = config.http.requestTimeoutMs;
-const sessionTtlMs = config.http.sessionTtlMs;
-
-interface Session {
-  transport: StreamableHTTPServerTransport;
-  close: () => Promise<void>;
-  touched: number;
-  closed: boolean;
-}
-
-class HttpBodyError extends Error {
-  constructor(readonly status: number, message: string) {
-    super(message);
-  }
-}
-
-const sessions = new Map<string, Session>();
 let activeRequests = 0;
+let shuttingDown = false;
+
+const mcpHandler = createMcpHandler(
+  () => createMcpServer(backend, config.profile, config.hardReadOnly),
+  {
+    legacy: "stateless",
+    responseMode: "auto",
+    onerror: error => {
+      console.error("[mastercam-mcp] MCP handler error:", error.message);
+    }
+  }
+);
+
+class RequestBodyTooLargeError extends Error {}
 
 function verdict(req: http.IncomingMessage) {
   return classifyRequest(
     req.method,
     req.url,
-    { origin: req.headers.origin, host: req.headers.host, authorization: req.headers.authorization },
+    {
+      origin: req.headers.origin,
+      host: req.headers.host,
+      authorization: req.headers.authorization
+    },
     { token, allowedOrigins, remote }
   );
 }
@@ -78,25 +87,87 @@ function reject(res: http.ServerResponse, status: number, message: string): void
   res.end(JSON.stringify({ error: message }));
 }
 
-async function readJsonBodyLimited(req: http.IncomingMessage, maxBytes: number): Promise<unknown> {
+async function readBoundedBody(
+  req: http.IncomingMessage,
+  maxBytes: number
+): Promise<ArrayBuffer | undefined> {
+  const method = (req.method ?? "GET").toUpperCase();
+  if (method === "GET" || method === "HEAD") return undefined;
+
+  const contentLength = req.headers["content-length"];
+  if (typeof contentLength === "string") {
+    const declared = Number(contentLength);
+    if (Number.isFinite(declared) && declared > maxBytes) {
+      throw new RequestBodyTooLargeError(`Request body exceeds ${maxBytes} bytes`);
+    }
+  }
+
   const chunks: Buffer[] = [];
   let total = 0;
-
   for await (const chunk of req) {
     const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     total += buffer.length;
     if (total > maxBytes) {
-      throw new HttpBodyError(413, "Request body too large");
+      throw new RequestBodyTooLargeError(`Request body exceeds ${maxBytes} bytes`);
     }
     chunks.push(buffer);
   }
+  if (!chunks.length) return new ArrayBuffer(0);
+  const combined = Buffer.concat(chunks);
+  return combined.buffer.slice(
+    combined.byteOffset,
+    combined.byteOffset + combined.byteLength
+  ) as ArrayBuffer;
+}
 
-  if (total === 0) throw new HttpBodyError(400, "Request body is required");
-  try {
-    return JSON.parse(Buffer.concat(chunks, total).toString("utf8"));
-  } catch {
-    throw new HttpBodyError(400, "Invalid JSON request body");
+function requestHeaders(req: http.IncomingMessage): Headers {
+  const headers = new Headers();
+  for (const [name, value] of Object.entries(req.headers)) {
+    if (Array.isArray(value)) {
+      for (const item of value) headers.append(name, item);
+    } else if (value !== undefined) {
+      headers.set(name, value);
+    }
   }
+  return headers;
+}
+
+async function toWebRequest(req: http.IncomingMessage): Promise<Request> {
+  const body = await readBoundedBody(req, config.http.maxRequestBodyBytes);
+  const hostHeader = req.headers.host ?? `${host}:${port}`;
+  const url = new URL(req.url ?? "/mcp", `http://${hostHeader}`);
+  const init: RequestInit = {
+    method: req.method ?? "GET",
+    headers: requestHeaders(req)
+  };
+  if (body !== undefined) init.body = body;
+  return new Request(url, init);
+}
+
+async function writeWebResponse(
+  res: http.ServerResponse,
+  response: Response
+): Promise<void> {
+  res.statusCode = response.status;
+  if (response.statusText) res.statusMessage = response.statusText;
+  response.headers.forEach((value, name) => res.setHeader(name, value));
+
+  if (!response.body) {
+    res.end();
+    return;
+  }
+
+  const reader = response.body.getReader();
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!res.write(Buffer.from(value))) await once(res, "drain");
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  res.end();
 }
 
 const server = http.createServer((req, res) => {
@@ -106,15 +177,36 @@ const server = http.createServer((req, res) => {
       `[mastercam-mcp] request ${requestId} failed:`,
       error instanceof Error ? error.message : error
     );
-    if (error instanceof HttpBodyError) reject(res, error.status, error.message);
-    else reject(res, 500, "Internal server error");
+    reject(res, 500, "Internal server error");
   });
 });
 
-async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+async function handleRequest(
+  req: http.IncomingMessage,
+  res: http.ServerResponse
+): Promise<void> {
   if (req.url === "/health") {
+    const access = classifyAccess(
+      {
+        origin: req.headers.origin,
+        host: req.headers.host,
+        authorization: req.headers.authorization
+      },
+      { token, allowedOrigins, remote }
+    );
+    if (access.status !== 200) {
+      reject(res, access.status, access.message ?? "Rejected");
+      return;
+    }
     res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify({ ok: true, sessions: sessions.size, activeRequests }));
+    res.end(
+      JSON.stringify({
+        ok: true,
+        activeRequests,
+        protocol: CURRENT_PROTOCOL_REVISION,
+        legacyFallback: "stateless"
+      })
+    );
     return;
   }
 
@@ -123,121 +215,45 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
     reject(res, check.status, check.message ?? "Rejected");
     return;
   }
-  if (activeRequests >= maxConcurrentRequests) {
+
+  if (shuttingDown) {
+    reject(res, 503, "Server shutting down");
+    return;
+  }
+
+  if (activeRequests >= config.http.maxConcurrency) {
     reject(res, 503, "Server busy");
     return;
   }
 
   activeRequests++;
-  const timeout = setTimeout(() => {
-    if (!res.headersSent) reject(res, 504, "Request timed out");
-  }, requestTimeoutMs);
-  timeout.unref?.();
-
   try {
-    let parsedBody: unknown;
-    if (req.method === "POST") {
-      const rawLength = req.headers["content-length"];
-      if (rawLength !== undefined) {
-        const contentLength = Number(rawLength);
-        if (!Number.isFinite(contentLength) || contentLength < 0) {
-          reject(res, 400, "Invalid Content-Length");
-          return;
-        }
-        if (contentLength > maxRequestBodyBytes) {
-          reject(res, 413, "Request body too large");
-          return;
-        }
-      }
-      parsedBody = await readJsonBodyLimited(req, maxRequestBodyBytes);
-    }
-
-    const sessionId = req.headers["mcp-session-id"] as string | undefined;
-    const session = sessionId ? sessions.get(sessionId) : undefined;
-
-    if (!session && req.method === "POST") {
-      const transport = new StreamableHTTPServerTransport({
-        sessionIdGenerator: () => randomUUID(),
-        onsessioninitialized: id => {
-          sessions.set(id, {
-            transport,
-            close: async () => {
-              const existing = sessions.get(id);
-              if (existing) {
-                existing.closed = true;
-                sessions.delete(id);
-              }
-              await transport.close().catch(() => undefined);
-            },
-            touched: Date.now(),
-            closed: false
-          });
-        },
-        onsessionclosed: id => {
-          const existing = sessions.get(id);
-          if (existing) existing.closed = true;
-          sessions.delete(id);
-        },
-        enableJsonResponse: true,
-        ...(allowedOrigins.size ? { allowedOrigins: [...allowedOrigins] } : {})
-      });
-
-      const mcp = createMcpServer(backend, profile, hardReadOnly, audit);
-      await mcp.connect(transport);
-      try {
-        await transport.handleRequest(req, res, parsedBody);
-        const id = transport.sessionId;
-        const created = id ? sessions.get(id) : undefined;
-        if (created) {
-          const transportClose = created.close;
-          created.close = async () => {
-            await transportClose();
-            await mcp.close().catch(() => undefined);
-          };
-        } else {
-          await transport.close().catch(() => undefined);
-          await mcp.close().catch(() => undefined);
-        }
-      } catch (error) {
-        await transport.close().catch(() => undefined);
-        await mcp.close().catch(() => undefined);
-        throw error;
-      }
+    const request = await toWebRequest(req);
+    const response = await mcpHandler.fetch(request);
+    await writeWebResponse(res, response);
+  } catch (error) {
+    if (error instanceof RequestBodyTooLargeError) {
+      reject(res, 413, error.message);
       return;
     }
-
-    if (!session) {
-      reject(res, 404, "Unknown MCP session");
-      return;
-    }
-
-    session.touched = Date.now();
-    await session.transport.handleRequest(req, res, parsedBody);
+    throw error;
   } finally {
     activeRequests--;
-    clearTimeout(timeout);
   }
 }
 
-const cleanup = setInterval(() => {
-  const cutoff = Date.now() - sessionTtlMs;
-  for (const session of sessions.values()) {
-    if (session.touched < cutoff && !session.closed) {
-      void session.close().catch(() => undefined);
-    }
-  }
-}, Math.min(sessionTtlMs, 60_000));
-cleanup.unref();
+async function shutdown(): Promise<void> {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  await mcpHandler.close().catch(() => undefined);
+  await backend.close?.().catch(() => undefined);
+  await audit.flush().catch(() => undefined);
+  await new Promise<void>(resolve => server.close(() => resolve()));
+}
 
-let shuttingDown = false;
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
-  process.on(signal, () => {
-    if (shuttingDown) return;
-    shuttingDown = true;
-    clearInterval(cleanup);
-    void Promise.all([...sessions.values()].map(session => session.close()))
-      .catch(() => undefined)
-      .finally(() => server.close(() => process.exit(0)));
+  process.once(signal, () => {
+    void shutdown().finally(() => process.exit(0));
   });
 }
 
@@ -245,7 +261,7 @@ server.listen(port, host, () => {
   console.error(`Mastercam MCP HTTP listening on http://${host}:${port}/mcp`);
 });
 server.headersTimeout = 30_000;
-server.requestTimeout = requestTimeoutMs;
+server.requestTimeout = config.http.requestTimeoutMs;
 server.keepAliveTimeout = 5_000;
 
 function loadFixture() {

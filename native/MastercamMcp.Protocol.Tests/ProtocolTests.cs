@@ -11,6 +11,7 @@ namespace MastercamMcp.Protocol.Tests
 {
     public class StubAdapter : IMastercamAdapter
     {
+        public int MutationInvocations { get; private set; }
         public AdapterInfo Info => new AdapterInfo
         {
             AdapterVersion = "stub-1.0",
@@ -25,6 +26,7 @@ namespace MastercamMcp.Protocol.Tests
             {
                 new Capability { Name = "mastercam_status", Supported = true, RiskClass = RiskClass.Read, Tier = CapabilityTier.LiveReadVerified, MappingVersion = 1 },
                 new Capability { Name = "list_operations", Supported = true, RiskClass = RiskClass.Read, Tier = CapabilityTier.Implemented, MappingVersion = 1 },
+                new Capability { Name = "regenerate_toolpath", Supported = true, RiskClass = RiskClass.Mutation, Tier = CapabilityTier.Implemented, MappingVersion = 1 },
                 new Capability { Name = "change_tool", Supported = false, RiskClass = RiskClass.Mutation, Tier = CapabilityTier.Unavailable, Reason = "not_live_verified", MappingVersion = 0 }
             };
         }
@@ -36,6 +38,11 @@ namespace MastercamMcp.Protocol.Tests
                 return AdapterResult.Success(new { connected = true, backend = "stub" });
             if (tool == "list_operations")
                 return AdapterResult.Success(new[] { new { id = 1, name = "op" } });
+            if (tool == "regenerate_toolpath")
+            {
+                MutationInvocations++;
+                return AdapterResult.Success(new { regenerated = true });
+            }
             return AdapterResult.Failure("UNSUPPORTED_CAPABILITY", "stub has no mapping");
         }
     }
@@ -117,8 +124,41 @@ namespace MastercamMcp.Protocol.Tests
             Assert.True(router.Registry.Find("mastercam_status").Supported);
             Assert.False(router.Registry.Find("change_tool").Supported);
             Assert.Null(router.Registry.Find("unknown_tool"));
-            Assert.Equal(2, router.Registry.SupportedCount);
+            Assert.Equal(3, router.Registry.SupportedCount);
             Assert.Equal(1, router.Registry.UnsupportedCount);
+        }
+
+        [Fact]
+        public async Task MutationIdempotencyReplaysWithoutReinvokingAdapter()
+        {
+            var adapter = new StubAdapter();
+            using var router = new RequestRouter(adapter, "2026");
+
+            var first = router.Handle("{\"type\":\"request\",\"protocolVersion\":2,\"requestId\":\"m1\",\"tool\":\"regenerate_toolpath\",\"idempotencyKey\":\"idem-12345678\",\"arguments\":{\"operationIds\":[1]}}");
+            var firstResponse = await first.Pending;
+            Assert.True(firstResponse.Ok);
+
+            var replay = router.Handle("{\"type\":\"request\",\"protocolVersion\":2,\"requestId\":\"m2\",\"tool\":\"regenerate_toolpath\",\"idempotencyKey\":\"idem-12345678\",\"arguments\":{\"operationIds\":[1]}}");
+            var replayResponse = await replay.Pending;
+
+            Assert.True(replayResponse.Ok);
+            Assert.Equal("m2", replayResponse.RequestId);
+            Assert.Equal(1, adapter.MutationInvocations);
+        }
+
+        [Fact]
+        public async Task IdempotencyKeyCannotBeReusedForDifferentMutation()
+        {
+            var adapter = new StubAdapter();
+            using var router = new RequestRouter(adapter, "2026");
+
+            var first = router.Handle("{\"type\":\"request\",\"protocolVersion\":2,\"requestId\":\"m3\",\"tool\":\"regenerate_toolpath\",\"idempotencyKey\":\"idem-conflict\",\"arguments\":{\"operationIds\":[1]}}");
+            await first.Pending;
+
+            var conflict = router.Handle("{\"type\":\"request\",\"protocolVersion\":2,\"requestId\":\"m4\",\"tool\":\"regenerate_toolpath\",\"idempotencyKey\":\"idem-conflict\",\"arguments\":{\"operationIds\":[2]}}");
+            Assert.NotNull(conflict.ImmediateResponse);
+            Assert.Contains("IDEMPOTENCY_CONFLICT", conflict.ImmediateResponse);
+            Assert.Equal(1, adapter.MutationInvocations);
         }
     }
 }

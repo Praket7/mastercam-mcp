@@ -16,26 +16,45 @@ export interface Installation {
 }
 
 /**
- * Release support is explicit (audit COMPAT-01/70). Mastercam 2027 runs on
- * .NET 10 and cannot load the net48 add-in; the required adapter does not
- * exist yet, so the status says exactly that.
+ * Native loader support and live workflow support are separate. Both adapter
+ * projects exist, but only environment reporting is implemented until a
+ * licensed release-specific acceptance run proves additional mappings.
  */
 export const COMPATIBILITY_MATRIX = [
-  { release: "2024", runtime: ".NET Framework 4.8", adapter: "MastercamMcp.Addin.Legacy", status: "adapter required", evidence: "installer path and assembly discovery" },
-  { release: "2025", runtime: ".NET Framework 4.8", adapter: "MastercamMcp.Addin.Legacy", status: "adapter required", evidence: "installer path and assembly discovery" },
-  { release: "2026", runtime: ".NET Framework 4.8", adapter: "MastercamMcp.Addin.Legacy", status: "adapter required", evidence: "NET Scripting tooling documents this release" },
+  {
+    release: "2024",
+    runtime: ".NET Framework 4.8",
+    adapter: "MastercamMcp.Addin.Legacy",
+    status: "stage-a-environment-only",
+    evidence: "Legacy adapter project and installer path are implemented; operation mappings require licensed verification"
+  },
+  {
+    release: "2025",
+    runtime: ".NET Framework 4.8",
+    adapter: "MastercamMcp.Addin.Legacy",
+    status: "stage-a-environment-only",
+    evidence: "Legacy adapter project and installer path are implemented; operation mappings require licensed verification"
+  },
+  {
+    release: "2026",
+    runtime: ".NET Framework 4.8",
+    adapter: "MastercamMcp.Addin.Legacy",
+    status: "stage-a-environment-only",
+    evidence: "Public NET-Hook examples support the loader family; operation mappings remain unverified"
+  },
   {
     release: "2027",
     runtime: ".NET 10",
     adapter: "MastercamMcp.Addin.2027",
-    status: "implementation required",
-    evidence: "public developer guidance: Mastercam 2027 moved to .NET 10; older .NET Framework add-ins must be updated"
+    status: "stage-a-environment-only",
+    evidence: "The .NET 10 adapter project exists; licensed load acceptance and operation mappings remain unverified"
   }
 ] as const;
 
 function runtimeFamilyFor(marketingRelease: string): RuntimeFamily {
   const year = Number(marketingRelease);
-  return Number.isFinite(year) && year >= 2027 ? "net10" : "net48";
+  if (!Number.isFinite(year)) return "unknown";
+  return year >= 2027 ? "net10" : "net48";
 }
 
 function inspectRoot(root: string): Installation | undefined {
@@ -44,8 +63,11 @@ function inspectRoot(root: string): Installation | undefined {
   const hasExecutable = existsSync(executable);
   const hasChooks = existsSync(chooks);
   if (!hasExecutable && !hasChooks) return undefined;
-  const marketingRelease = root.split(/[\\/]/).pop()?.replace(/^Mastercam\s+/i, "") ?? "unknown";
-  const netHookAssemblies = existsSync(root) ? readdirSync(root).filter(file => /^NETHook.*\.dll$/i.test(file)) : [];
+  const marketingRelease =
+    root.split(/[\\/]/).pop()?.replace(/^Mastercam\s+/i, "") ?? "unknown";
+  const netHookAssemblies = existsSync(root)
+    ? readdirSync(root).filter(file => /^NETHook.*\.dll$/i.test(file))
+    : [];
   return {
     version: marketingRelease,
     marketingRelease,
@@ -59,11 +81,9 @@ function inspectRoot(root: string): Installation | undefined {
   };
 }
 
-/**
- * INSTALL-01: discovery beyond "C:\Program Files\Mastercam *" — an explicit
- * override wins, then MASTERCAM_ROOT, then Program Files scanning.
- */
-export function detectInstallations(programFiles = process.platform === "win32" ? "C:\\Program Files" : ""): Installation[] {
+export function detectInstallations(
+  programFiles = process.platform === "win32" ? "C:\\Program Files" : ""
+): Installation[] {
   const roots: string[] = [];
   const explicit = process.env.MASTERCAM_ROOT;
   if (explicit && existsSync(explicit)) roots.push(explicit);
@@ -75,8 +95,9 @@ export function detectInstallations(programFiles = process.platform === "win32" 
       }
     }
   }
-  const installations = roots.map(inspectRoot).filter((item): item is Installation => item !== undefined);
-  // Explicit roots first, verified before partial.
+  const installations = roots
+    .map(inspectRoot)
+    .filter((item): item is Installation => item !== undefined);
   return installations.sort((a, b) => Number(b.verified) - Number(a.verified));
 }
 
@@ -85,6 +106,9 @@ export function compatibilityReport(installations: Installation[] = detectInstal
     matrix: COMPATIBILITY_MATRIX,
     detected: installations,
     liveMappingsVerified: false,
-    note: "Release support requires a matching native adapter and licensed live acceptance testing. Mastercam 2027 requires the .NET 10 adapter, which is not implemented yet."
+    stageAAdaptersImplemented: ["MastercamMcp.Addin.Legacy", "MastercamMcp.Addin.2027"],
+    note:
+      "Both native adapter families exist, but only environment reporting is implemented today. " +
+      "Commercial live inspection or mutation support requires release-specific mappings plus licensed acceptance evidence."
   };
 }

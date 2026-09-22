@@ -29,7 +29,7 @@ const READ_DEADLINES_MS: Record<string, number> = {
 const DEFAULT_READ_DEADLINE_MS = 10_000;
 const MUTATION_DEADLINE_MS = 60_000;
 
-export interface LiveBackendOptions extends BridgeClientOptions {}
+export type LiveBackendOptions = BridgeClientOptions;
 
 export class LiveBackend implements Backend {
   private readonly client: BridgeClient;
@@ -51,6 +51,10 @@ export class LiveBackend implements Backend {
     const deadlineMs = READ_TOOLS.has(request.tool)
       ? READ_DEADLINES_MS[request.tool] ?? DEFAULT_READ_DEADLINE_MS
       : MUTATION_DEADLINE_MS;
+    const bridgeIdempotencyKey =
+      typeof request.arguments?.idempotencyKey === "string"
+        ? request.arguments.idempotencyKey
+        : undefined;
 
     try {
       const lane = READ_TOOLS.has(request.tool) ? "read" : "mutation";
@@ -59,7 +63,13 @@ export class LiveBackend implements Backend {
         documentKey: "doc:live",
         run: () => withRetry(
           { idempotent: idempotentRead, maxAttempts: 3 },
-          () => this.client.call(request.tool, request.arguments, deadlineMs, options?.signal)
+          () => this.client.call(
+            request.tool,
+            request.arguments,
+            deadlineMs,
+            options?.signal,
+            bridgeIdempotencyKey
+          )
         )
       });
       return this.envelope(request, response);

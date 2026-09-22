@@ -1,5 +1,5 @@
-import { createHash, randomUUID } from "node:crypto";
-import { appendFile, mkdir, stat, rename, readFile } from "node:fs/promises";
+import { createHash, randomUUID, type Hash } from "node:crypto";
+import { appendFile, mkdir, rename, readFile, rm } from "node:fs/promises";
 import * as fsSync from "node:fs";
 import { dirname, join } from "node:path";
 
@@ -22,6 +22,12 @@ interface ChainState {
   previousEntryHash: string;
 }
 
+interface RecoveredChain {
+  chain: ChainState;
+  currentFileBytes: number;
+  currentFileHash: Hash;
+}
+
 const GENESIS_HASH = "sha256:genesis";
 const MAX_REDACT_DEPTH = 6;
 const SENSITIVE_KEYS = /(password|secret|authorization|apikey|api_key|credential|approvalToken|rollbackToken|accessToken|refreshToken|idempotencyKey)/i;
@@ -30,7 +36,6 @@ export function sha256Of(value: unknown): string {
   return `sha256:${createHash("sha256").update(stableStringify(value)).digest("hex")}`;
 }
 
-/** Deterministic serialization so hashes do not depend on key insertion order. */
 export function stableStringify(value: unknown): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
   if (Array.isArray(value)) return `[${value.map(item => stableStringify(item)).join(",")}]`;
@@ -58,12 +63,75 @@ export interface AuditLogOptions {
   maxRotatedFiles?: number;
 }
 
+function verifyLine(
+  parsed: Record<string, unknown>,
+  expectedPrevious: string | undefined
+): { ok: boolean; sequence: number; entryHash: string; previousEntryHash: string } {
+  const entryHash = typeof parsed.entryHash === "string" ? parsed.entryHash : "";
+  const previousEntryHash = typeof parsed.previousEntryHash === "string" ? parsed.previousEntryHash : "";
+  const sequence = typeof parsed.sequence === "number" && Number.isFinite(parsed.sequence) ? parsed.sequence : -1;
+  if (!entryHash || !previousEntryHash || sequence < 0) {
+    return { ok: false, sequence, entryHash, previousEntryHash };
+  }
+  if (expectedPrevious !== undefined && previousEntryHash !== expectedPrevious) {
+    return { ok: false, sequence, entryHash, previousEntryHash };
+  }
+  const rest = { ...parsed };
+  delete rest.entryHash;
+  delete rest.previousEntryHash;
+  const recomputed = sha256Of({ entry: stableStringify(rest), previous: previousEntryHash });
+  return { ok: recomputed === entryHash, sequence, entryHash, previousEntryHash };
+}
+
+function isEnoent(error: unknown): boolean {
+  return error instanceof Error && (error as NodeJS.ErrnoException).code === "ENOENT";
+}
+
+function recoverChain(path: string): RecoveredChain {
+  let text: string;
+  try {
+    text = fsSync.readFileSync(path, "utf8");
+  } catch (error) {
+    if (isEnoent(error)) {
+      return {
+        chain: { sequence: 0, previousEntryHash: GENESIS_HASH },
+        currentFileBytes: 0,
+        currentFileHash: createHash("sha256")
+      };
+    }
+    throw error;
+  }
+
+  let expectedPrevious: string | undefined;
+  let state: ChainState | undefined;
+
+  for (const line of text.split("\n")) {
+    if (!line.trim()) continue;
+    const parsed = JSON.parse(line) as Record<string, unknown>;
+    const verified = verifyLine(parsed, expectedPrevious);
+    if (!verified.ok) throw new Error("AUDIT_CHAIN_CORRUPT: existing audit log failed verification");
+    expectedPrevious = verified.entryHash;
+    state = { sequence: verified.sequence, previousEntryHash: verified.entryHash };
+  }
+
+  const currentFileHash = createHash("sha256");
+  currentFileHash.update(text, "utf8");
+  return {
+    chain: state ?? { sequence: 0, previousEntryHash: GENESIS_HASH },
+    currentFileBytes: Buffer.byteLength(text, "utf8"),
+    currentFileHash
+  };
+}
+
 export class AuditLog {
   private chain: ChainState = { sequence: 0, previousEntryHash: GENESIS_HASH };
   private readonly enabled: boolean;
   private readonly path: string | undefined;
   private readonly maxFileBytes: number;
   private readonly maxRotatedFiles: number;
+  private startupError: string | undefined;
+  private currentFileBytes = 0;
+  private currentFileHash: Hash = createHash("sha256");
 
   constructor(options: AuditLogOptions = {}) {
     this.enabled = options.enabled ?? process.env.MASTERCAM_MCP_AUDIT !== "0";
@@ -72,33 +140,27 @@ export class AuditLog {
       ?? join(process.env.LOCALAPPDATA ?? process.env.XDG_DATA_HOME ?? process.env.TMPDIR ?? ".", "mastercam-mcp", "audit.jsonl");
     this.maxFileBytes = options.maxFileBytes ?? 10 * 1024 * 1024;
     this.maxRotatedFiles = options.maxRotatedFiles ?? 5;
-    // Recover chain tail from existing log so restart does not break hash chain
+
     if (this.enabled && this.path) {
       try {
-        // Use sync read during construction to avoid race with first record()
-        if (fsSync.existsSync(this.path)) {
-          const text = fsSync.readFileSync(this.path, "utf8");
-          let lastHash = GENESIS_HASH;
-          let lastSeq = 0;
-          for (const line of text.split("\n")) {
-            if (!line.trim()) continue;
-            try {
-              const parsed = JSON.parse(line) as { sequence?: number; entryHash?: string };
-              if (typeof parsed.entryHash === "string" && parsed.entryHash) lastHash = parsed.entryHash;
-              if (typeof parsed.sequence === "number" && Number.isFinite(parsed.sequence)) lastSeq = parsed.sequence;
-            } catch { /* ignore corrupt line, keep last good */ }
-          }
-          this.chain = { sequence: lastSeq, previousEntryHash: lastHash };
-        }
-      } catch { /* recovery is best-effort; start from genesis if it fails */ }
+        const recovered = recoverChain(this.path);
+        this.chain = recovered.chain;
+        this.currentFileBytes = recovered.currentFileBytes;
+        this.currentFileHash = recovered.currentFileHash;
+      } catch (error) {
+        this.startupError = error instanceof Error ? error.message : String(error);
+      }
     }
   }
 
   get isEnabled(): boolean { return this.enabled; }
   get location(): string { return this.path ?? "(memory)"; }
+  get integrityError(): string | undefined { return this.startupError; }
 
-  /** Records an entry asynchronously; callers never await disk on the request path. */
   record(entry: Omit<AuditEntry, "sequence" | "timestamp">): AuditEntry {
+    if (this.startupError) {
+      throw new Error(this.startupError);
+    }
     const record: AuditEntry = redact({ ...entry }) as AuditEntry;
     const full: AuditEntry = {
       ...record,
@@ -115,13 +177,11 @@ export class AuditLog {
     return full;
   }
 
-  /** Drain for tests and graceful shutdown. */
   async flush(): Promise<void> {
     await this.tail;
   }
 
   private writeBuffer = "";
-  private writesInFlight = 0;
   private tail: Promise<void> = Promise.resolve();
 
   private write(line: string): void {
@@ -130,74 +190,79 @@ export class AuditLog {
       const payload = this.writeBuffer;
       this.writeBuffer = "";
       if (!payload) return;
-      this.writesInFlight++;
-      try {
-        await mkdir(dirname(this.path!), { recursive: true });
-        await appendFile(this.path!, payload, "utf8");
-        await this.rotateIfNeeded();
-      } catch {
-        // Audit failures must never break the machining request (audit §30).
-      } finally {
-        this.writesInFlight--;
-      }
+      await mkdir(dirname(this.path!), { recursive: true });
+      await appendFile(this.path!, payload, "utf8");
+      this.currentFileBytes += Buffer.byteLength(payload, "utf8");
+      this.currentFileHash.update(payload, "utf8");
+      await this.rotateIfNeeded();
+    }).catch(error => {
+      this.startupError = `AUDIT_WRITE_FAILED: ${error instanceof Error ? error.message : String(error)}`;
     });
   }
 
   private async rotateIfNeeded(): Promise<void> {
+    if (this.currentFileBytes < this.maxFileBytes) return;
+
     const path = this.path!;
-    try {
-      const info = await stat(path);
-      if (info.size < this.maxFileBytes) return;
-      const previousFile = `${path}.1`;
-      let previousFileFinalHash = "sha256:unknown";
+    const previousFileSha256 = `sha256:${this.currentFileHash.digest("hex")}`;
+
+    // Remove the oldest retained segment first so rename behavior is identical
+    // on Windows and POSIX, including maxRotatedFiles === 1.
+    await rm(`${path}.${this.maxRotatedFiles}`, { force: true });
+    for (let i = this.maxRotatedFiles - 1; i >= 1; i--) {
+      const from = `${path}.${i}`;
+      const to = `${path}.${i + 1}`;
       try {
-        const previousContent = await readFile(previousFile, "utf8");
-        previousFileFinalHash = `sha256:${createHash("sha256").update(previousContent).digest("hex")}`;
-      } catch { /* previous file may not exist */ }
-      for (let i = this.maxRotatedFiles - 1; i >= 1; i--) {
-        const from = `${path}.${i}`;
-        const to = `${path}.${i + 1}`;
-        try { await rename(from, to); } catch { /* absent file */ }
+        await rename(from, to);
+      } catch (error) {
+        if (!isEnoent(error)) throw error;
       }
-      await rename(path, `${path}.1`);
-      const rotationEntry: Record<string, unknown> = {
-        type: "rotation",
-        previousFile: `${path}.1`,
-        previousFileFinalHash,
-        sequence: this.chain.sequence + 1,
-        timestamp: new Date().toISOString()
-      };
-      const line = `${JSON.stringify(rotationEntry)}\n`;
-      await appendFile(path, line, "utf8");
-    } catch { /* stat failure means nothing to rotate */ }
+    }
+    await rename(path, `${path}.1`);
+
+    const previousHash = this.chain.previousEntryHash;
+    const rotationBody = {
+      sequence: this.chain.sequence + 1,
+      timestamp: new Date().toISOString(),
+      requestId: "audit-rotation",
+      tool: "audit_rotation",
+      target: { previousFile: `${path}.1` },
+      policy: { previousFileSha256 }
+    };
+    const entryHash = sha256Of({ entry: stableStringify(rotationBody), previous: previousHash });
+    this.chain = { sequence: rotationBody.sequence, previousEntryHash: entryHash };
+    const rotationLine = `${JSON.stringify({ ...rotationBody, previousEntryHash: previousHash, entryHash })}\n`;
+    await appendFile(path, rotationLine, "utf8");
+    this.currentFileBytes = Buffer.byteLength(rotationLine, "utf8");
+    this.currentFileHash = createHash("sha256");
+    this.currentFileHash.update(rotationLine, "utf8");
   }
 }
 
-function replacer(_key: string, value: unknown): unknown {
-  return value === undefined ? undefined : value;
-}
-void replacer;
-
-/** Verifies a log file's hash chain; used by tests and the doctor command. */
-export async function verifyAuditChain(path: string): Promise<{ ok: boolean; entries: number; brokenAt?: number }> {
+export async function verifyAuditChain(path: string): Promise<{ ok: boolean; entries: number; brokenAt?: number; anchor?: string; finalHash?: string }> {
   let text: string;
   try { text = await readFile(path, "utf8"); } catch { return { ok: true, entries: 0 }; }
-  let previous = GENESIS_HASH;
+
+  let expectedPrevious: string | undefined;
+  let anchor: string | undefined;
+  let finalHash: string | undefined;
   let count = 0;
+
   for (const line of text.split("\n")) {
     if (!line.trim()) continue;
     count++;
-    let parsed: { entryHash?: string; previousEntryHash?: string; [k: string]: unknown };
-    try { parsed = JSON.parse(line); } catch { return { ok: false, entries: count, brokenAt: count }; }
-    if (parsed.previousEntryHash !== previous) return { ok: false, entries: count, brokenAt: count };
-    const rest = { ...parsed } as Record<string, unknown>;
-    delete rest.entryHash;
-    delete rest.previousEntryHash;
-    const recomputed = sha256Of({ entry: stableStringify(rest), previous });
-    if (recomputed !== parsed.entryHash) return { ok: false, entries: count, brokenAt: count };
-    previous = String(parsed.entryHash);
+    let parsed: Record<string, unknown>;
+    try { parsed = JSON.parse(line) as Record<string, unknown>; }
+    catch { return { ok: false, entries: count, brokenAt: count, anchor, finalHash }; }
+
+    const verified = verifyLine(parsed, expectedPrevious);
+    if (!verified.ok) return { ok: false, entries: count, brokenAt: count, anchor, finalHash };
+    if (anchor === undefined) anchor = verified.previousEntryHash;
+    expectedPrevious = verified.entryHash;
+    finalHash = verified.entryHash;
   }
-  return { ok: true, entries: count };
+
+  return { ok: true, entries: count, anchor, finalHash };
 }
 
 export function newTransactionId(): string {

@@ -1,4 +1,4 @@
-import { z } from "zod";
+import * as z from "zod/v4";
 import type { Profile } from "./contracts.js";
 
 export const ConfigSchema = z.object({
@@ -11,7 +11,7 @@ export const ConfigSchema = z.object({
     path: z.string().optional(),
     maxFileBytes: z.number().int().positive().max(100 * 1024 * 1024).default(10 * 1024 * 1024),
     maxRotatedFiles: z.number().int().positive().max(100).default(5)
-  }).default({}),
+  }).prefault({}),
   http: z.object({
     host: z.string().default("127.0.0.1"),
     port: z.number().int().min(1).max(65535).default(8787),
@@ -20,9 +20,8 @@ export const ConfigSchema = z.object({
     allowRemote: z.boolean().default(false),
     maxRequestBodyBytes: z.number().int().positive().max(100 * 1024 * 1024).default(2 * 1024 * 1024),
     maxConcurrency: z.number().int().positive().max(1000).default(32),
-    requestTimeoutMs: z.number().int().positive().max(600_000).default(120_000),
-    sessionTtlMs: z.number().int().positive().max(86_400_000).default(1_800_000)
-  }).default({}),
+    requestTimeoutMs: z.number().int().positive().max(600_000).default(120_000)
+  }).prefault({}),
   transport: z.object({
     connectTimeoutMs: z.number().int().positive().max(60_000).default(2000),
     idleTimeoutMs: z.number().int().positive().max(300_000).default(30_000),
@@ -31,8 +30,8 @@ export const ConfigSchema = z.object({
       failureThreshold: z.number().int().positive().max(100).default(3),
       cooldownMs: z.number().int().positive().max(300_000).default(5000),
       halfOpenSuccesses: z.number().int().positive().max(100).default(2)
-    }).default({})
-  }).default({})
+    }).prefault({})
+  }).prefault({})
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
@@ -76,8 +75,7 @@ export function loadConfig(): Config {
       allowRemote: parseBoolean(process.env.MASTERCAM_MCP_HTTP_ALLOW_REMOTE, false),
       maxRequestBodyBytes: parseNumber(process.env.MASTERCAM_MCP_HTTP_MAX_BODY_BYTES, 2 * 1024 * 1024, 1024, 100 * 1024 * 1024),
       maxConcurrency: parseNumber(process.env.MASTERCAM_MCP_HTTP_MAX_CONCURRENCY, 32, 1, 1000),
-      requestTimeoutMs: parseNumber(process.env.MASTERCAM_MCP_HTTP_REQUEST_TIMEOUT_MS, 120_000, 1000, 600_000),
-      sessionTtlMs: parseNumber(process.env.MASTERCAM_MCP_HTTP_SESSION_TTL_MS, 1_800_000, 1000, 86_400_000)
+      requestTimeoutMs: parseNumber(process.env.MASTERCAM_MCP_HTTP_REQUEST_TIMEOUT_MS, 120_000, 1000, 600_000)
     },
     transport: {
       connectTimeoutMs: parseNumber(process.env.MASTERCAM_MCP_CONNECT_TIMEOUT_MS, 2000, 100, 60_000),
@@ -93,7 +91,7 @@ export function loadConfig(): Config {
 
   const result = ConfigSchema.safeParse(raw);
   if (!result.success) {
-    const errors = result.error.errors.map(error => `${error.path.join(".")}: ${error.message}`).join("; ");
+    const errors = result.error.issues.map(error => `${error.path.join(".")}: ${error.message}`).join("; ");
     throw new Error(`Configuration validation failed: ${errors}`);
   }
   return result.data;
