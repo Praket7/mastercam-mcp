@@ -29,7 +29,7 @@ const READ_DEADLINES_MS: Record<string, number> = {
 const DEFAULT_READ_DEADLINE_MS = 10_000;
 const MUTATION_DEADLINE_MS = 60_000;
 
-export interface LiveBackendOptions extends BridgeClientOptions {}
+export type LiveBackendOptions = BridgeClientOptions;
 
 export class LiveBackend implements Backend {
   private readonly client: BridgeClient;
