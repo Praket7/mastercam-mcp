@@ -26,7 +26,7 @@ test("FrameReader decodes arbitrarily fragmented and back-to-back frames", () =>
   assert.equal(reader.pendingBytes, 0);
 });
 
-test("scheduler uses real priority ordering without artificial sleeps", async () => {
+test("scheduler prioritizes queued work without preempting an active read", async () => {
   const scheduler = new Scheduler({ maxConcurrentReads: 1 });
   const gate = deferred();
   const order: string[] = [];
@@ -35,10 +35,11 @@ test("scheduler uses real priority ordering without artificial sleeps", async ()
     order.push("first");
     await gate.promise;
   });
+  await new Promise(resolve => setImmediate(resolve));
+
   const low = scheduler.schedule("read", "doc", "low", async () => { order.push("low"); });
   const critical = scheduler.schedule("read", "doc", "critical", async () => { order.push("critical"); });
 
-  await new Promise(resolve => setImmediate(resolve));
   gate.resolve();
   await Promise.all([first, low, critical]);
   assert.deepEqual(order, ["first", "critical", "low"]);
