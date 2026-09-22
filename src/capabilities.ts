@@ -1,6 +1,7 @@
 import { TIER_ORDER } from "./contracts.js";
 import type { CapabilityTier } from "./contracts.js";
 import { TOOL_MANIFEST } from "./tool-manifest.js";
+import { SERVER_LOCAL_TOOL_NAMES } from "./execution-surface.js";
 
 export interface CapabilityEntry {
   name: string;
@@ -21,6 +22,7 @@ function riskClass(category: string): CapabilityEntry["riskClass"] {
 }
 
 function backendLabel(entry: typeof TOOL_MANIFEST[number]): string {
+  if (SERVER_LOCAL_TOOL_NAMES.has(entry.name)) return "server-local";
   const backends = [
     entry.mockSupport ? "mock" : "",
     entry.legacySupport ? "legacy-adapter" : "",
@@ -29,15 +31,24 @@ function backendLabel(entry: typeof TOOL_MANIFEST[number]): string {
   return backends.length ? backends.join("+") : "none";
 }
 
+function evidenceFor(entry: typeof TOOL_MANIFEST[number]): string {
+  if (SERVER_LOCAL_TOOL_NAMES.has(entry.name)) {
+    return "Runs entirely in the TypeScript server and is available in fixture or live mode without implying Mastercam API coverage.";
+  }
+  return entry.tierEvidence;
+}
+
 export const CAPABILITY_REGISTRY: CapabilityEntry[] = TOOL_MANIFEST.map(entry => ({
   name: entry.name,
   supported: entry.registered && entry.mockSupport,
   riskClass: riskClass(entry.category),
-  requiresActiveDocument: entry.requiresExactTarget || ["get_active_part", "get_stock", "get_wcs", "list_operations"].includes(entry.name),
+  requiresActiveDocument:
+    entry.requiresExactTarget ||
+    ["get_active_part", "get_stock", "get_wcs", "list_operations"].includes(entry.name),
   requiresRegeneration: entry.requiresRegeneration,
   backend: backendLabel(entry),
   tier: entry.tier,
-  reason: entry.tierEvidence,
+  reason: evidenceFor(entry),
   mappingVersion: entry.registered ? 1 : 0
 }));
 
@@ -66,8 +77,10 @@ ${rows.join("\n")}
 
 ## Reading this table honestly
 
-- \`IMPLEMENTED\` means code exists and fixture/contract tests can exercise it. It is not proof that a real Mastercam release supports the tool.
-- The native Stage A adapters currently advertise only \`mastercam_status\` and \`mastercam_capabilities\`; other live tools remain unavailable until release-specific mappings are implemented and accepted.
+- \`IMPLEMENTED\` means code exists and contract tests can exercise it. It is not proof that a real Mastercam release supports the tool.
+- \`server-local\` means the tool runs entirely in the TypeScript server and can be used alongside either backend; it does not imply a live Mastercam API mapping.
+- The native Stage A adapters map only \`mastercam_status\` and \`mastercam_capabilities\`; other native Mastercam tools remain unavailable until release-specific mappings are implemented and accepted.
+- Standalone regeneration is withheld until it is transaction-bound to the exact approved mutation rather than accepting operation ids alone.
 - Simulation and collision results from the fixture backend are synthetic and never prove machine safety.
 - Posting, cycle start, DNC, and arbitrary script execution are deliberately unavailable.
 `;
@@ -89,6 +102,7 @@ export function capabilityReport(backendKind: "mock" | "live" = "mock") {
     verificationTiers: TIER_ORDER,
     counts: Object.fromEntries(byTier),
     capabilities: CAPABILITY_REGISTRY,
-    note: "IMPLEMENTED is not live verification. LIVE_* tiers require evidence from a licensed live acceptance run."
+    note:
+      "IMPLEMENTED is not live verification. server-local utilities are portable; LIVE_* tiers require evidence from a licensed live acceptance run."
   };
 }
