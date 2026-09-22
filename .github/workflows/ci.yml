@@ -190,6 +190,11 @@ jobs:
           dotnet-version: |
             8.0.x
             10.0.x
+      - name: Validate installer PowerShell syntax
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $null = [scriptblock]::Create((Get-Content -LiteralPath ./install.ps1 -Raw))
       - run: pnpm install --frozen-lockfile
       - run: pnpm run build
       - name: Build portable native projects
