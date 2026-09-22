@@ -1,8 +1,8 @@
 import http from "node:http";
+import { once } from "node:events";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { createMcpHandler } from "@modelcontextprotocol/server";
-import { toNodeHandler } from "@modelcontextprotocol/node";
 import { MockBackend } from "./backend.js";
 import { LiveBackend } from "./live-backend.js";
 import { createMcpServer } from "./mcp/create-server.js";
@@ -57,19 +57,13 @@ const mcpHandler = createMcpHandler(
   {
     legacy: "stateless",
     responseMode: "auto",
-    maxRequestBodySize: config.http.maxRequestBodyBytes,
     onerror: error => {
       console.error("[mastercam-mcp] MCP handler error:", error.message);
     }
   }
 );
 
-const nodeMcpHandler = toNodeHandler(mcpHandler, {
-  maxRequestBodySize: config.http.maxRequestBodyBytes,
-  onerror: error => {
-    console.error("[mastercam-mcp] Node HTTP adapter error:", error.message);
-  }
-});
+class RequestBodyTooLargeError extends Error {}
 
 function verdict(req: http.IncomingMessage) {
   return classifyRequest(
@@ -91,6 +85,84 @@ function reject(res: http.ServerResponse, status: number, message: string): void
   }
   res.writeHead(status, { "content-type": "application/json" });
   res.end(JSON.stringify({ error: message }));
+}
+
+async function readBoundedBody(
+  req: http.IncomingMessage,
+  maxBytes: number
+): Promise<Uint8Array | undefined> {
+  const method = (req.method ?? "GET").toUpperCase();
+  if (method === "GET" || method === "HEAD") return undefined;
+
+  const contentLength = req.headers["content-length"];
+  if (typeof contentLength === "string") {
+    const declared = Number(contentLength);
+    if (Number.isFinite(declared) && declared > maxBytes) {
+      throw new RequestBodyTooLargeError(`Request body exceeds ${maxBytes} bytes`);
+    }
+  }
+
+  const chunks: Buffer[] = [];
+  let total = 0;
+  for await (const chunk of req) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    total += buffer.length;
+    if (total > maxBytes) {
+      throw new RequestBodyTooLargeError(`Request body exceeds ${maxBytes} bytes`);
+    }
+    chunks.push(buffer);
+  }
+  return chunks.length ? Buffer.concat(chunks) : new Uint8Array();
+}
+
+function requestHeaders(req: http.IncomingMessage): Headers {
+  const headers = new Headers();
+  for (const [name, value] of Object.entries(req.headers)) {
+    if (Array.isArray(value)) {
+      for (const item of value) headers.append(name, item);
+    } else if (value !== undefined) {
+      headers.set(name, value);
+    }
+  }
+  return headers;
+}
+
+async function toWebRequest(req: http.IncomingMessage): Promise<Request> {
+  const body = await readBoundedBody(req, config.http.maxRequestBodyBytes);
+  const hostHeader = req.headers.host ?? `${host}:${port}`;
+  const url = new URL(req.url ?? "/mcp", `http://${hostHeader}`);
+  const init: RequestInit = {
+    method: req.method ?? "GET",
+    headers: requestHeaders(req)
+  };
+  if (body !== undefined) init.body = body;
+  return new Request(url, init);
+}
+
+async function writeWebResponse(
+  res: http.ServerResponse,
+  response: Response
+): Promise<void> {
+  res.statusCode = response.status;
+  if (response.statusText) res.statusMessage = response.statusText;
+  response.headers.forEach((value, name) => res.setHeader(name, value));
+
+  if (!response.body) {
+    res.end();
+    return;
+  }
+
+  const reader = response.body.getReader();
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!res.write(Buffer.from(value))) await once(res, "drain");
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  res.end();
 }
 
 const server = http.createServer((req, res) => {
@@ -151,7 +223,15 @@ async function handleRequest(
 
   activeRequests++;
   try {
-    await nodeMcpHandler(req, res);
+    const request = await toWebRequest(req);
+    const response = await mcpHandler.fetch(request);
+    await writeWebResponse(res, response);
+  } catch (error) {
+    if (error instanceof RequestBodyTooLargeError) {
+      reject(res, 413, error.message);
+      return;
+    }
+    throw error;
   } finally {
     activeRequests--;
   }

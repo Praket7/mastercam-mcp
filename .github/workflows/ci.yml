@@ -273,9 +273,18 @@ jobs:
           extra_args: --debug --only-verified
 
   dependency-review:
-    name: Dependency Review
+    name: Dependency Audit
     runs-on: ubuntu-latest
-    timeout-minutes: 10
-    if: github.event_name == 'pull_request'
+    timeout-minutes: 15
     steps:
-      - uses: actions/dependency-review-action@v4
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.19.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+      - run: pnpm install --frozen-lockfile
+      - name: Audit production dependencies for high-severity vulnerabilities
+        run: pnpm audit --prod --audit-level=high

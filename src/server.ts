@@ -1,6 +1,7 @@
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import { readFileSync } from "node:fs";
 import { MockBackend } from "./backend.js";
+import type { Backend } from "./backend.js";
 import { LiveBackend } from "./live-backend.js";
 import { createMcpServer } from "./mcp/create-server.js";
 import { selectedBackend } from "./platform.js";
@@ -24,7 +25,7 @@ if (audit.integrityError) {
   throw new Error(`Audit log integrity check failed: ${audit.integrityError}`);
 }
 
-const backend =
+const backend: Backend =
   mode === "mock"
     ? new MockBackend(fixture, audit)
     : new LiveBackend({

@@ -11,7 +11,7 @@ export const ConfigSchema = z.object({
     path: z.string().optional(),
     maxFileBytes: z.number().int().positive().max(100 * 1024 * 1024).default(10 * 1024 * 1024),
     maxRotatedFiles: z.number().int().positive().max(100).default(5)
-  }).default({}),
+  }).prefault({}),
   http: z.object({
     host: z.string().default("127.0.0.1"),
     port: z.number().int().min(1).max(65535).default(8787),
@@ -21,7 +21,7 @@ export const ConfigSchema = z.object({
     maxRequestBodyBytes: z.number().int().positive().max(100 * 1024 * 1024).default(2 * 1024 * 1024),
     maxConcurrency: z.number().int().positive().max(1000).default(32),
     requestTimeoutMs: z.number().int().positive().max(600_000).default(120_000)
-  }).default({}),
+  }).prefault({}),
   transport: z.object({
     connectTimeoutMs: z.number().int().positive().max(60_000).default(2000),
     idleTimeoutMs: z.number().int().positive().max(300_000).default(30_000),
@@ -30,8 +30,8 @@ export const ConfigSchema = z.object({
       failureThreshold: z.number().int().positive().max(100).default(3),
       cooldownMs: z.number().int().positive().max(300_000).default(5000),
       halfOpenSuccesses: z.number().int().positive().max(100).default(2)
-    }).default({})
-  }).default({})
+    }).prefault({})
+  }).prefault({})
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
