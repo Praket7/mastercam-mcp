@@ -100,20 +100,23 @@ test("tool call returns structuredContent plus text content (ARCH-02)", async ()
 
 test("preview requires quantity units; bare numbers are rejected (SAFE-01)", async () => {
   await withStdioClient(async client => {
-    await assert.rejects(
-      () => client.callTool({
-        name: "preview_operation_parameters",
-        arguments: { operationId: 4, changes: { feedRate: { value: 100 } } }
-      }),
-      /unit|invalid/i
-    );
-    await assert.rejects(
-      () => client.callTool({
-        name: "preview_operation_parameters",
-        arguments: { operationId: 4, changes: {} }
-      }),
-      /feedRate|spindleSpeed|invalid/i
-    );
+    const missingUnit = await client.callTool({
+      name: "preview_operation_parameters",
+      arguments: { operationId: 4, changes: { feedRate: { value: 100 } } }
+    });
+    assert.equal(missingUnit.isError, true);
+    const missingUnitText =
+      missingUnit.content[0] && "text" in missingUnit.content[0] ? missingUnit.content[0].text : "";
+    assert.match(missingUnitText, /unit|invalid/i);
+
+    const emptyChanges = await client.callTool({
+      name: "preview_operation_parameters",
+      arguments: { operationId: 4, changes: {} }
+    });
+    assert.equal(emptyChanges.isError, true);
+    const emptyText =
+      emptyChanges.content[0] && "text" in emptyChanges.content[0] ? emptyChanges.content[0].text : "";
+    assert.match(emptyText, /feedRate|spindleSpeed|invalid/i);
   });
 });
 
