@@ -133,7 +133,22 @@ export class MockBackend implements Backend {
 
   async call(request: Request): Promise<ToolResult> {
     try {
-      return await this.dispatch(request);
+      const result = await this.dispatch(request);
+      if (request.tool === "verify_change" && result.data && typeof result.data === "object") {
+        const data = result.data as Record<string, unknown>;
+        const transactionId = typeof request.arguments?.transactionId === "string" ? request.arguments.transactionId : undefined;
+        if (transactionId) data.transactionId = transactionId;
+        await this.audit.recordCritical({
+          requestId: request.id,
+          ...(transactionId ? { transactionId } : {}),
+          tool: request.tool,
+          target: { operationId: data.operationId },
+          policy: { action: "verify", reread: data.reread === true },
+          afterHash: sha256Of({ checks: data.checks, documentRevision: data.documentRevision }),
+          verified: result.ok === true && data.pass === true
+        });
+      }
+      return result;
     } catch (error) {
       return errorResult(request.tool, error instanceof Error ? error : new Error(String(error)));
     }
@@ -276,7 +291,8 @@ export class MockBackend implements Backend {
           checks,
           reread: true,
           documentRevision: this.revision,
-          verification: overallPass ? "verified" : "mismatch"
+          verification: overallPass ? "verified" : "mismatch",
+          ...(typeof args.transactionId === "string" ? { transactionId: args.transactionId } : {})
         }
       };
     }
@@ -399,11 +415,7 @@ export class MockBackend implements Backend {
       operationFingerprint: this.fingerprint(op)
     };
 
-    if (idempotencyKey) {
-      this.ledger.rememberIdempotency(idempotencyKey, request.tool, actionIdentity, actionIdentity, responseData);
-    }
-
-    this.audit.record({
+    await this.audit.recordCritical({
       requestId: request.id,
       transactionId: applied.transactionId,
       tool: request.tool,
@@ -411,8 +423,12 @@ export class MockBackend implements Backend {
       policy: { action: "apply", idempotencyKey },
       beforeHash: applied.beforeHash,
       afterHash: applied.afterHash,
-      verified: true
+      verified: false
     });
+
+    if (idempotencyKey) {
+      this.ledger.rememberIdempotency(idempotencyKey, request.tool, actionIdentity, actionIdentity, responseData);
+    }
     return this.ok(request, responseData);
   }
 
@@ -451,17 +467,19 @@ export class MockBackend implements Backend {
       rollbackOf: record.rollbackOf,
       documentRevision: this.revision
     };
-    if (idempotencyKey) {
-      this.ledger.rememberIdempotency(idempotencyKey, request.tool, actionIdentity, actionIdentity, responseData);
-    }
-    this.audit.record({
+
+    await this.audit.recordCritical({
       requestId: request.id,
       transactionId: record.transactionId,
       tool: request.tool,
       target: { operationId: op.id },
-      policy: { action: "rollback", idempotencyKey },
-      verified: true
+      policy: { action: "rollback", idempotencyKey, rollbackOf: record.rollbackOf },
+      verified: false
     });
+
+    if (idempotencyKey) {
+      this.ledger.rememberIdempotency(idempotencyKey, request.tool, actionIdentity, actionIdentity, responseData);
+    }
     return this.ok(request, responseData);
   }
 
@@ -484,15 +502,18 @@ export class MockBackend implements Backend {
       regenerated: true,
       progress: ["queued", "generating", "complete"]
     };
-    if (idempotencyKey) {
-      this.ledger.rememberIdempotency(idempotencyKey, request.tool, targetHash, argumentHash, responseData);
-    }
-    this.audit.record({
+
+    await this.audit.recordCritical({
       requestId: request.id,
       tool: request.tool,
       target: { operationIds: targets.map(op => op.id) },
-      policy: { action: "regenerate", idempotencyKey }
+      policy: { action: "regenerate", idempotencyKey },
+      verified: false
     });
+
+    if (idempotencyKey) {
+      this.ledger.rememberIdempotency(idempotencyKey, request.tool, targetHash, argumentHash, responseData);
+    }
     return this.ok(request, responseData);
   }
 
