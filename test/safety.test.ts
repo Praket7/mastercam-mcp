@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { ApprovalLedger, fingerprintOperation, documentRevision } from "../src/safety/approval.js";
-import { AuditLog } from "../src/audit/audit-log.js";
+import { AuditLog, redact } from "../src/audit/audit-log.js";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -72,6 +72,19 @@ test("documentRevision changes when operations change", () => {
   assert.notEqual(documentRevision(ops1), documentRevision(ops2));
 });
 
+test("audit redaction never reveals deep or generically named secrets", () => {
+  const value = {
+    token: "top-level-secret",
+    a: { b: { c: { d: { e: { f: { g: { accessToken: "deep-secret", visible: "should-not-leak" } } } } } } } }
+  };
+  const text = JSON.stringify(redact(value));
+  assert.equal(text.includes("top-level-secret"), false);
+  assert.equal(text.includes("deep-secret"), false);
+  assert.equal(text.includes("should-not-leak"), false);
+  assert.equal(text.includes("[redacted]"), true);
+  assert.equal(text.includes("[truncated]"), true);
+});
+
 test("AuditLog appends and queries entries", async () => {
   const path = join(tmpdir(), `test-audit-${Date.now()}.jsonl`);
   const log = new AuditLog({ path, enabled: true });
@@ -79,6 +92,14 @@ test("AuditLog appends and queries entries", async () => {
   await log.flush();
   const result = await import("node:fs/promises").then(m => m.readFile(path, "utf8")).then(t => t.trim().split("\n").filter(Boolean).length);
   assert.equal(result, 1);
+});
+
+test("recordCritical is persisted before it resolves", async () => {
+  const path = join(tmpdir(), `test-audit-critical-${Date.now()}.jsonl`);
+  const log = new AuditLog({ path, enabled: true });
+  await log.recordCritical({ requestId: "critical-1", tool: "apply_change", verified: false });
+  const text = await import("node:fs/promises").then(m => m.readFile(path, "utf8"));
+  assert.match(text, /"requestId":"critical-1"/);
 });
 
 test("AuditLog verifies hash chain", async () => {
@@ -125,6 +146,30 @@ test("AuditLog rotation preserves an anchored hash chain", async () => {
   assert.equal(rotated.ok, true);
   assert.ok(current.anchor);
   assert.equal(current.anchor, rotated.finalHash);
+  await fs.rm(path, { force: true });
+  await fs.rm(`${path}.1`, { force: true });
+  await fs.rm(`${path}.2`, { force: true });
+});
+
+test("AuditLog startup rejects tampering in a retained rotated segment", async () => {
+  const path = join(tmpdir(), `test-audit-tamper-${Date.now()}.jsonl`);
+  const options = { path, enabled: true, maxFileBytes: 350, maxRotatedFiles: 2 };
+  const log = new AuditLog(options);
+  for (let i = 0; i < 10; i++) {
+    log.record({ requestId: `tamper-${i}`, tool: "rotation_test", target: { i, padding: "x".repeat(80) } });
+  }
+  await log.flush();
+
+  const fs = await import("node:fs/promises");
+  const rotatedPath = `${path}.1`;
+  const original = await fs.readFile(rotatedPath, "utf8");
+  const tampered = original.replace("rotation_test", "rotation_fake");
+  assert.notEqual(tampered, original);
+  await fs.writeFile(rotatedPath, tampered, "utf8");
+
+  const restarted = new AuditLog(options);
+  assert.match(restarted.integrityError ?? "", /AUDIT_CHAIN_CORRUPT/);
+
   await fs.rm(path, { force: true });
   await fs.rm(`${path}.1`, { force: true });
   await fs.rm(`${path}.2`, { force: true });
