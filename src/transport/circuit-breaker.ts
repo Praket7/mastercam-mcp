@@ -24,6 +24,7 @@ export class CircuitBreaker {
   private state: BreakerState = "CLOSED";
   private failures = 0;
   private halfOpenSuccesses = 0;
+  private halfOpenProbeInFlight = false;
   private openedAt = 0;
   private readonly failureThreshold: number;
   private readonly cooldownMs: number;
@@ -46,6 +47,14 @@ export class CircuitBreaker {
       this.halfOpenSuccesses = 0;
     }
 
+    const halfOpenProbe = this.state === "HALF_OPEN";
+    if (halfOpenProbe) {
+      if (this.halfOpenProbeInFlight) {
+        throw new CircuitBreakerOpenError(Math.max(1, Math.min(this.cooldownMs, 250)));
+      }
+      this.halfOpenProbeInFlight = true;
+    }
+
     try {
       const result = await attempt();
       this.onSuccess();
@@ -54,6 +63,8 @@ export class CircuitBreaker {
       if (!this.isTransportError(error)) throw error;
       this.onFailure();
       throw error;
+    } finally {
+      if (halfOpenProbe) this.halfOpenProbeInFlight = false;
     }
   }
 
@@ -61,7 +72,6 @@ export class CircuitBreaker {
     const message = error instanceof Error ? error.message : String(error);
     return [
       "BACKEND_UNAVAILABLE",
-      "TIMEOUT",
       "ECONNRESET",
       "ECONNREFUSED",
       "EPIPE",
@@ -71,7 +81,8 @@ export class CircuitBreaker {
       "socket hang up",
       "socket error",
       "network error",
-      "invalid bridge response"
+      "invalid bridge response",
+      "RESPONSE_TOO_LARGE"
     ].some(token => message.includes(token));
   }
 
@@ -101,5 +112,6 @@ export class CircuitBreaker {
     this.state = "OPEN";
     this.openedAt = Date.now();
     this.failures = this.failureThreshold;
+    this.halfOpenSuccesses = 0;
   }
 }
