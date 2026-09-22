@@ -29,7 +29,7 @@ export function setupSheet(input: SetupInput) {
   };
 }
 
-// ---- semantic JSON diff (BUG-13 fix) ------------------------------------
+// ---- semantic JSON diff --------------------------------------------------
 
 export interface JsonDiffEntry { path: string; before?: unknown; after?: unknown }
 export interface JsonDiffResult {
@@ -84,24 +84,120 @@ function canonical(value: unknown): string {
   return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${canonical(v)}`).join(",")}}`;
 }
 
-/** Semantic comparison independent of key order and formatting (BUG-13). */
+/** Semantic comparison independent of key order and formatting. */
 export function compareJson(left: unknown, right: unknown): JsonDiffResult {
   const result: JsonDiffResult = { equal: true, added: [], removed: [], modified: [], unchangedCount: 0, leftHash: sha256Of(left), rightHash: sha256Of(right) };
   if (isPlainObject(left) && isPlainObject(right)) diffObjects(left, right, "", result);
+  else if (Array.isArray(left) && Array.isArray(right)) diffArrays(left, right, "$", result);
   else if (canonical(left) !== canonical(right)) result.modified.push({ path: "$", before: left, after: right });
   else result.unchangedCount++;
   result.equal = result.added.length === 0 && result.removed.length === 0 && result.modified.length === 0;
   return result;
 }
 
-// ---- NC sequence diff (BUG-14 fix): real Myers O(ND) ---------------------
+// ---- tool database comparison -------------------------------------------
+
+export interface ToolDatabaseChange {
+  identity: string;
+  before?: Record<string, unknown>;
+  after?: Record<string, unknown>;
+  fields?: JsonDiffEntry[];
+}
+
+export interface ToolDatabaseDiffResult {
+  equal: boolean;
+  leftHash: string;
+  rightHash: string;
+  addedTools: ToolDatabaseChange[];
+  removedTools: ToolDatabaseChange[];
+  modifiedTools: ToolDatabaseChange[];
+  unchangedTools: number;
+  identityWarnings: string[];
+}
+
+function toolRecords(value: unknown): Array<Record<string, unknown>> | undefined {
+  if (Array.isArray(value)) return value.filter(isPlainObject);
+  if (isPlainObject(value) && Array.isArray(value.tools)) return value.tools.filter(isPlainObject);
+  return undefined;
+}
+
+function scalarIdentity(value: unknown): string | undefined {
+  if (typeof value === "string" && value.trim()) return value.trim();
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  return undefined;
+}
+
+function toolIdentity(tool: Record<string, unknown>): string {
+  for (const key of ["number", "toolNumber", "tool_number", "id", "guid", "geometryId", "vendorId"]) {
+    const value = scalarIdentity(tool[key]);
+    if (value !== undefined) return `${key}:${value}`;
+  }
+  return `content:${sha256Of(tool)}`;
+}
+
+function indexTools(tools: Array<Record<string, unknown>>, side: string, warnings: string[]) {
+  const result = new Map<string, Record<string, unknown>>();
+  const duplicateCounts = new Map<string, number>();
+  for (const tool of tools) {
+    const base = toolIdentity(tool);
+    const count = duplicateCounts.get(base) ?? 0;
+    duplicateCounts.set(base, count + 1);
+    const identity = count === 0 ? base : `${base}#${count + 1}`;
+    if (count > 0) warnings.push(`${side} contains duplicate tool identity ${base}; occurrence ${count + 1} was disambiguated by order`);
+    result.set(identity, tool);
+  }
+  return result;
+}
+
+/**
+ * Domain-aware tool database comparison. Tool order is ignored; matching is
+ * based on stable tool identity and only then are fields compared.
+ */
+export function compareToolDatabases(left: unknown, right: unknown): ToolDatabaseDiffResult | JsonDiffResult {
+  const leftTools = toolRecords(left);
+  const rightTools = toolRecords(right);
+  if (!leftTools || !rightTools) return compareJson(left, right);
+
+  const identityWarnings: string[] = [];
+  const leftIndex = indexTools(leftTools, "left database", identityWarnings);
+  const rightIndex = indexTools(rightTools, "right database", identityWarnings);
+  const identities = new Set([...leftIndex.keys(), ...rightIndex.keys()]);
+  const addedTools: ToolDatabaseChange[] = [];
+  const removedTools: ToolDatabaseChange[] = [];
+  const modifiedTools: ToolDatabaseChange[] = [];
+  let unchangedTools = 0;
+
+  for (const identity of identities) {
+    const before = leftIndex.get(identity);
+    const after = rightIndex.get(identity);
+    if (!before && after) { addedTools.push({ identity, after }); continue; }
+    if (before && !after) { removedTools.push({ identity, before }); continue; }
+    if (!before || !after) continue;
+    const fieldDiff = compareJson(before, after);
+    if (fieldDiff.equal) unchangedTools++;
+    else modifiedTools.push({ identity, before, after, fields: [...fieldDiff.added, ...fieldDiff.removed, ...fieldDiff.modified] });
+  }
+
+  return {
+    equal: addedTools.length === 0 && removedTools.length === 0 && modifiedTools.length === 0,
+    leftHash: sha256Of(left),
+    rightHash: sha256Of(right),
+    addedTools,
+    removedTools,
+    modifiedTools,
+    unchangedTools,
+    identityWarnings
+  };
+}
+
+// ---- NC sequence + modal semantic diff ----------------------------------
 
 export type DiffOpType = "equal" | "insert" | "delete";
 export interface DiffOp { type: DiffOpType; before?: string; after?: string; line: number }
 
 /**
  * Myers diff producing edit-script ops. A one-line insertion no longer shifts
- * every later comparison the way the old index-aligned loop did.
+ * every later comparison the way an index-aligned loop would.
  */
 export function sequenceDiff(a: string[], b: string[]): DiffOp[] {
   const n = a.length;
@@ -126,18 +222,16 @@ export function sequenceDiff(a: string[], b: string[]): DiffOp[] {
     v = new Map(v);
   }
   if (foundD < 0) {
-    // Unreachable for finite inputs, but keep a safe fallback.
     const ops: DiffOp[] = a.map((line, i) => ({ type: "delete" as const, before: line, line: i + 1 }));
     ops.push(...b.map((line, i) => ({ type: "insert" as const, after: line, line: i + 1 })));
     return ops;
   }
-  // Backtrack the edit script.
   const raw: DiffOp[] = [];
   let x = n;
   let y = m;
   for (let d = foundD; d > 0; d--) {
     const vd = trace[d];
-    if (!vd) break; // cannot happen for a d that was reached during the search
+    if (!vd) break;
     const k = x - y;
     const prevK = (k === -d || (k !== d && (vd.get(k - 1) ?? 0) < (vd.get(k + 1) ?? 0))) ? k + 1 : k - 1;
     const prevX = vd.get(prevK) ?? 0;
@@ -168,45 +262,115 @@ export interface NcSemanticSummary {
   workOffsets: string[];
   toolChanges: number[];
   spindleChanges: number[];
+  feedValues: number[];
   feedWords: number;
   rapidMoves: number;
   coolant: { on: number; off: number };
+  coolantSequence: string[];
+  compensationModes: string[];
+  toolLengthCompensation: string[];
+  cannedCycles: string[];
+  safeRetracts: string[];
   programStops: number;
   optionalStops: number;
 }
 
+export interface NcSemanticDelta {
+  toolChanges: number;
+  feedChanges: number;
+  spindleChanges: number;
+  rapidMoves: number;
+  rapidMoveChanges: number;
+  workOffsetChanges: number;
+  compensationChanges: number;
+  toolLengthCompensationChanges: number;
+  cannedCycleChanges: number;
+  coolantChanges: number;
+  safeRetractChanges: number;
+  unitModeChanges: number;
+  distanceModeChanges: number;
+}
+
+function stripNcComments(raw: string): string {
+  return raw.replace(/\([^)]*\)/g, " ").replace(/;.*$/, " ").trim();
+}
+
+function numberWords(line: string, letter: string): number[] {
+  const regex = new RegExp(`\\b${letter}([+-]?(?:\\d+(?:\\.\\d*)?|\\.\\d+))`, "gi");
+  return [...line.matchAll(regex)].map(match => Number(match[1])).filter(Number.isFinite);
+}
+
 export function summarizeNc(text: string): NcSemanticSummary {
-  const summary: NcSemanticSummary = { workOffsets: [], toolChanges: [], spindleChanges: [], feedWords: 0, rapidMoves: 0, coolant: { on: 0, off: 0 }, programStops: 0, optionalStops: 0 };
+  const summary: NcSemanticSummary = {
+    workOffsets: [], toolChanges: [], spindleChanges: [], feedValues: [], feedWords: 0,
+    rapidMoves: 0, coolant: { on: 0, off: 0 }, coolantSequence: [], compensationModes: [],
+    toolLengthCompensation: [], cannedCycles: [], safeRetracts: [], programStops: 0, optionalStops: 0
+  };
   for (const raw of text.split(/\r?\n/)) {
-    const line = raw.trim();
+    const line = stripNcComments(raw).toUpperCase();
     if (!line) continue;
-    if (/\bG20\b/i.test(line)) summary.units = "inch";
-    if (/\bG21\b/i.test(line)) summary.units = "mm";
-    if (/\bG90\b/i.test(line)) summary.absoluteMode = "absolute";
-    if (/\bG91\b/i.test(line)) summary.absoluteMode = "incremental";
-    const offset = line.match(/\bG5[4-9]\b/i);
-    if (offset) summary.workOffsets.push(offset[0].toUpperCase());
-    const tool = line.match(/\bT(\d+)\b/i);
-    if (tool) summary.toolChanges.push(Number(tool[1]));
-    const speed = line.match(/\bS(\d+)\b/i);
-    if (speed) summary.spindleChanges.push(Number(speed[1]));
-    if (/\bF\d/i.test(line)) summary.feedWords++;
-    if (/\bG0\b/i.test(line)) summary.rapidMoves++;
-    if (/\bM8\b/i.test(line)) summary.coolant.on++;
-    if (/\bM9\b/i.test(line)) summary.coolant.off++;
-    if (/\bM0\b/i.test(line)) summary.programStops++;
-    if (/\bM1\b/i.test(line)) summary.optionalStops++;
+    if (/\bG20\b/.test(line)) summary.units = "inch";
+    if (/\bG21\b/.test(line)) summary.units = "mm";
+    if (/\bG90\b/.test(line)) summary.absoluteMode = "absolute";
+    if (/\bG91\b/.test(line)) summary.absoluteMode = "incremental";
+
+    for (const match of line.matchAll(/\bG(?:5[4-9]|54\.1\s*P\d+)\b/g)) summary.workOffsets.push(match[0].replace(/\s+/g, " "));
+    for (const value of numberWords(line, "T")) summary.toolChanges.push(value);
+    for (const value of numberWords(line, "S")) summary.spindleChanges.push(value);
+    const feeds = numberWords(line, "F");
+    summary.feedValues.push(...feeds);
+    summary.feedWords += feeds.length;
+    if (/\bG0?0\b/.test(line)) summary.rapidMoves++;
+
+    for (const match of line.matchAll(/\bM(7|8|9)\b/g)) {
+      const code = `M${match[1]}`;
+      summary.coolantSequence.push(code);
+      if (code === "M9") summary.coolant.off++;
+      else summary.coolant.on++;
+    }
+    for (const match of line.matchAll(/\bG4[012]\b/g)) summary.compensationModes.push(match[0]);
+    for (const match of line.matchAll(/\bG4[349]\b/g)) summary.toolLengthCompensation.push(match[0]);
+    for (const match of line.matchAll(/\bG8\d\b/g)) summary.cannedCycles.push(match[0]);
+    for (const match of line.matchAll(/\bG(?:28|30|53)\b/g)) summary.safeRetracts.push(match[0]);
+    if (/\bM0?0\b/.test(line)) summary.programStops++;
+    if (/\bM0?1\b/.test(line)) summary.optionalStops++;
   }
-  summary.workOffsets = [...new Set(summary.workOffsets)];
-  summary.toolChanges = [...new Set(summary.toolChanges)];
-  summary.spindleChanges = summary.spindleChanges.slice(0, 50);
+  summary.spindleChanges = summary.spindleChanges.slice(0, 200);
+  summary.feedValues = summary.feedValues.slice(0, 500);
   return summary;
+}
+
+function countSequenceChanges<T>(before: T[], after: T[]): number {
+  let changes = 0;
+  const max = Math.max(before.length, after.length);
+  for (let i = 0; i < max; i++) if (before[i] !== after[i]) changes++;
+  return changes;
+}
+
+function semanticDelta(before: NcSemanticSummary, after: NcSemanticSummary): NcSemanticDelta {
+  return {
+    toolChanges: countSequenceChanges(before.toolChanges, after.toolChanges),
+    feedChanges: countSequenceChanges(before.feedValues, after.feedValues),
+    spindleChanges: countSequenceChanges(before.spindleChanges, after.spindleChanges),
+    rapidMoves: after.rapidMoves,
+    rapidMoveChanges: Math.abs(after.rapidMoves - before.rapidMoves),
+    workOffsetChanges: countSequenceChanges(before.workOffsets, after.workOffsets),
+    compensationChanges: countSequenceChanges(before.compensationModes, after.compensationModes),
+    toolLengthCompensationChanges: countSequenceChanges(before.toolLengthCompensation, after.toolLengthCompensation),
+    cannedCycleChanges: countSequenceChanges(before.cannedCycles, after.cannedCycles),
+    coolantChanges: countSequenceChanges(before.coolantSequence, after.coolantSequence),
+    safeRetractChanges: countSequenceChanges(before.safeRetracts, after.safeRetracts),
+    unitModeChanges: before.units === after.units ? 0 : 1,
+    distanceModeChanges: before.absoluteMode === after.absoluteMode ? 0 : 1
+  };
 }
 
 export interface NcDiffResult {
   equal: boolean;
   totalChangeCount: number;
+  totalChanges: number;
   displayedChangeCount: number;
+  displayedChanges: number;
   truncated: boolean;
   addedLines: number;
   removedLines: number;
@@ -215,74 +379,80 @@ export interface NcDiffResult {
   toolsAfter: number[];
   changes: NcChange[];
   semantic: { before: NcSemanticSummary; after: NcSemanticSummary };
+  semanticSummary: NcSemanticDelta;
+}
+
+function pairNcChanges(changes: NcChange[]): NcChange[] {
+  const paired: NcChange[] = [];
+  for (let i = 0; i < changes.length; i++) {
+    const current = changes[i];
+    if (!current) continue;
+    const next = changes[i + 1];
+    const adjacent = next && Math.abs(next.line - current.line) <= 2;
+    if (adjacent && current.kind === "removed" && next?.kind === "added") {
+      paired.push({ line: Math.min(current.line, next.line), kind: "modified", before: current.before, after: next.after });
+      i++;
+    } else if (adjacent && current.kind === "added" && next?.kind === "removed") {
+      paired.push({ line: Math.min(current.line, next.line), kind: "modified", before: next.before, after: current.after });
+      i++;
+    } else paired.push(current);
+  }
+  return paired;
 }
 
 /**
- * Sequence diff of NC files with semantic summary (BUG-14 + section 36).
- * `displayLimit` bounds the returned change list while totalChangeCount
- * still reports the truth about how many changes exist.
+ * Sequence diff of NC files plus modal manufacturing semantics. Display
+ * truncation is based on the paired change list, so a one-line replacement is
+ * one displayed modification rather than a false truncation caused by its
+ * underlying delete+insert edit script.
  */
 export function compareNc(left: string, right: string, displayLimit = 200): NcDiffResult {
   const a = left.split(/\r?\n/).filter(line => line.trim().length > 0);
   const b = right.split(/\r?\n/).filter(line => line.trim().length > 0);
   const ops = sequenceDiff(a, b);
-  const changes: NcChange[] = [];
+  const rawChanges: NcChange[] = [];
   let added = 0;
   let removed = 0;
   for (const op of ops) {
     if (op.type === "equal") continue;
     if (op.type === "insert") {
       added++;
-      if (changes.length < displayLimit) changes.push({ line: op.line, kind: "added", after: op.after });
+      rawChanges.push({ line: op.line, kind: "added", after: op.after });
     } else {
       removed++;
-      if (changes.length < displayLimit) changes.push({ line: op.line, kind: "removed", before: op.before });
+      rawChanges.push({ line: op.line, kind: "removed", before: op.before });
     }
   }
-  // Pair a removal with the insertion that replaced it as a modification.
-  const paired: NcChange[] = [];
-  for (let i = 0; i < changes.length; i++) {
-    const current = changes[i];
-    if (!current) continue;
-    const next = changes[i + 1];
-    if (current.kind === "removed" && next && next.kind === "added" && next.line >= current.line && next.line - current.line <= 2) {
-      paired.push({ line: current.line, kind: "modified", before: current.before, after: next.after });
-      i++;
-    } else paired.push(current);
-  }
+
+  const paired = pairNcChanges(rawChanges);
+  const limit = Math.max(0, Math.floor(displayLimit));
+  const displayed = paired.slice(0, limit);
   const modified = paired.filter(change => change.kind === "modified").length;
   const beforeSummary = summarizeNc(left);
   const afterSummary = summarizeNc(right);
-  // Backward compatibility aliases for old tests
-  const toolsBeforeArr = [...new Set([...left.matchAll(/\bT(\d+)\b/gi)].map(m => Number(m[1])))].sort((a,b)=>a-b);
-  const toolsAfterArr = [...new Set([...right.matchAll(/\bT(\d+)\b/gi)].map(m => Number(m[1])))].sort((a,b)=>a-b);
+  const toolsBeforeArr = [...new Set(beforeSummary.toolChanges)].sort((x, y) => x - y);
+  const toolsAfterArr = [...new Set(afterSummary.toolChanges)].sort((x, y) => x - y);
+  const totalRawChanges = added + removed;
+
   return {
-    equal: added === 0 && removed === 0,
-    totalChangeCount: added + removed,
-    totalChanges: added + removed,
-    displayedChangeCount: paired.length,
-    displayedChanges: paired.length,
-    truncated: added + removed > paired.length,
+    equal: totalRawChanges === 0,
+    totalChangeCount: totalRawChanges,
+    totalChanges: totalRawChanges,
+    displayedChangeCount: displayed.length,
+    displayedChanges: displayed.length,
+    truncated: paired.length > limit,
     addedLines: added,
     removedLines: removed,
     modifiedLines: modified,
     toolsBefore: toolsBeforeArr,
     toolsAfter: toolsAfterArr,
-    changes: paired,
+    changes: displayed,
     semantic: { before: beforeSummary, after: afterSummary },
-semanticSummary: {
-        toolChanges: toolsBeforeArr.length !== toolsAfterArr.length ? 1 : Math.abs(afterSummary.toolChanges.length - beforeSummary.toolChanges.length) || (added + removed > 0 ? 1 : 0),
-        feedChanges: 1,
-        spindleChanges: 0,
-        rapidMoves: afterSummary.rapidMoves,
-        workOffsetChanges: 0,
-        compensationChanges: 0,
-        coolantChanges: 0
-      }
-  } as unknown as NcDiffResult & { totalChanges: number; displayedChanges: number; toolsBefore: number[]; toolsAfter: number[]; semanticSummary: any };
+    semanticSummary: semanticDelta(beforeSummary, afterSummary)
+  };
 }
 
-// ---- machine profile validation (section 37) ----------------------------
+// ---- machine profile validation -----------------------------------------
 
 export interface ValidationCheck {
   name: string;
