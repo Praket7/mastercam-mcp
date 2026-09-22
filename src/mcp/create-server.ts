@@ -5,16 +5,32 @@ import * as contractsModule from "../contracts.js";
 import { allowed, DEFAULT_PROFILE, categoryOf, SUPPORTED_PROTOCOL_REVISIONS } from "../contracts.js";
 import type { Profile } from "../contracts.js";
 import type { Backend, ToolResult } from "../backend.js";
+import { LiveBackend } from "../live-backend.js";
 import { doctor } from "../diagnostics.js";
 import { VERSION } from "../version.js";
 import { compareJson, compareNc, setupSheet, validateMachine } from "../shop.js";
 import { defaultPipe, selectedBackend } from "../platform.js";
 import { TOOL_DEFINITIONS, ToolEnvelopeSchema } from "./registry.js";
+import type { ToolDefinition } from "./registry.js";
 import { mastercamError } from "../errors.js";
 
 const READ_DEADLINE_MS = 30_000;
 const WRITE_DEADLINE_MS = 90_000;
 const ADVANCED_DEADLINE_MS = 120_000;
+
+/**
+ * The current native adapters are Stage A environment bridges. Keep MCP
+ * discovery truthful: a live server must not advertise fixture-only tools.
+ * Portable/mock mode continues to expose the complete registered contract.
+ */
+const LIVE_STAGE_A_TOOL_NAMES = new Set(["mastercam_status", "mastercam_capabilities"]);
+
+export function advertisedToolDefinitions(
+  backendKind: "mock" | "live"
+): ToolDefinition[] {
+  if (backendKind === "mock") return TOOL_DEFINITIONS;
+  return TOOL_DEFINITIONS.filter(definition => LIVE_STAGE_A_TOOL_NAMES.has(definition.name));
+}
 
 function envelope(result: ToolResult, schema: z.ZodType = ToolEnvelopeSchema) {
   const parsed = schema.safeParse(result);
@@ -53,41 +69,50 @@ export function createMcpServer(
   profile: Profile = DEFAULT_PROFILE,
   hardReadOnly = true
 ) {
+  const backendKind: "mock" | "live" = backend instanceof LiveBackend ? "live" : "mock";
+  const definitions = advertisedToolDefinitions(backendKind);
   const server = new McpServer(
     { name: "mastercam-mcp", version: VERSION },
     {
       instructions:
-        "Inspect before mutating. Mutations require preview_operation_parameters then apply_operation_parameter_preview with the returned approvalToken. Rollback uses the server-issued transactionId. Fixture data never proves live Mastercam behavior."
+        backendKind === "live"
+          ? "This native adapter is Stage A. Use mastercam_status and mastercam_capabilities only; broader live Mastercam mappings require licensed acceptance before they are advertised."
+          : "Inspect before mutating. Mutations require preview_operation_parameters then apply_operation_parameter_preview with the returned approvalToken. Rollback uses the server-issued transactionId. Fixture data never proves live Mastercam behavior."
     }
   );
 
-  server.registerResource(
-    "active-part",
-    "mastercam://active-part",
-    { description: "Active part information from Mastercam", mimeType: "application/json" },
-    async () => {
-      const data = await backend.call({ id: randomUUID(), tool: "get_active_part", arguments: {} });
-      return {
-        contents: [
-          { uri: "mastercam://active-part", mimeType: "application/json", text: JSON.stringify(data) }
-        ]
-      };
-    }
-  );
+  // Fixture resources mirror the portable inspection contract. The current
+  // live Stage-A adapter cannot serve these resources, so do not advertise
+  // resources that would deterministically return UNSUPPORTED_CAPABILITY.
+  if (backendKind === "mock") {
+    server.registerResource(
+      "active-part",
+      "mastercam://active-part",
+      { description: "Active part information from the fixture backend", mimeType: "application/json" },
+      async () => {
+        const data = await backend.call({ id: randomUUID(), tool: "get_active_part", arguments: {} });
+        return {
+          contents: [
+            { uri: "mastercam://active-part", mimeType: "application/json", text: JSON.stringify(data) }
+          ]
+        };
+      }
+    );
 
-  server.registerResource(
-    "operations",
-    "mastercam://operations",
-    { description: "Operation listing from Mastercam", mimeType: "application/json" },
-    async () => {
-      const data = await backend.call({ id: randomUUID(), tool: "list_operations", arguments: {} });
-      return {
-        contents: [
-          { uri: "mastercam://operations", mimeType: "application/json", text: JSON.stringify(data) }
-        ]
-      };
-    }
-  );
+    server.registerResource(
+      "operations",
+      "mastercam://operations",
+      { description: "Operation listing from the fixture backend", mimeType: "application/json" },
+      async () => {
+        const data = await backend.call({ id: randomUUID(), tool: "list_operations", arguments: {} });
+        return {
+          contents: [
+            { uri: "mastercam://operations", mimeType: "application/json", text: JSON.stringify(data) }
+          ]
+        };
+      }
+    );
+  }
 
   server.registerResource(
     "diagnostics",
@@ -103,7 +128,7 @@ export function createMcpServer(
     }
   );
 
-  for (const definition of TOOL_DEFINITIONS) {
+  for (const definition of definitions) {
     server.registerTool(
       definition.name,
       {
