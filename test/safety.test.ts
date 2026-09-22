@@ -1,24 +1,28 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { ApprovalLedger, fingerprintOperation, documentRevision } from "../src/safety/approval.js";
-import { AuditLog } from "../src/audit/audit-log.js";
+import { AuditLog, redact } from "../src/audit/audit-log.js";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-test("ApprovalLedger creates and validates approvals", () => {
-  const ledger = new ApprovalLedger();
-  const preview = ledger.createPreview({
+function previewInput(operationId: number) {
+  return {
     tool: "preview_operation_parameters",
-    operationId: 1,
+    operationId,
     changes: { feedRate: { value: 200, unit: "mm/min" } },
     before: { feedRate: { value: 100, unit: "mm/min" } },
     after: { feedRate: { value: 200, unit: "mm/min" } },
-    documentRevision: "rev-1",
-    operationFingerprint: "fp-1",
-    beforeHash: "hash-before",
-    afterHash: "hash-after",
+    documentRevision: `rev-${operationId}`,
+    operationFingerprint: `fp-${operationId}`,
+    beforeHash: `h${operationId}-before`,
+    afterHash: `h${operationId}-after`,
     requiresRegeneration: true
-  });
+  };
+}
+
+test("ApprovalLedger creates and validates approvals", () => {
+  const ledger = new ApprovalLedger();
+  const preview = ledger.createPreview(previewInput(1));
   assert.ok(preview.approvalToken.startsWith("appr_"));
   const peeked = ledger.peekPreview(preview.approvalToken);
   assert.equal(peeked.operationId, 1);
@@ -29,36 +33,24 @@ test("ApprovalLedger creates and validates approvals", () => {
 
 test("ApprovalLedger rejects stale fingerprint", () => {
   const ledger = new ApprovalLedger();
-  const preview = ledger.createPreview({
-    tool: "preview_operation_parameters",
-    operationId: 1,
-    changes: { feedRate: { value: 200, unit: "mm/min" } },
-    before: { feedRate: { value: 100, unit: "mm/min" } },
-    after: { feedRate: { value: 200, unit: "mm/min" } },
-    documentRevision: "rev-1",
-    operationFingerprint: "fp-1",
-    beforeHash: "h1",
-    afterHash: "h2",
-    requiresRegeneration: true
-  });
+  const preview = ledger.createPreview(previewInput(1));
   assert.throws(() => ledger.consumePreview(preview.approvalToken, { operationFingerprint: "fp-2", documentRevision: "rev-1" }), /STALE_PREVIEW/);
 });
 
 test("ApprovalLedger rejects stale revision", () => {
   const ledger = new ApprovalLedger();
-  const preview = ledger.createPreview({
-    tool: "preview_operation_parameters",
-    operationId: 1,
-    changes: { feedRate: { value: 200, unit: "mm/min" } },
-    before: { feedRate: { value: 100, unit: "mm/min" } },
-    after: { feedRate: { value: 200, unit: "mm/min" } },
-    documentRevision: "rev-1",
-    operationFingerprint: "fp-1",
-    beforeHash: "h1",
-    afterHash: "h2",
-    requiresRegeneration: true
-  });
+  const preview = ledger.createPreview(previewInput(1));
   assert.throws(() => ledger.consumePreview(preview.approvalToken, { operationFingerprint: "fp-1", documentRevision: "rev-2" }), /STALE_PREVIEW/);
+});
+
+test("ApprovalLedger evicts oldest preview when its configured bound is exceeded", () => {
+  const ledger = new ApprovalLedger(60_000, 2);
+  const first = ledger.createPreview(previewInput(1));
+  const second = ledger.createPreview(previewInput(2));
+  const third = ledger.createPreview(previewInput(3));
+  assert.throws(() => ledger.peekPreview(first.approvalToken), /APPROVAL_TOKEN_INVALID/);
+  assert.equal(ledger.peekPreview(second.approvalToken).operationId, 2);
+  assert.equal(ledger.peekPreview(third.approvalToken).operationId, 3);
 });
 
 test("fingerprintOperation is deterministic", () => {
@@ -72,6 +64,26 @@ test("documentRevision changes when operations change", () => {
   assert.notEqual(documentRevision(ops1), documentRevision(ops2));
 });
 
+test("audit redaction never returns raw deep object tails", () => {
+  const deep = { a: { b: { c: { d: { e: { f: { g: { accessToken: "should-never-appear", value: "also-hidden-by-depth-limit" } } } } } } } } };
+  const sanitized = redact(deep);
+  const text = JSON.stringify(sanitized);
+  assert.equal(text.includes("should-never-appear"), false);
+  assert.equal(text.includes("also-hidden-by-depth-limit"), false);
+  assert.equal(text.includes("[truncated]"), true);
+});
+
+test("audit redaction recognizes common credential key variants", () => {
+  const sanitized = redact({ apiKey: "a", client_secret: "b", cookie: "c", sessionId: "d", privateKey: "e" }) as Record<string, unknown>;
+  assert.deepEqual(sanitized, {
+    apiKey: "[redacted]",
+    client_secret: "[redacted]",
+    cookie: "[redacted]",
+    sessionId: "[redacted]",
+    privateKey: "[redacted]"
+  });
+});
+
 test("AuditLog appends and queries entries", async () => {
   const path = join(tmpdir(), `test-audit-${Date.now()}.jsonl`);
   const log = new AuditLog({ path, enabled: true });
@@ -79,6 +91,15 @@ test("AuditLog appends and queries entries", async () => {
   await log.flush();
   const result = await import("node:fs/promises").then(m => m.readFile(path, "utf8")).then(t => t.trim().split("\n").filter(Boolean).length);
   assert.equal(result, 1);
+});
+
+test("AuditLog recordCritical waits for durable append", async () => {
+  const path = join(tmpdir(), `test-audit-critical-${Date.now()}.jsonl`);
+  const log = new AuditLog({ path, enabled: true });
+  const entry = await log.recordCritical({ requestId: "critical-1", tool: "apply_operation_parameter_preview", verified: false });
+  assert.equal(entry.sequence, 1);
+  const text = await import("node:fs/promises").then(m => m.readFile(path, "utf8"));
+  assert.match(text, /apply_operation_parameter_preview/);
 });
 
 test("AuditLog verifies hash chain", async () => {
