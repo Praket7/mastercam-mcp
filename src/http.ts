@@ -7,7 +7,7 @@ import { MockBackend } from "./backend.js";
 import { LiveBackend } from "./live-backend.js";
 import { createMcpServer } from "./mcp/create-server.js";
 import { selectedBackend } from "./platform.js";
-import { classifyAccess, classifyRequest } from "./http-security.js";
+import { classifyAccess, classifyRequest, isLoopbackAddress } from "./http-security.js";
 import type { Backend } from "./backend.js";
 import { AuditLog } from "./audit/audit-log.js";
 import { loadConfig } from "./config.js";
@@ -48,6 +48,11 @@ if (remote && allowedOrigins.size === 0) {
     "MASTERCAM_MCP_ALLOWED_ORIGINS is required when remote HTTP access is enabled"
   );
 }
+if (!remote && !isLoopbackAddress(host)) {
+  throw new Error(
+    `Local-only HTTP mode may bind only to loopback; refusing MASTERCAM_MCP_HTTP_HOST=${host}. Set MASTERCAM_MCP_ALLOW_REMOTE=1 and configure origins/authentication for remote access.`
+  );
+}
 
 let activeRequests = 0;
 let shuttingDown = false;
@@ -74,7 +79,8 @@ function verdict(req: http.IncomingMessage) {
       host: req.headers.host,
       authorization: req.headers.authorization
     },
-    { token, allowedOrigins, remote }
+    { token, allowedOrigins, remote },
+    req.socket.remoteAddress
   );
 }
 
@@ -132,13 +138,14 @@ function requestHeaders(req: http.IncomingMessage): Headers {
   return headers;
 }
 
-async function toWebRequest(req: http.IncomingMessage): Promise<Request> {
+async function toWebRequest(req: http.IncomingMessage, signal?: AbortSignal): Promise<Request> {
   const body = await readBoundedBody(req, config.http.maxRequestBodyBytes);
   const hostHeader = req.headers.host ?? `${host}:${port}`;
   const url = new URL(req.url ?? "/mcp", `http://${hostHeader}`);
   const init: RequestInit = {
     method: req.method ?? "GET",
-    headers: requestHeaders(req)
+    headers: requestHeaders(req),
+    ...(signal ? { signal } : {})
   };
   if (body !== undefined) init.body = body;
   return new Request(url, init);
@@ -192,7 +199,8 @@ async function handleRequest(
         host: req.headers.host,
         authorization: req.headers.authorization
       },
-      { token, allowedOrigins, remote }
+      { token, allowedOrigins, remote },
+      req.socket.remoteAddress
     );
     if (access.status !== 200) {
       reject(res, access.status, access.message ?? "Rejected");
@@ -226,18 +234,30 @@ async function handleRequest(
     return;
   }
 
+  const controller = new AbortController();
+  const onAborted = () => controller.abort(new Error("HTTP client disconnected"));
+  const onResponseClose = () => {
+    if (!res.writableEnded) controller.abort(new Error("HTTP client disconnected"));
+  };
+  req.once("aborted", onAborted);
+  res.once("close", onResponseClose);
+
   activeRequests++;
   try {
-    const request = await toWebRequest(req);
+    const request = await toWebRequest(req, controller.signal);
     const response = await mcpHandler.fetch(request);
+    if (controller.signal.aborted) return;
     await writeWebResponse(res, response);
   } catch (error) {
     if (error instanceof RequestBodyTooLargeError) {
       reject(res, 413, error.message);
       return;
     }
+    if (controller.signal.aborted) return;
     throw error;
   } finally {
+    req.off("aborted", onAborted);
+    res.off("close", onResponseClose);
     activeRequests--;
   }
 }
