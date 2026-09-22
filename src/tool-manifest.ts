@@ -181,7 +181,15 @@ export const TOOL_MANIFEST: readonly ToolManifestEntry[] = [
     tier: "UNAVAILABLE",
     tierEvidence: "Direct tool-change mutation is not exposed until it has a preview/approval workflow and a verified backend mapping."
   }),
-  write("regenerate_toolpath", "Regenerate specific operations by exact id", mutations.RegenerateToolpathSchema),
+  write("regenerate_toolpath", "Regenerate specific operations by exact id", mutations.RegenerateToolpathSchema, {
+    registered: false,
+    mockSupport: false,
+    legacySupport: false,
+    mc2027Support: false,
+    requiresExactTarget: true,
+    tier: "UNAVAILABLE",
+    tierEvidence: "Regeneration is withheld until it is transaction-bound to the exact approved change instead of accepting operation ids alone."
+  }),
   write("update_stock", "Update stock dimensions with explicit units", mutations.UpdateStockSchema, {
     registered: false,
     mockSupport: false,
