@@ -8,4 +8,4 @@ Do not report proprietary Mastercam files, customer files, credentials, license 
 
 The current MCP HTTP implementation is stateless for the `2026-07-28` protocol and does not rely on `Mcp-Session-Id`. Mutation safety state is carried only by bounded server-minted approval, transaction, and idempotency handles.
 
-Audit-log integrity failures are fail-closed at startup for audited operation. Audit entries are hash chained across restarts and rotations; secrets, authorization values, approval tokens, rollback tokens, access tokens, refresh tokens, and idempotency keys are redacted before persistence.
+Audit-log integrity failures in the active audit segment are fail-closed at startup. Entries are hash chained across restarts, and rotation writes an anchor referencing the predecessor segment so rotated files can be verified as a chain. Startup does not currently recurse through every historical rotated segment; historical segments should be retained and verified as part of audit review. Secrets, authorization values, approval tokens, rollback tokens, access tokens, refresh tokens, and idempotency keys are redacted before persistence.
