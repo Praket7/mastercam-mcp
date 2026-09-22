@@ -43,18 +43,23 @@ export function classifyRequest(
 ): RequestVerdict {
   if (url !== "/mcp") return { status: 404, message: "Not found" };
   const origin = typeof headers.origin === "string" ? headers.origin : undefined;
-  if (origin) {
-    const hostAllowed = !config.remote || isLocalHost(typeof headers.host === "string" ? headers.host : undefined);
-    if (!config.allowedOrigins.has(origin) || !hostAllowed) {
-      return { status: 403, message: "Origin not allowed" };
-    }
+  const host = typeof headers.host === "string" ? headers.host : undefined;
+
+  if (!config.remote && !isLocalHost(host)) {
+    return { status: 403, message: "Host not allowed" };
   }
+
+  if (origin && !config.allowedOrigins.has(origin)) {
+    return { status: 403, message: "Origin not allowed" };
+  }
+
   if (!config.token) {
     return config.remote ? { status: 401, message: "Unauthorized" } : { status: 200 };
   }
-  if (headers.authorization !== `Bearer ${config.token}`) return { status: 401, message: "Unauthorized" };
-  if (!config.remote && !isLocalHost(typeof headers.host === "string" ? headers.host : undefined)) {
-    return { status: 403, message: "Host not allowed" };
+
+  if (headers.authorization !== `Bearer ${config.token}`) {
+    return { status: 401, message: "Unauthorized" };
   }
+
   return { status: 200 };
 }

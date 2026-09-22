@@ -5,9 +5,9 @@ import { doctor } from "../src/diagnostics.js";
 
 test("fixture backend supports inspect, measure, assert, preview, and rollback", async () => {
   const backend = new MockBackend({ feed: 37 });
-  const measureResult = await backend.call({ id: "1", tool: "measure", arguments: {} });
+  const measureResult = await backend.call({ id: "1", tool: "measure", arguments: { operationId: 4 } });
   assert.equal((measureResult as any).data.value, 37);
-  const assertResult = await backend.call({ id: "2", tool: "assert", arguments: { equals: 37 } });
+  const assertResult = await backend.call({ id: "2", tool: "assert", arguments: { operationId: 4, equals: 37 } });
   assert.equal((assertResult as any).data.pass, true);
   const preview = await backend.call({ id: "3", tool: "preview_operation_parameters", arguments: { operationId: 4, changes: { feedRate: { value: 44, unit: "mm/min" } } } });
   assert.equal((preview as any).data.after.feedRate.value, 44);
@@ -49,7 +49,7 @@ test("fixture verifies the reread state after a feed change", async () => {
   const preview = await backend.call({ id: "8a", tool: "preview_operation_parameters", arguments: { operationId: 4, changes: { feedRate: { value: 45, unit: "mm/min" } } } });
   const apply = await backend.call({ id: "8b", tool: "apply_operation_parameter_preview", arguments: { approvalToken: (preview as any).data.approvalToken } });
   assert.equal(apply.ok, true);
-  const verified = await backend.call({ id: "8c", tool: "verify_change", arguments: { expected: { feedRate: { value: 45, unit: "mm/min" } } } });
+  const verified = await backend.call({ id: "8c", tool: "verify_change", arguments: { operationId: 4, expected: { feedRate: { value: 45, unit: "mm/min" } } } });
   assert.equal(verified.ok, true);
   assert.equal((verified as any).data.verification, "verified");
 });

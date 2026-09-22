@@ -126,16 +126,14 @@ jobs:
           socket.on('error', error => fail(error.message));
           socket.on('close', () => process.exit(0));
           NODE
-      - name: Test HTTP server
+      - name: Test MCP stdio 2026-07-28
         env:
           MASTERCAM_MCP_BACKEND: mock
-        run: |
-          set -euo pipefail
-          node dist/http.js &
-          http_pid=$!
-          trap 'kill $http_pid 2>/dev/null || true' EXIT
-          sleep 2
-          curl -fsS http://127.0.0.1:8787/mcp             -H "Content-Type: application/json"             -H "Accept: application/json, text/event-stream"             -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}'
+        run: pnpm run smoke
+      - name: Test HTTP server 2026-07-28
+        env:
+          MASTERCAM_MCP_BACKEND: mock
+        run: pnpm run smoke:http
 
   package-test:
     name: Package Test
@@ -262,7 +260,7 @@ jobs:
   dependency-review:
     name: Dependency Review
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request' && false
+    if: github.event_name == 'pull_request'
     steps:
       - uses: actions/dependency-review-action@v4
 

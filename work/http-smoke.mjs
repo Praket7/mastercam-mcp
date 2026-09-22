@@ -1,6 +1,5 @@
 import { spawn } from 'node:child_process';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 
 const PORT = process.env.SMOKE_HTTP_PORT || '18990';
 const URL = `http://127.0.0.1:${PORT}/mcp`;
@@ -35,7 +34,7 @@ try {
   }
   if (!ready) throw new Error(`HTTP server never became ready: ${stderr.slice(-300)}`);
 
-  const client = new Client({ name: 'http-smoke', version: '1.0.0' });
+  const client = new Client({ name: 'http-smoke', version: '1.0.0' }, { versionNegotiation: { mode: { pin: '2026-07-28' } } });
   const transport = new StreamableHTTPClientTransport(new globalThis.URL(URL));
   await Promise.race([client.connect(transport), timeout(15000, 'connect')]);
 
@@ -49,7 +48,7 @@ try {
     toolCount: tools.tools.length,
     hasStatus: tools.tools.some(tool => tool.name === 'mastercam_status'),
     statusOk: status.structuredContent?.ok === true,
-    capabilitiesOk: capabilities.structuredContent?.ok === true
+    capabilitiesOk: capabilities.structuredContent?.ok === true,\n    protocolEra: client.getProtocolEra()
   };
   console.log(JSON.stringify(result, null, 2));
   const failures = [result.hasStatus, result.statusOk, result.capabilitiesOk, result.toolCount > 30].filter(value => !value).length;

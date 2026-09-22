@@ -1,4 +1,4 @@
-import { z } from "zod";
+import * as z from "zod/v4";
 import * as inspection from "./schemas/inspection.js";
 import * as mutations from "./schemas/mutations.js";
 import * as machine from "./schemas/machine.js";
@@ -11,9 +11,9 @@ export interface ToolManifestEntry {
   name: string;
   description: string;
   category: ManifestCategory;
-  inputSchema: z.ZodTypeAny;
+  inputSchema: z.ZodType;
   /** Schema for the inner data field. Registry wraps this in the standard envelope. */
-  outputDataSchema?: z.ZodTypeAny;
+  outputDataSchema?: z.ZodType;
   registered: boolean;
   mockSupport: boolean;
   legacySupport: boolean;
@@ -27,7 +27,7 @@ export interface ToolManifestEntry {
 }
 
 interface ToolOptions {
-  outputDataSchema?: z.ZodTypeAny;
+  outputDataSchema?: z.ZodType;
   registered?: boolean;
   mockSupport?: boolean;
   legacySupport?: boolean;
@@ -44,7 +44,7 @@ function defineTool(
   name: string,
   description: string,
   category: ManifestCategory,
-  inputSchema: z.ZodTypeAny,
+  inputSchema: z.ZodType,
   options: ToolOptions = {}
 ): ToolManifestEntry {
   const registered = options.registered ?? category !== "forbidden";
@@ -77,28 +77,28 @@ function defineTool(
 const read = (
   name: string,
   description: string,
-  inputSchema: z.ZodTypeAny,
+  inputSchema: z.ZodType,
   options: ToolOptions = {}
 ) => defineTool(name, description, "read", inputSchema, { idempotent: true, ...options });
 
 const preview = (
   name: string,
   description: string,
-  inputSchema: z.ZodTypeAny,
+  inputSchema: z.ZodType,
   options: ToolOptions = {}
 ) => defineTool(name, description, "preview", inputSchema, { idempotent: false, ...options });
 
 const write = (
   name: string,
   description: string,
-  inputSchema: z.ZodTypeAny,
+  inputSchema: z.ZodType,
   options: ToolOptions = {}
 ) => defineTool(name, description, "write", inputSchema, { requiresApproval: true, idempotent: false, ...options });
 
 const advanced = (
   name: string,
   description: string,
-  inputSchema: z.ZodTypeAny,
+  inputSchema: z.ZodType,
   options: ToolOptions = {}
 ) => defineTool(name, description, "advanced", inputSchema, { idempotent: false, ...options });
 

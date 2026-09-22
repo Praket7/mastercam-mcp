@@ -284,9 +284,16 @@ semanticSummary: {
 
 // ---- machine profile validation (section 37) ----------------------------
 
-export interface ValidationIssue { code: string; severity: "warning" | "error"; message: string }
+export interface ValidationCheck {
+  name: string;
+  pass: boolean;
+  expected?: unknown;
+  actual?: unknown;
+  severity: "warning" | "error" | "info";
+  message?: string;
+}
 
-/** Explicit conversion that never turns "" or null into 0 (section 37). */
+/** Explicit conversion that never turns "" or null into 0. */
 export function strictNumber(value: unknown): number | undefined {
   if (typeof value === "number") return Number.isFinite(value) ? value : undefined;
   if (typeof value === "string" && value.trim().length > 0) {
@@ -296,38 +303,157 @@ export function strictNumber(value: unknown): number | undefined {
   return undefined;
 }
 
-export function validateMachine(operation: Record<string, unknown>, profile: Record<string, unknown>) {
-  const issues: ValidationIssue[] = [];
-  const feedValue = operation.feedRate && typeof operation.feedRate === "object" ? (operation.feedRate as { value?: unknown }).value : operation.feed;
-  const feed = strictNumber(feedValue);
-  const maxFeed = strictNumber(profile.maxFeed);
-  const speedValue = operation.spindleSpeed && typeof operation.spindleSpeed === "object" ? (operation.spindleSpeed as { value?: unknown }).value : operation.speed;
-  const speed = strictNumber(speedValue);
-  const maxSpeed = strictNumber(profile.maxSpindleSpeed);
+function recordOf(value: unknown): Record<string, unknown> | undefined {
+  return isPlainObject(value) ? value : undefined;
+}
 
-  if (maxFeed !== undefined && feed !== undefined && feed > maxFeed) {
-    issues.push({ code: "FEED_EXCEEDS_MACHINE_LIMIT", severity: "error", message: `Operation feed ${feed} exceeds the machine limit ${maxFeed}` });
+function normalizeFeedMmMin(
+  operation: Record<string, unknown>
+): { value?: number; reason?: string } {
+  const feedRate = recordOf(operation.feedRate);
+  const rawValue = feedRate ? feedRate.value : operation.feed;
+  const value = strictNumber(rawValue);
+  if (value === undefined) return { reason: "Operation feed is missing" };
+
+  const unit = typeof feedRate?.unit === "string" ? feedRate.unit : "mm/min";
+  if (unit === "mm/min") return { value };
+  if (unit === "in/min") return { value: value * 25.4 };
+
+  if (unit === "mm/rev" || unit === "in/rev") {
+    const spindle = recordOf(operation.spindleSpeed);
+    const rpm =
+      spindle?.unit === "rpm"
+        ? strictNumber(spindle.value)
+        : strictNumber(operation.speed);
+    if (rpm === undefined || rpm <= 0) {
+      return { reason: `Cannot convert ${unit} without spindle RPM` };
+    }
+    const perRevMm = unit === "in/rev" ? value * 25.4 : value;
+    return { value: perRevMm * rpm };
   }
-  if (maxSpeed !== undefined && speed !== undefined && speed > maxSpeed) {
-    issues.push({ code: "SPEED_EXCEEDS_MACHINE_LIMIT", severity: "error", message: `Spindle speed ${speed} exceeds the machine limit ${maxSpeed}` });
+
+  return { reason: `Unsupported feed unit ${unit}` };
+}
+
+export function validateMachine(
+  operation: Record<string, unknown>,
+  profile: Record<string, unknown>
+) {
+  const checks: ValidationCheck[] = [];
+  const profileFeed = recordOf(profile.feed);
+  const profileSpindle = recordOf(profile.spindle);
+  const controller = profile.controller;
+
+  const maxFeed =
+    strictNumber(profileFeed?.maxFeedMmMin) ??
+    strictNumber(profile.maxFeed);
+  const normalizedFeed = normalizeFeedMmMin(operation);
+
+  if (maxFeed !== undefined) {
+    if (normalizedFeed.value !== undefined) {
+      const pass = normalizedFeed.value <= maxFeed;
+      checks.push({
+        name: "feed_limit",
+        pass,
+        expected: { maxFeedMmMin: maxFeed },
+        actual: { feedMmMin: normalizedFeed.value },
+        severity: pass ? "info" : "error",
+        message: pass
+          ? "Feed is within the declared machine limit"
+          : `Operation feed ${normalizedFeed.value} mm/min exceeds machine limit ${maxFeed} mm/min`
+      });
+    } else {
+      checks.push({
+        name: "feed_limit",
+        pass: false,
+        expected: { maxFeedMmMin: maxFeed },
+        severity: "warning",
+        message: normalizedFeed.reason ?? "Feed could not be evaluated"
+      });
+    }
   }
-  if (maxFeed !== undefined && feed === undefined) {
-    issues.push({ code: "FEED_UNKNOWN", severity: "warning", message: "Operation feed is missing so the machine feed limit could not be checked" });
+
+  const spindle = recordOf(operation.spindleSpeed);
+  const spindleValue = spindle ? strictNumber(spindle.value) : strictNumber(operation.speed);
+  const spindleUnit = spindle && typeof spindle.unit === "string" ? spindle.unit : "rpm";
+  const maxRpm =
+    strictNumber(profileSpindle?.maxRpm) ??
+    strictNumber(profile.maxSpindleSpeed);
+
+  if (maxRpm !== undefined) {
+    if (spindleValue === undefined) {
+      checks.push({
+        name: "spindle_limit",
+        pass: false,
+        expected: { maxRpm },
+        severity: "warning",
+        message: "Spindle speed is missing, so the machine RPM limit could not be checked"
+      });
+    } else if (spindleUnit !== "rpm") {
+      checks.push({
+        name: "spindle_limit",
+        pass: false,
+        expected: { maxRpm },
+        actual: { value: spindleValue, unit: spindleUnit },
+        severity: "warning",
+        message: `Cannot compare ${spindleUnit} directly with an RPM machine limit`
+      });
+    } else {
+      const pass = spindleValue <= maxRpm;
+      checks.push({
+        name: "spindle_limit",
+        pass,
+        expected: { maxRpm },
+        actual: { rpm: spindleValue },
+        severity: pass ? "info" : "error",
+        message: pass
+          ? "Spindle speed is within the declared machine limit"
+          : `Spindle speed ${spindleValue} rpm exceeds machine limit ${maxRpm} rpm`
+      });
+    }
   }
-  if (maxSpeed !== undefined && speed === undefined) {
-    issues.push({ code: "SPEED_UNKNOWN", severity: "warning", message: "Spindle speed is missing so the machine speed limit could not be checked" });
+
+  if (controller) {
+    checks.push({
+      name: "controller_configured",
+      pass: true,
+      actual: controller,
+      severity: "info",
+      message: "Controller information is present"
+    });
+  } else {
+    checks.push({
+      name: "controller_configured",
+      pass: false,
+      severity: "warning",
+      message: "Controller is not defined, so NC behavior is not fully verifiable"
+    });
   }
-  if (!profile.controller) issues.push({ code: "CONTROLLER_UNKNOWN", severity: "warning", message: "Controller is not defined so NC behavior is not fully verifiable" });
-  if (!profile.holderFamily) issues.push({ code: "HOLDER_PROFILE_MISSING", severity: "warning", message: "Holder family is not defined so holder clearance is not verifiable" });
-  const travels = profile.axisTravels;
-  if (travels !== undefined && !isPlainObject(travels)) {
-    issues.push({ code: "PROFILE_MALFORMED", severity: "error", message: "axisTravels must be an object of per-axis limits" });
+
+  const detailedTaper =
+    profileSpindle && typeof profileSpindle.taper === "string"
+      ? profileSpindle.taper
+      : undefined;
+  const legacyHolder =
+    typeof profile.holderFamily === "string" ? profile.holderFamily : undefined;
+  if (!detailedTaper && !legacyHolder) {
+    checks.push({
+      name: "holder_profile",
+      pass: false,
+      severity: "warning",
+      message: "Holder or spindle taper information is missing, so holder compatibility is not verifiable"
+    });
   }
-  const workOffsets = profile.permittedWorkOffsets;
-  if (workOffsets !== undefined && !Array.isArray(workOffsets)) {
-    issues.push({ code: "PROFILE_MALFORMED", severity: "error", message: "permittedWorkOffsets must be an array" });
-  }
-  return { valid: !issues.some(issue => issue.severity === "error"), verification: issues.length ? "review_required" : "fixture_only", issues };
+
+  const errors = checks.filter(check => check.severity === "error").length;
+  const warnings = checks.filter(check => check.severity === "warning").length;
+  const info = checks.filter(check => check.severity === "info").length;
+
+  return {
+    valid: errors === 0,
+    checks,
+    summary: { errors, warnings, info }
+  };
 }
 
 export function hash(value: unknown) { return sha256Of(value); }

@@ -1,4 +1,4 @@
-import { z } from "zod";
+import * as z from "zod/v4";
 import { OperationIdSchema, OperationIdsSchema, ToolIdSchema, BoundedStringArray, OptionalText, emptySchema } from "./common.js";
 import { ValidateMachineProfileInputSchema } from "./machine.js";
 
@@ -65,7 +65,7 @@ export const getOperationOutputSchema = z.object({
 export const getOperationParametersSchema = z.object({ operationId: OperationIdSchema }).strict();
 export const getOperationParametersOutputSchema = z.object({
   operationId: z.number(),
-  parameters: z.record(z.unknown()),
+  parameters: z.record(z.string(), z.unknown()),
   documentRevision: z.string()
 });
 
@@ -146,12 +146,12 @@ export const CompareToolDatabasesSchema = z.object({
 export const ValidateMachineProfileSchema = ValidateMachineProfileInputSchema;
 
 export const GenerateSetupSheetSchema = z.object({
-  part: z.record(z.unknown()).optional(),
-  machine: z.record(z.unknown()).optional(),
-  stock: z.record(z.unknown()).optional(),
-  wcs: z.record(z.unknown()).optional(),
-  operations: z.array(z.record(z.unknown())).max(500).optional(),
-  tools: z.array(z.record(z.unknown())).max(500).optional(),
+  part: z.record(z.string(), z.unknown()).optional(),
+  machine: z.record(z.string(), z.unknown()).optional(),
+  stock: z.record(z.string(), z.unknown()).optional(),
+  wcs: z.record(z.string(), z.unknown()).optional(),
+  operations: z.array(z.record(z.string(), z.unknown())).max(500).optional(),
+  tools: z.array(z.record(z.string(), z.unknown())).max(500).optional(),
   notes: BoundedStringArray(100).optional()
 }).strict();
 

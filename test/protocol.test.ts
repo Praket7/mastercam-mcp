@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { Client } from "@modelcontextprotocol/client";
+import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { TOOL_DEFINITIONS } from "../src/mcp/registry.js";
 
 const tsx = "node_modules/tsx/dist/cli.mjs";
@@ -12,8 +12,7 @@ async function withStdioClient(run: (client: Client) => Promise<void>) {
     args: [tsx, "src/server.ts"],
     env: { ...process.env as Record<string, string>, MASTERCAM_MCP_BACKEND: "mock", MASTERCAM_MCP_AUDIT: "0", MASTERCAM_MCP_PROFILE: "all", MASTERCAM_MCP_HARD_READ_ONLY: "0" }
   });
-  const client = new Client({ name: "protocol-test", version: "1.0" });
-  await client.connect(transport);
+  const client = new Client(\n    { name: "protocol-test", version: "1.0" },\n    { versionNegotiation: { mode: { pin: "2026-07-28" } } }\n  );\n  await client.connect(transport);\n  assert.equal(client.getProtocolEra(), "modern");
   try {
     await run(client);
   } finally {

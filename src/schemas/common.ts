@@ -1,4 +1,4 @@
-import { z } from "zod";
+import * as z from "zod/v4";
 import { FeedRateSchema, SpindleSpeedSchema, LengthSchema } from "./units.js";
 
 /** Operation ids are integers in Mastercam; strings were never valid on the wire. */

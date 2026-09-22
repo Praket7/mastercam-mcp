@@ -1,4 +1,4 @@
-import { z } from "zod";
+import * as z from "zod/v4";
 
 /**
  * Explicit quantity model per audit SAFE-01: numbers are meaningless without

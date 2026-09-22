@@ -1,4 +1,4 @@
-import { z } from "zod";
+import * as z from "zod/v4";
 import { OperationIdSchema, OperationIdsSchema, ApprovalTokenSchema, RollbackTokenSchema, IdempotencyKeySchema } from "./common.js";
 import { FeedRateSchema, SpindleSpeedSchema } from "./units.js";
 
@@ -60,7 +60,7 @@ export const VerifyChangeSchema = z.object({
 export const verifyChangeOutputSchema = z.object({
   pass: z.boolean(),
   operationId: z.number(),
-  checks: z.record(z.unknown()),
+  checks: z.record(z.string(), z.unknown()),
   reread: z.boolean(),
   documentRevision: z.string(),
   verification: z.string()

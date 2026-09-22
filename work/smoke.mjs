@@ -1,12 +1,12 @@
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { Client } from '@modelcontextprotocol/client';
+import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 
 const timeout = (ms, label) => new Promise((_, reject) => {
   const timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
   timer.unref?.();
 });
 
-const client = new Client({ name: 'smoke', version: '1.0.0' });
+const client = new Client({ name: 'smoke', version: '1.0.0' }, { versionNegotiation: { mode: { pin: '2026-07-28' } } });
 const sdkTransport = new StdioClientTransport({
   command: process.execPath,
   args: ['node_modules/tsx/dist/cli.mjs', 'src/server.ts'],
@@ -14,7 +14,7 @@ const sdkTransport = new StdioClientTransport({
 });
 await Promise.race([client.connect(sdkTransport), timeout(15000, 'connect')]);
 
-const result = { initialized: true };
+const result = { initialized: true, protocolEra: client.getProtocolEra() };
 try {
   const tools = await Promise.race([client.listTools(), timeout(10000, 'tools/list')]);
   result.toolCount = tools.tools.length;
@@ -40,7 +40,7 @@ try {
 
   const verify = await Promise.race([client.callTool({
     name: 'verify_change',
-    arguments: { operationId: 4, expectedFeed: 42 }
+    arguments: { operationId: 4, expected: { feedRate: { value: 42, unit: 'mm/min' } } }
   }), timeout(10000, 'verify')]);
   result.verify = { pass: verify.structuredContent?.data?.pass === true };
 

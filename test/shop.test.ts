@@ -21,7 +21,7 @@ test("NC comparison reports changed lines and tool changes using Myers diff", ()
 test("machine validation detects feed limit violations", () => {
   const result = validateMachine({ feed: 100 }, { maxFeed: 50, controller: "Haas", holderFamily: "CAT40" });
   assert.equal(result.valid, false);
-  assert.equal(result.issues[0].code, "FEED_EXCEEDS_MACHINE_LIMIT");
+  assert.ok(result.checks.some(check => check.name === "feed_limit" && !check.pass && check.severity === "error"));
 });
 
 test("tool database comparison is deterministic and semantic", () => {
@@ -48,10 +48,10 @@ test("NC diff categorizes changes correctly", () => {
 
 test("machine validation requires controller", () => {
   const result = validateMachine({ feed: 100 }, { maxFeed: 200 });
-  assert.ok(result.issues.some(i => i.code === "CONTROLLER_UNKNOWN"));
+  assert.ok(result.checks.some(check => check.name === "controller_configured" && check.severity === "warning"));
 });
 
 test("machine validation warns about missing holder family", () => {
   const result = validateMachine({ feed: 100 }, { maxFeed: 200, controller: "Fanuc" });
-  assert.ok(result.issues.some(i => i.code === "HOLDER_PROFILE_MISSING"));
+  assert.ok(result.checks.some(check => check.name === "holder_profile" && check.severity === "warning"));
 });
