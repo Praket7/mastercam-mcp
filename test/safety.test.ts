@@ -65,7 +65,7 @@ test("documentRevision changes when operations change", () => {
 });
 
 test("audit redaction never returns raw deep object tails", () => {
-  const deep = { a: { b: { c: { d: { e: { f: { g: { accessToken: "should-never-appear", value: "also-hidden-by-depth-limit" } } } } } } } } };
+  const deep = { a: { b: { c: { d: { e: { f: { g: { accessToken: "should-never-appear", value: "also-hidden-by-depth-limit" } } } } } } } };
   const sanitized = redact(deep);
   const text = JSON.stringify(sanitized);
   assert.equal(text.includes("should-never-appear"), false);
