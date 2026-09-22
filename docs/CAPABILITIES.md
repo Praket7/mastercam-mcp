@@ -12,12 +12,12 @@ Counts: 56 capabilities declared, 49 fixture-supported, **0 live verified**.
 | --- | --- | --- | --- | --- | --- |
 | mastercam_status | yes | read | mock+legacy-adapter+2027-adapter | IMPLEMENTED | Native environment adapter is implemented; LIVE_* verification requires a licensed acceptance run. |
 | mastercam_capabilities | yes | read | mock+legacy-adapter+2027-adapter | IMPLEMENTED | Native environment adapter is implemented; LIVE_* verification requires a licensed acceptance run. |
-| mastercam_help | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
-| list_tool_categories | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
-| discover_capabilities | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
-| get_compatibility_matrix | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
-| mastercam_plan | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
-| mastercam_doctor | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
+| mastercam_help | yes | read | server-local | IMPLEMENTED | Runs entirely in the TypeScript server and is available in fixture or live mode without implying Mastercam API coverage. |
+| list_tool_categories | yes | read | server-local | IMPLEMENTED | Runs entirely in the TypeScript server and is available in fixture or live mode without implying Mastercam API coverage. |
+| discover_capabilities | yes | read | server-local | IMPLEMENTED | Runs entirely in the TypeScript server and is available in fixture or live mode without implying Mastercam API coverage. |
+| get_compatibility_matrix | yes | read | server-local | IMPLEMENTED | Runs entirely in the TypeScript server and is available in fixture or live mode without implying Mastercam API coverage. |
+| mastercam_plan | yes | read | server-local | IMPLEMENTED | Runs entirely in the TypeScript server and is available in fixture or live mode without implying Mastercam API coverage. |
+| mastercam_doctor | yes | read | server-local | IMPLEMENTED | Runs entirely in the TypeScript server and is available in fixture or live mode without implying Mastercam API coverage. |
 | get_version_report | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
 | client_setup_check | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
 | get_fixture_info | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
@@ -50,10 +50,10 @@ Counts: 56 capabilities declared, 49 fixture-supported, **0 live verified**.
 | measure | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
 | verify_change | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
 | assert | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
-| generate_setup_sheet | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
-| compare_tool_databases | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
-| compare_nc_files | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
-| validate_machine_profile | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
+| generate_setup_sheet | yes | read | server-local | IMPLEMENTED | Runs entirely in the TypeScript server and is available in fixture or live mode without implying Mastercam API coverage. |
+| compare_tool_databases | yes | read | server-local | IMPLEMENTED | Runs entirely in the TypeScript server and is available in fixture or live mode without implying Mastercam API coverage. |
+| compare_nc_files | yes | read | server-local | IMPLEMENTED | Runs entirely in the TypeScript server and is available in fixture or live mode without implying Mastercam API coverage. |
+| validate_machine_profile | yes | read | server-local | IMPLEMENTED | Runs entirely in the TypeScript server and is available in fixture or live mode without implying Mastercam API coverage. |
 | preview_operation_parameters | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
 | apply_operation_parameter_preview | yes | mutation | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
 | rollback_change | yes | mutation | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares support. |
@@ -69,8 +69,9 @@ Counts: 56 capabilities declared, 49 fixture-supported, **0 live verified**.
 
 ## Reading this table honestly
 
-- `IMPLEMENTED` means code exists and fixture/contract tests can exercise it. It is not proof that a real Mastercam release supports the tool.
-- The native Stage A adapters currently advertise only `mastercam_status` and `mastercam_capabilities`; other live tools remain unavailable until release-specific mappings are implemented and accepted.
-- Standalone regeneration is not currently exposed because it must be bound to the exact approved mutation transaction before it is safe to automate.
+- `IMPLEMENTED` means code exists and contract tests can exercise it. It is not proof that a real Mastercam release supports the tool.
+- `server-local` means the tool runs entirely in the TypeScript server and can be used alongside either backend; it does not imply a live Mastercam API mapping.
+- The native Stage A adapters map only `mastercam_status` and `mastercam_capabilities`; other native Mastercam tools remain unavailable until release-specific mappings are implemented and accepted.
+- Standalone regeneration is withheld until it is transaction-bound to the exact approved mutation rather than accepting operation ids alone.
 - Simulation and collision results from the fixture backend are synthetic and never prove machine safety.
 - Posting, cycle start, DNC, and arbitrary script execution are deliberately unavailable.
