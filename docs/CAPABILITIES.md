@@ -6,7 +6,7 @@ The tool manifest is the canonical source of truth for MCP registration, policy 
 Tiers: `UNAVAILABLE` < `DISCOVERED` < `IMPLEMENTED` < `LIVE_READ_VERIFIED` < `LIVE_WRITE_VERIFIED`.
 A tier is raised only after a licensed live acceptance run against the matching Mastercam release.
 
-Counts: 56 capabilities declared, 52 fixture-supported, **0 live verified**.
+Counts: 56 capabilities declared, 50 fixture-supported, **0 live verified**.
 
 | Tool | Fixture supported | Risk | Backends | Tier | Notes |
 | --- | --- | --- | --- | --- | --- |

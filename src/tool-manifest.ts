@@ -150,7 +150,7 @@ export const TOOL_MANIFEST: readonly ToolManifestEntry[] = [
   read("explain_operation", "Explain an operation from its actual returned parameters", inspection.explainOperationSchema, { requiresExactTarget: true }),
   read("get_operation_risks", "Report verification scope and concrete risks for an operation", inspection.getOperationRisksSchema, { requiresExactTarget: true }),
   read("get_dirty_toolpaths", "List operations whose toolpaths need regeneration", inspection.getDirtyToolpathsSchema),
-  read("get_toolpath_status", "Report toolpath generation state for an operation", inspection.getToolpathStatusSchema),
+  read("get_toolpath_status", "Report toolpath generation state for an operation", inspection.getToolpathStatusSchema, { requiresExactTarget: true }),
   read("estimate_cycle_time", "Estimate cycle time for selected operations", inspection.estimateCycleTimeSchema),
   read("compare_toolpaths", "Compare two operations' toolpaths", inspection.compareToolpathsSchema),
 
@@ -158,10 +158,10 @@ export const TOOL_MANIFEST: readonly ToolManifestEntry[] = [
   read("get_tool", "Retrieve one tool by id or number", inspection.getToolSchema),
   read("capture_view", "Capture a bounded view image of the Mastercam graphics window", inspection.captureViewSchema),
 
-  read("inspect", "Inspect a target and return its current values", inspection.inspectSchema),
-  read("measure", "Measure one named value on a Mastercam target", inspection.measureSchema),
+  read("inspect", "Inspect a target and return its current values", inspection.inspectSchema, { requiresExactTarget: true }),
+  read("measure", "Measure one named value on a Mastercam target", inspection.measureSchema, { requiresExactTarget: true }),
   read("verify_change", "Reread an operation and verify expected feed/spindle values", mutations.VerifyChangeSchema, { outputDataSchema: mutations.verifyChangeOutputSchema, requiresExactTarget: true }),
-  read("assert", "Verify that a measured value matches an expected value", inspection.assertSchema),
+  read("assert", "Verify that a measured value matches an expected value", inspection.assertSchema, { requiresExactTarget: true }),
 
   read("generate_setup_sheet", "Create a revision-ready setup sheet from inspection data", inspection.GenerateSetupSheetSchema),
   read("compare_tool_databases", "Compare two tool database snapshots semantically", inspection.CompareToolDatabasesSchema),
@@ -171,9 +171,26 @@ export const TOOL_MANIFEST: readonly ToolManifestEntry[] = [
   preview("preview_operation_parameters", "Preview a feed/spindle change and receive a single-use approval token", mutations.PreviewOperationParametersSchema, { outputDataSchema: mutations.previewOperationParametersOutputSchema, requiresExactTarget: true }),
   write("apply_operation_parameter_preview", "Apply a previewed change using its approval token; refuses stale state", mutations.ApplyOperationParameterPreviewSchema, { outputDataSchema: mutations.applyOperationParameterPreviewOutputSchema, requiresRegeneration: true }),
   write("rollback_change", "Roll back an applied transaction using its server-held receipt", mutations.RollbackChangeSchema, { outputDataSchema: mutations.rollbackChangeOutputSchema }),
-  write("change_tool", "Change the tool assigned to one operation", mutations.ChangeToolSchema, { requiresExactTarget: true, requiresRegeneration: true }),
+  write("change_tool", "Change the tool assigned to one operation", mutations.ChangeToolSchema, {
+    registered: false,
+    mockSupport: false,
+    legacySupport: false,
+    mc2027Support: false,
+    requiresExactTarget: true,
+    requiresRegeneration: true,
+    tier: "UNAVAILABLE",
+    tierEvidence: "Direct tool-change mutation is not exposed until it has a preview/approval workflow and a verified backend mapping."
+  }),
   write("regenerate_toolpath", "Regenerate specific operations by exact id", mutations.RegenerateToolpathSchema),
-  write("update_stock", "Update stock dimensions with explicit units", mutations.UpdateStockSchema, { requiresRegeneration: true }),
+  write("update_stock", "Update stock dimensions with explicit units", mutations.UpdateStockSchema, {
+    registered: false,
+    mockSupport: false,
+    legacySupport: false,
+    mc2027Support: false,
+    requiresRegeneration: true,
+    tier: "UNAVAILABLE",
+    tierEvidence: "Direct stock mutation is not exposed until it has a preview/approval workflow and a verified backend mapping."
+  }),
 
   advanced("run_simulation", "Run Mastercam simulation and return provenance-tagged evidence", emptySchema),
   advanced("detect_collisions", "Run collision detection for selected operations", emptySchema),

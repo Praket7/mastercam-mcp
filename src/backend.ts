@@ -364,35 +364,48 @@ export class MockBackend implements Backend {
   private async applyPreview(request: Request, args: Record<string, unknown>): Promise<ToolResult> {
     const token = String(args.approvalToken ?? "");
     if (!token) throw new MastercamErrorImpl("APPROVAL_TOKEN_INVALID", "approvalToken is required");
+
     const idempotencyKey = typeof args.idempotencyKey === "string" ? args.idempotencyKey : undefined;
+    const actionIdentity = sha256Of({ approvalToken: token });
     if (idempotencyKey) {
-      const targetOp = this.requireExactTarget(args.operationId);
-      const targetHash = this.fingerprint(targetOp);
-      const argHash = sha256Of(args.changes);
-      const seen = this.ledger.idempotencyKeySeen(idempotencyKey, request.tool, targetHash, argHash);
-      if (seen) {
-        return this.ok(request, this.applyReceipt(seen, true));
-      }
+      const seen = this.ledger.idempotencyKeySeen(idempotencyKey, request.tool, actionIdentity, actionIdentity);
+      if (seen) return this.ok(request, { ...(seen as Record<string, unknown>), duplicate: true });
     }
-    // Re-derive the live fingerprint and document revision: CAS gate. The token alone is not enough.
+
     const probe = this.ledger.peekPreview(token);
     const op = this.requireExactTarget(probe.operationId);
     const currentFingerprint = this.fingerprint(op);
-    const preview = this.ledger.consumePreview(token, { operationFingerprint: currentFingerprint, documentRevision: this.revision });
+    const preview = this.ledger.consumePreview(token, {
+      operationFingerprint: currentFingerprint,
+      documentRevision: this.revision
+    });
+
     const changed = applyQuantity(op, preview.changes);
     this.revision = documentRevision(this.operations);
     const applied = this.ledger.recordApply(preview);
+    const rollback = this.ledger.createRollback(applied.transactionId);
+    const responseData = {
+      applied: true,
+      operationId: op.id,
+      before: applied.before,
+      after: changed,
+      requiresRegeneration: applied.requiresRegeneration,
+      transactionId: applied.transactionId,
+      rollback: {
+        transactionId: rollback.transactionId,
+        expiresAt: new Date(rollback.expiresAt).toISOString()
+      },
+      documentRevision: this.revision,
+      operationFingerprint: this.fingerprint(op)
+    };
+
     if (idempotencyKey) {
-      const targetOp = this.requireExactTarget(args.operationId);
-      const targetHash = this.fingerprint(targetOp);
-      const argHash = sha256Of(args.changes);
-      this.ledger.rememberIdempotency(idempotencyKey, request.tool, targetHash, argHash, applied);
+      this.ledger.rememberIdempotency(idempotencyKey, request.tool, actionIdentity, actionIdentity, responseData);
     }
-    const transactionId = applied.transactionId;
-    const rollback = this.ledger.createRollback(transactionId);
+
     this.audit.record({
       requestId: request.id,
-      transactionId,
+      transactionId: applied.transactionId,
       tool: request.tool,
       target: { operationId: op.id },
       policy: { action: "apply", idempotencyKey },
@@ -400,59 +413,87 @@ export class MockBackend implements Backend {
       afterHash: applied.afterHash,
       verified: true
     });
-    return this.ok(request, {
-      applied: true,
-      operationId: op.id,
-      before: applied.before,
-      after: changed,
-      requiresRegeneration: applied.requiresRegeneration,
-      transactionId,
-      rollback: { transactionId: rollback.transactionId, expiresAt: new Date(rollback.expiresAt).toISOString() },
-      documentRevision: this.revision,
-      operationFingerprint: this.fingerprint(op)
-    });
+    return this.ok(request, responseData);
   }
 
   private async rollback(request: Request, args: Record<string, unknown>): Promise<ToolResult> {
     const transactionId = String(args.transactionId ?? "");
     if (!transactionId) throw new MastercamErrorImpl("APPROVAL_TOKEN_INVALID", "transactionId is required");
+
+    const idempotencyKey = typeof args.idempotencyKey === "string" ? args.idempotencyKey : undefined;
+    const actionIdentity = sha256Of({ transactionId });
+    if (idempotencyKey) {
+      const seen = this.ledger.idempotencyKeySeen(idempotencyKey, request.tool, actionIdentity, actionIdentity);
+      if (seen) return this.ok(request, seen);
+    }
+
     const record = this.ledger.peekRollback(transactionId);
     const op = this.requireExactTarget(record.operationId);
-    // CAS: current state must still match what the transaction produced.
     const currentFeed = operationFeed(op);
     const currentSpeed = operationSpeed(op);
     const after = record.restoredSource ?? record.restored;
     const matchesAfter =
       (after.feedRate === undefined || sameFeed(currentFeed, after.feedRate as FeedRate)) &&
-      (after.spindleSpeed === undefined || currentSpeed.value === after.spindleSpeed.value);
+      (after.spindleSpeed === undefined ||
+        (currentSpeed.value === after.spindleSpeed.value && currentSpeed.unit === after.spindleSpeed.unit));
     if (!matchesAfter) {
       throw new MastercamErrorImpl("STALE_PREVIEW", "Operation state changed after the transaction; rollback refused");
     }
-    // Only consume after CAS passes
+
     this.ledger.consumeRollback(transactionId);
     const restored = applyQuantity(op, record.restored);
     this.revision = documentRevision(this.operations);
-    this.audit.record({ requestId: request.id, transactionId: record.transactionId, tool: request.tool, target: { operationId: op.id }, policy: { action: "rollback" }, verified: true });
-    return this.ok(request, {
+    const responseData = {
       applied: true,
       operationId: op.id,
       restored,
       transactionId: record.transactionId,
       rollbackOf: record.rollbackOf,
       documentRevision: this.revision
+    };
+    if (idempotencyKey) {
+      this.ledger.rememberIdempotency(idempotencyKey, request.tool, actionIdentity, actionIdentity, responseData);
+    }
+    this.audit.record({
+      requestId: request.id,
+      transactionId: record.transactionId,
+      tool: request.tool,
+      target: { operationId: op.id },
+      policy: { action: "rollback", idempotencyKey },
+      verified: true
     });
+    return this.ok(request, responseData);
   }
 
   private async regenerate(request: Request, args: Record<string, unknown>): Promise<ToolResult> {
-    const ids = Array.isArray(args.operationIds) ? (args.operationIds as number[]) : [];
-    const targets = ids.length ? ids.map(id => this.requireExactTarget(id)) : [];
-    for (const op of targets) op.toolpathDirty = false;
-    this.audit.record({ requestId: request.id, tool: request.tool, target: { operationIds: targets.map(op => op.id) }, policy: { action: "regenerate" } });
-    return this.ok(request, { operationIds: targets.map(op => op.id), regenerated: true, progress: ["queued", "generating", "complete"] });
-  }
+    const ids = Array.isArray(args.operationIds) ? (args.operationIds as number[]).map(Number) : [];
+    if (!ids.length) throw new MastercamErrorImpl("TARGET_REQUIRED", "operationIds is required for regeneration");
 
-  private applyChanges(op: Record<string, unknown>, changes: { feedRate?: FeedRate; spindleSpeed?: SpindleSpeed }): { feedRate: FeedRate; spindleSpeed: SpindleSpeed } {
-    return applyQuantity(op, changes);
+    const idempotencyKey = typeof args.idempotencyKey === "string" ? args.idempotencyKey : undefined;
+    const targetHash = sha256Of([...ids].sort((a, b) => a - b));
+    const argumentHash = sha256Of({ operationIds: ids });
+    if (idempotencyKey) {
+      const seen = this.ledger.idempotencyKeySeen(idempotencyKey, request.tool, targetHash, argumentHash);
+      if (seen) return this.ok(request, seen);
+    }
+
+    const targets = ids.map(id => this.requireExactTarget(id));
+    for (const op of targets) op.toolpathDirty = false;
+    const responseData = {
+      operationIds: targets.map(op => op.id),
+      regenerated: true,
+      progress: ["queued", "generating", "complete"]
+    };
+    if (idempotencyKey) {
+      this.ledger.rememberIdempotency(idempotencyKey, request.tool, targetHash, argumentHash, responseData);
+    }
+    this.audit.record({
+      requestId: request.id,
+      tool: request.tool,
+      target: { operationIds: targets.map(op => op.id) },
+      policy: { action: "regenerate", idempotencyKey }
+    });
+    return this.ok(request, responseData);
   }
 
   // ---- helpers ---------------------------------------------------------
@@ -539,17 +580,6 @@ export class MockBackend implements Backend {
     };
   }
 
-  private applyReceipt(applied: { transactionId: string; operationId: number; before: unknown; after: unknown; requiresRegeneration: boolean }, duplicate: boolean) {
-    return {
-      applied: true,
-      duplicate: duplicate || undefined,
-      operationId: applied.operationId,
-      before: applied.before,
-      after: applied.after,
-      requiresRegeneration: applied.requiresRegeneration,
-      transactionId: applied.transactionId
-    };
-  }
 }
 
 export function request(tool: string, args: Record<string, unknown> = {}): Request { return { id: randomUUID(), tool, arguments: args }; }

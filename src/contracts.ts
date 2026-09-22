@@ -20,7 +20,11 @@ export const CURRENT_PROTOCOL_REVISION = "2025-06-18";
 export type ToolCategory = "read" | "preview" | "write" | "advanced" | "forbidden";
 
 function namesFor(category: ToolCategory): readonly string[] {
-  return Object.freeze(TOOL_MANIFEST.filter(entry => entry.category === category).map(entry => entry.name));
+  return Object.freeze(
+    TOOL_MANIFEST
+      .filter(entry => entry.category === category && (category === "forbidden" || entry.registered))
+      .map(entry => entry.name)
+  );
 }
 
 export const READ_TOOLS = namesFor("read");

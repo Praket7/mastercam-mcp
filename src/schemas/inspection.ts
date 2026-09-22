@@ -45,6 +45,7 @@ export const listOperationsOutputSchema = z.array(z.object({
   name: z.string(),
   type: z.string(),
   feedRate: z.unknown(),
+  feed: z.unknown().optional(),
   spindleSpeed: z.unknown(),
   tool: z.number().optional(),
   toolpathDirty: z.boolean().optional()
@@ -88,7 +89,7 @@ export const getMachineContextSchema = emptySchema;
 export const getDirtyToolpathsSchema = z.object({ operationIds: optionalOperationIds }).strict();
 export const getSelectedEntitiesSchema = emptySchema;
 
-export const getToolpathStatusSchema = z.object({ operationId: optionalOperationId }).strict();
+export const getToolpathStatusSchema = z.object({ operationId: OperationIdSchema }).strict();
 export const estimateCycleTimeSchema = z.object({ operationIds: optionalOperationIds }).strict();
 export const compareToolpathsSchema = z.object({
   beforeOperationId: OperationIdSchema,
@@ -117,17 +118,17 @@ export const getFixtureInfoSchema = emptySchema;
 export const getMachineGroupsSchema = listMachineGroupsSchema;
 
 export const inspectSchema = z.object({
-  operationId: optionalOperationId,
+  operationId: OperationIdSchema,
   path: OptionalText(256)
 }).strict();
 
 export const measureSchema = z.object({
-  operationId: optionalOperationId,
+  operationId: OperationIdSchema,
   path: z.string().min(1).max(256).default("operation.feed")
 }).strict();
 
 export const assertSchema = z.object({
-  operationId: optionalOperationId,
+  operationId: OperationIdSchema,
   path: z.string().min(1).max(256).default("operation.feed"),
   equals: z.union([z.string().max(4096), z.number().finite(), z.boolean()]).optional()
 }).strict();

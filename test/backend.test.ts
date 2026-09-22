@@ -113,16 +113,22 @@ test("caller-supplied beforeFeed rollback values are rejected (BUG-05)", async (
   assert.equal(result.error?.code, "APPROVAL_TOKEN_INVALID");
 });
 
-test("idempotency key returns the original outcome without double applying", async () => {
+test("apply idempotency is bound to the approval token", async () => {
   const backend = new MockBackend({ operations: [{ id: 4, name: "Facing", feed: 35 }] }, tempAudit());
   const preview = await backend.call({ id: "i1", tool: "preview_operation_parameters", arguments: { operationId: 4, changes: { feedRate: { value: 700, unit: "mm/min" } } } });
   const token = (preview.data as { approvalToken: string }).approvalToken;
   const first = await backend.call({ id: "i2", tool: "apply_operation_parameter_preview", arguments: { approvalToken: token, idempotencyKey: "key-abc-123" } });
   assert.equal(first.ok, true);
-  // Replay with the same key and a (now invalid) token: idempotency wins, no error.
-  const replay = await backend.call({ id: "i3", tool: "apply_operation_parameter_preview", arguments: { approvalToken: "stale-stale", idempotencyKey: "key-abc-123" } });
+
+  const replay = await backend.call({ id: "i3", tool: "apply_operation_parameter_preview", arguments: { approvalToken: token, idempotencyKey: "key-abc-123" } });
   assert.equal(replay.ok, true);
   assert.equal((replay.data as { duplicate?: boolean }).duplicate, true);
+
+  const preview2 = await backend.call({ id: "i4", tool: "preview_operation_parameters", arguments: { operationId: 4, changes: { feedRate: { value: 710, unit: "mm/min" } } } });
+  const token2 = (preview2.data as { approvalToken: string }).approvalToken;
+  const conflict = await backend.call({ id: "i5", tool: "apply_operation_parameter_preview", arguments: { approvalToken: token2, idempotencyKey: "key-abc-123" } });
+  assert.equal(conflict.ok, false);
+  assert.equal(conflict.error?.code, "IDEMPOTENCY_CONFLICT");
 });
 
 test("audit log records hash-chained entries and verifies (section 30)", async () => {
