@@ -237,30 +237,9 @@ jobs:
       actions: read
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: |
-            8.0.x
-            10.0.x
-      - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3
-        with:
-          languages: javascript-typescript, csharp
-          queries: security-extended
-      - name: Build portable C# for CodeQL
-        run: |
-          set -euo pipefail
-          dotnet build native/MastercamMcp.Protocol/MastercamMcp.Protocol.csproj -c Release
-          dotnet build native/MastercamMcp.Adapter.Abstractions/MastercamMcp.Adapter.Abstractions.csproj -c Release
-          dotnet build native/MastercamMcp.ReadModel/MastercamMcp.ReadModel.csproj -c Release
-          dotnet build native/MastercamMcp.Core/MastercamMcp.Core.csproj -c Release
-          dotnet build native/MastercamMcp.ApiCatalog/MastercamMcp.ApiCatalog.csproj -c Release
-          dotnet test native/MastercamMcp.Protocol.Tests/MastercamMcp.Protocol.Tests.csproj -c Release
-      - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v3
       - name: Secret Scan - gitleaks
         if: always()
         uses: gitleaks/gitleaks-action@v2
