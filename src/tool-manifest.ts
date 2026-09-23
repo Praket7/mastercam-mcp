@@ -8,6 +8,14 @@ import {
   PostRegressionSchema,
   RegenerationImpactSchema
 } from "./manufacturing-intelligence.js";
+import {
+  AnalyzeCycleTimeSchema,
+  AnalyzeToolpathRiskSchema,
+  CalculateThreadTapSchema,
+  GenerateOperationPacketSchema,
+  PlanOdRoughFinishSchema,
+  RecommendJobToolingSchema
+} from "./job-intelligence.js";
 import type { CapabilityTier } from "./contracts.js";
 
 export type ManifestCategory = "read" | "preview" | "write" | "advanced" | "forbidden";
@@ -175,6 +183,12 @@ export const TOOL_MANIFEST: readonly ToolManifestEntry[] = [
   read("manufacturing_preflight", "Run deterministic programming preflight and return blockers, warnings, unknowns, and evidence without claiming machine safety", ManufacturingPreflightSchema),
   read("analyze_regeneration_impact", "Trace direct and transitive operation dependencies affected by a programming change", RegenerationImpactSchema),
   read("analyze_post_regression", "Risk-rank semantic NC changes against an approved baseline for human review", PostRegressionSchema),
+  read("recommend_job_tooling", "Rank tooling from the supplied job/tool library using hard compatibility constraints and provenance", RecommendJobToolingSchema),
+  read("analyze_toolpath_risk", "Check supplied toolpath segments for travel, rapid, fixture-envelope, limit, and approach-angle risks", AnalyzeToolpathRiskSchema),
+  read("analyze_cycle_time", "Decompose supplied motion/events into cutting and non-cutting time and identify reviewable air-time opportunities", AnalyzeCycleTimeSchema),
+  read("generate_operation_packet", "Generate setup and operation notes from the supplied operation tree and tool records", GenerateOperationPacketSchema),
+  read("calculate_thread_tap", "Calculate grounded metric or unified thread/tapping geometry, tap drill, RPM, and feed from supplied geometry", CalculateThreadTapSchema),
+  preview("plan_od_rough_finish", "Create a non-executable rough-plus-finish OD turning plan grounded in supplied profile, tooling, material, and machine limits", PlanOdRoughFinishSchema),
 
   preview("preview_operation_parameters", "Preview a feed/spindle change and receive a single-use approval token", mutations.PreviewOperationParametersSchema, { outputDataSchema: mutations.previewOperationParametersOutputSchema, requiresExactTarget: true }),
   write("apply_operation_parameter_preview", "Apply a previewed change using its approval token; refuses stale state", mutations.ApplyOperationParameterPreviewSchema, { outputDataSchema: mutations.applyOperationParameterPreviewOutputSchema, requiresRegeneration: true }),
