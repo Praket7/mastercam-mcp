@@ -21,7 +21,7 @@ Hard filters are applied before scoring, including declared material compatibili
 
 This follows the architecture direction in **Knowledge Graph Fusion with Large Language Models for Accurate, Explainable Manufacturing Process Planning** (arXiv/alphaXiv 2506.13026), which grounds tool and process decisions in structured manufacturing knowledge rather than allowing an LLM to free-associate feeds, speeds, or tooling.
 
-Set `MASTERCAM_MCP_TOOL_LIBRARY` to a JSON export using `mastercam-mcp/tool-library/v1` to supply the shop's actual catalog. Example:
+Set `MASTERCAM_MCP_TOOL_LIBRARY` to a JSON inventory to supply actual tool records. The loader accepts the existing `mastercam-mcp/tool-library/v1` format and RobbJack's publisher/schema-versioned ISO 13399 bulk JSON envelope (`toolNbr`/`specs` records), including the [machine-readable v1.1 catalog](https://robbjack.com/downloads/master-catalog). That adapter is validated against RobbJack's published shape, not every possible vendor extension of ISO 13399. For example:
 
 ```json
 {
@@ -38,7 +38,7 @@ Set `MASTERCAM_MCP_TOOL_LIBRARY` to a JSON export using `mastercam-mcp/tool-libr
 }
 ```
 
-The file is validated, limited to 2 MB and 5,000 tools, and merged with tool records referenced by the active Mastercam operations. Referenced live values override matching catalog identity fields; catalog material/operation compatibility remains intact. Without a catalog or referenced live tools, the result explicitly says `NO_TOOL_DATA`. The adapter does not yet read proprietary `.TOOLDB` files, and an exported JSON catalog is only as current as the shop's export process. Live Mastercam mapping remains an unverified candidate until licensed acceptance.
+The file is validated, limited to 10 MB and 20,000 tools, and merged with tool records referenced by active Mastercam operations. Referenced live values override matching catalog identity fields; catalog material/operation compatibility remains intact. ISO 13399 geometry/coatings are mapped only where present. Material compatibility, operations, and cutting parameters are not inferred when the source omits them. The public RobbJack v1.1 feed's manifest publishes a SHA-256 checksum and permits import into CAM/CAD/tool-management systems with attribution; it is not bundled here. Without a catalog or referenced live tools, the result explicitly says `NO_TOOL_DATA`. The adapter still does not read proprietary `.TOOLDB` files; native vendor catalog integrations remain the supported source for broader, continuously updated tooling. Live Mastercam mapping remains an unverified candidate until licensed acceptance.
 
 Setup packets include holder style, tool location, stickout, flute/cutting length, workholding/setup references, provenance, and missing-data flags when those values are supplied. These fields reflect machinist requests in a [Reddit discussion about setup-sheet contents](https://www.reddit.com/r/Machinists/comments/1kmjxgm/what_do_your_set_up_sheets_look_like/); they are practical user feedback, not an industry standard.
 
@@ -97,7 +97,7 @@ Thread dimensions are calculated from a supplied callout or supplied dimensions.
 
 ## Natural-language OD rough + finish planning
 
-`plan_od_rough_finish` is a preview tool. An MCP client can translate a request such as “make me a rough + finish toolpath for this OD profile” into a structured call containing:
+`plan_od_rough_finish` is a preview tool. It can use a supplied tool list, the configured shop/ISO 13399 catalog, and tools referenced by active operations. An MCP client can translate a request such as “make me a rough + finish toolpath for this OD profile” into a structured call containing:
 
 - OD profile points
 - stock diameter

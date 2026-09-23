@@ -69,7 +69,7 @@ export const RecommendJobToolingSchema = z.object({
   material: z.string().min(1).max(128),
   units: z.enum(["mm", "inch"]).optional(),
   features: z.array(JobFeatureSchema).min(1).max(100),
-  tools: z.array(JobToolSchema).max(500).default([]),
+  tools: z.array(JobToolSchema).max(20000).default([]),
   machine: z.object({
     maxToolDiameter: Positive.optional(),
     maxRpm: Positive.optional(),
@@ -168,7 +168,7 @@ export const GenerateOperationPacketSchema = z.object({
   stock: z.record(z.string(), z.unknown()).optional(),
   wcs: z.record(z.string(), z.unknown()).optional(),
   operations: z.array(OperationPacketOperationSchema).max(500).optional(),
-  tools: z.array(JobToolSchema).max(500).default([]),
+  tools: z.array(JobToolSchema).max(20000).default([]),
   verification: z.object({
     simulationPassed: z.boolean().optional(),
     collisionCheckPassed: z.boolean().optional(),
@@ -207,7 +207,7 @@ export const PlanOdRoughFinishSchema = z.object({
   material: z.string().min(1).max(128),
   stockDiameter: Positive,
   profile: z.array(OdPointSchema).min(2).max(1000),
-  tools: z.array(JobToolSchema).min(1).max(500),
+  tools: z.array(JobToolSchema).max(20000).default([]),
   machine: z.object({
     maxRpm: Positive.optional(),
     maxFeedRate: Positive.optional()

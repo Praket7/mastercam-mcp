@@ -6,8 +6,27 @@ import { JobToolSchema } from "./job-intelligence.js";
 const ToolLibrarySchema = z.object({
   schema: z.literal("mastercam-mcp/tool-library/v1"),
   units: z.enum(["mm", "inch"]),
-  tools: z.array(JobToolSchema).min(1).max(5000)
+  tools: z.array(JobToolSchema).min(1).max(20000)
 }).strict();
+
+const IsoCatalogSchema = z.object({
+  schemaVersion: z.string().min(1).max(32),
+  publisher: z.string().min(1).max(256),
+  generated: z.string().max(64).optional(),
+  toolCount: z.number().int().positive().optional(),
+  tools: z.array(z.object({
+    toolNbr: z.string().min(1).max(128),
+    name: z.string().min(1).max(256),
+    url: z.string().url().optional(),
+    toolTypes: z.array(z.string().min(1).max(128)).max(20).default([]),
+    coatings: z.array(z.string().min(1).max(128)).max(20).default([]),
+    specs: z.record(z.string(), z.unknown()).default({})
+  }).passthrough()).min(1).max(20000)
+}).passthrough().superRefine((catalog, context) => {
+  if (catalog.toolCount !== undefined && catalog.toolCount !== catalog.tools.length) {
+    context.addIssue({ code: "custom", message: "Catalog toolCount does not match its tool record count", path: ["toolCount"] });
+  }
+});
 
 export type ShopToolLibrary = {
   schema: "mastercam-mcp/tool-library/v1";
@@ -20,12 +39,46 @@ export function loadShopToolLibrary(path = process.env.MASTERCAM_MCP_TOOL_LIBRAR
   if (!path?.trim()) return undefined;
   const info = statSync(path);
   if (!info.isFile()) throw new Error("Configured tool library must be a regular file");
-  if (info.size > 2_000_000) throw new Error("Configured tool library exceeds the 2 MB limit");
+  if (info.size > 10_000_000) throw new Error("Configured tool library exceeds the 10 MB limit");
   let json: unknown;
   try {
     json = JSON.parse(readFileSync(path, "utf8"));
   } catch (error) {
     throw new Error(`Configured tool library is not valid JSON: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (json && typeof json === "object" && "schemaVersion" in json) {
+    const isoCatalog = IsoCatalogSchema.parse(json);
+    return {
+      schema: "mastercam-mcp/tool-library/v1",
+      units: "mm",
+      tools: isoCatalog.tools.map(tool => {
+        const dimension = (key: string): number | undefined => {
+          const value = tool.specs[key];
+          if (value && typeof value === "object" && !Array.isArray(value)) {
+            const record = value as Record<string, unknown>;
+            const number = typeof record.mm === "number" ? record.mm : record.in;
+            return typeof number === "number" && Number.isFinite(number) && number > 0 ? number : undefined;
+          }
+          return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
+        };
+        return JobToolSchema.parse({
+          id: tool.toolNbr,
+          name: tool.name,
+          type: tool.toolTypes.join(", ") || "cutting tool",
+          ...(dimension("DC") === undefined ? {} : { diameter: dimension("DC") }),
+          ...(dimension("APMX") === undefined ? {} : { fluteLength: dimension("APMX"), maxDepth: dimension("APMX") }),
+          ...(dimension("OAL") === undefined ? {} : { overallLength: dimension("OAL") }),
+          ...(tool.coatings.length === 0 ? {} : { coating: tool.coatings.join(", ") }),
+          materials: [],
+          operations: tool.toolTypes.map(type => /end mill/i.test(type) ? "milling" : type.toLowerCase()),
+          provenance: [{
+            source: `${isoCatalog.publisher} ISO 13399 catalog v${isoCatalog.schemaVersion}${isoCatalog.generated ? ` generated ${isoCatalog.generated}` : ""}`,
+            ...(tool.url === undefined ? {} : { reference: tool.url }),
+            verified: false
+          }]
+        });
+      })
+    };
   }
   const parsed = ToolLibrarySchema.parse(json);
   return {

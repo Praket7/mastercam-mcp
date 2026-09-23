@@ -358,10 +358,20 @@ export function createMcpServer(
               data: calculateThreadTap(CalculateThreadTapSchema.parse(args))
             };
           } else if (name === "plan_od_rough_finish") {
+            const parsed = PlanOdRoughFinishSchema.parse(args);
+            let tools = parsed.tools;
+            if (tools.length === 0) {
+              const library = loadShopToolLibrary();
+              if (library?.units && parsed.units !== library.units) {
+                throw new Error(`Job units (${parsed.units}) do not match configured shop tool-library units (${library.units})`);
+              }
+              const active = await backend.call({ id: randomUUID(), tool: "list_tools", arguments: {} }, { signal: abortController.signal });
+              tools = mergeActiveJobTools(library, active.ok && Array.isArray(active.data) ? active.data : [])?.tools ?? [];
+            }
             result = {
               ok: true,
               tool: name,
-              data: planOdRoughFinish(PlanOdRoughFinishSchema.parse(args))
+              data: planOdRoughFinish({ ...parsed, tools })
             };
           } else {
             result = await backend.call(

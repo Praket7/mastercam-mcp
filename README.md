@@ -142,8 +142,8 @@ Installation guidance is in `docs/INSTALLATION.md`. Environment settings are in 
 
 The server now includes a portable job-intelligence layer in addition to setup-sheet, NC comparison, tool-database comparison, and machine-profile validation.
 
-- `recommend_job_tooling` ranks only tools from the supplied shop/tool library and hard-rejects known material, geometry, depth, or machine incompatibilities before scoring preferences.
-- `MASTERCAM_MCP_TOOL_LIBRARY` can point to a validated shop-export JSON catalog; live operation references are merged into it when available. See [the schema and limits](docs/JOB-INTELLIGENCE.md#tooling-recommendations).
+- `recommend_job_tooling` ranks tools from the supplied shop/tool library or supported manufacturer ISO catalog and hard-rejects known material, geometry, depth, or machine incompatibilities before scoring preferences.
+- `MASTERCAM_MCP_TOOL_LIBRARY` can point to a validated shop-export JSON catalog or the supported RobbJack ISO 13399 bulk catalog; active-operation tools are merged when available, and OD planning uses the configured catalog when the call omits tools. See [the schema and limits](docs/JOB-INTELLIGENCE.md#tooling-recommendations).
 - `analyze_toolpath_risk` checks supplied motion segments against declared travel, feed/RPM limits, safe Z, stock and fixture bounding volumes, conservative swept envelopes, and optional approach-angle thresholds.
 - `analyze_nc_program` reviews bounded common G-code linear motion, estimates listed move time, and reports unsupported or ungrounded motion as unknown. It is not a machine simulation or safe-to-run approval.
 - `analyze_cycle_time` separates cutting time from rapids, air-feed, dwell, and tool-change time, then returns reviewable non-cutting opportunities without claiming that all of that time can safely be removed.
