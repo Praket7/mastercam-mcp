@@ -19,5 +19,6 @@
   <ItemGroup>
     <Compile Include="..\MastercamMcp.Addin.2027\ProgrammingContextReader.cs" Link="StageB\ProgrammingContextReader.cs" />
     <Compile Include="..\MastercamMcp.Addin.2027\ProgrammingContextTools.cs" Link="StageB\ProgrammingContextTools.cs" />
+    <Compile Include="..\MastercamMcp.Addin.2027\EnvironmentAdapter.cs" Link="StageB\EnvironmentAdapter.cs" />
   </ItemGroup>
 </Project>
