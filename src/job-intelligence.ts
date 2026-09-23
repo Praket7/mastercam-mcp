@@ -26,6 +26,9 @@ export const JobToolSchema = z.object({
   number: z.number().int().positive().optional(),
   name: z.string().min(1).max(256),
   type: z.string().min(1).max(128).optional(),
+  holderStyle: z.string().max(128).optional(),
+  machineLocation: z.string().max(128).optional(),
+  lengthOutOfHolder: z.object({ value: Positive, unit: z.enum(["mm", "in"]) }).strict().optional(),
   diameter: Positive.optional(),
   cornerRadius: Finite.nonnegative().optional(),
   fluteLength: Positive.optional(),
@@ -64,8 +67,9 @@ export const JobFeatureSchema = z.object({
 
 export const RecommendJobToolingSchema = z.object({
   material: z.string().min(1).max(128),
+  units: z.enum(["mm", "inch"]).optional(),
   features: z.array(JobFeatureSchema).min(1).max(100),
-  tools: z.array(JobToolSchema).min(1).max(500),
+  tools: z.array(JobToolSchema).max(500).default([]),
   machine: z.object({
     maxToolDiameter: Positive.optional(),
     maxRpm: Positive.optional(),
@@ -136,7 +140,7 @@ export const AnalyzeCycleTimeSchema = z.object({
     MoveEventSchema,
     DwellEventSchema,
     ToolChangeEventSchema
-  ])).min(1).max(20000),
+  ])).max(20000),
   machineRapidRate: Positive,
   defaultToolChangeSeconds: Finite.nonnegative().default(8),
   opportunityThresholdSeconds: Finite.nonnegative().default(1)
@@ -162,14 +166,18 @@ export const GenerateOperationPacketSchema = z.object({
   machine: z.record(z.string(), z.unknown()).optional(),
   stock: z.record(z.string(), z.unknown()).optional(),
   wcs: z.record(z.string(), z.unknown()).optional(),
-  operations: z.array(OperationPacketOperationSchema).min(1).max(500),
+  operations: z.array(OperationPacketOperationSchema).max(500).optional(),
   tools: z.array(JobToolSchema).max(500).default([]),
   verification: z.object({
     simulationPassed: z.boolean().optional(),
     collisionCheckPassed: z.boolean().optional(),
     postRegressionReviewed: z.boolean().optional()
   }).strict().optional(),
-  notes: z.array(z.string().max(1000)).max(100).default([])
+  notes: z.array(z.string().max(1000)).max(100).default([]),
+  setupReferences: z.array(z.object({
+    label: z.string().min(1).max(128),
+    reference: z.string().min(1).max(1000)
+  }).strict()).max(50).default([])
 }).strict();
 
 export const CalculateThreadTapSchema = z.object({
@@ -352,6 +360,9 @@ export function recommendJobTooling(input: z.infer<typeof RecommendJobToolingSch
   return {
     schema: "mastercam-mcp/job-tooling/v1",
     material: input.material,
+    units: input.units ?? null,
+    candidateCount: input.tools.length,
+    status: input.tools.length > 0 ? "GROUNDED_TO_SUPPLIED_TOOL_DATA" : "NO_TOOL_DATA",
     features,
     evidenceHash: sha256Of(input),
     safety:
@@ -655,21 +666,22 @@ function displayValue(value: unknown): string {
 
 export function generateOperationPacket(input: z.infer<typeof GenerateOperationPacketSchema>) {
   input = GenerateOperationPacketSchema.parse(input);
+  const operations = input.operations ?? [];
   const toolsByNumber = new Map<number, JobTool>();
   for (const tool of input.tools) {
     if (tool.number !== undefined) toolsByNumber.set(tool.number, tool);
   }
 
-  const unresolvedTools = input.operations
+  const unresolvedTools = operations
     .filter(operation => operation.toolNumber !== undefined && !toolsByNumber.has(operation.toolNumber))
     .map(operation => ({ operationId: operation.id, toolNumber: operation.toolNumber }));
-  const dirty = input.operations.filter(operation => operation.toolpathDirty === true).map(operation => operation.id);
-  const estimatedCycleSeconds = input.operations.reduce(
+  const dirty = operations.filter(operation => operation.toolpathDirty === true).map(operation => operation.id);
+  const estimatedCycleSeconds = operations.reduce(
     (sum, operation) => sum + (operation.estimatedCycleSeconds ?? 0),
     0
   );
 
-  const operationLines = input.operations.map((operation, index) => {
+  const operationLines = operations.map((operation, index) => {
     const notes = operation.notes.join("; ");
     return [
       String(index + 1),
@@ -693,6 +705,10 @@ export function generateOperationPacket(input: z.infer<typeof GenerateOperationP
     displayValue(tool.diameter),
     displayValue(tool.insert),
     displayValue(tool.grade),
+    displayValue(tool.fluteLength),
+    displayValue(tool.lengthOutOfHolder),
+    displayValue(tool.holderStyle),
+    displayValue(tool.machineLocation),
     tool.provenance.map(item => item.source).join(", ")
   ].join(" | "));
 
@@ -716,19 +732,20 @@ export function generateOperationPacket(input: z.infer<typeof GenerateOperationP
     ...operationLines,
     "",
     "## Tool list",
-    "Tool # | Name | Type | Diameter | Insert | Grade | Provenance",
-    "--- | --- | --- | --- | --- | --- | ---",
+    "Tool # | Name | Type | Diameter | Insert | Grade | Cutting length | Length out of holder | Holder style | Machine location | Provenance",
+    "--- | --- | --- | --- | --- | --- | --- | --- | --- | --- | ---",
     ...toolLines,
     "",
     "## Shop notes",
-    ...input.notes.map(note => "- " + note)
+    ...input.notes.map(note => "- " + note),
+    ...(input.setupReferences.length > 0 ? ["", "## Setup references", ...input.setupReferences.map(item => `- ${item.label}: ${item.reference}`)] : [])
   ].join("\n");
 
   return {
     schema: "mastercam-mcp/operation-packet/v1",
     markdown: packet,
     summary: {
-      operationCount: input.operations.length,
+      operationCount: operations.length,
       toolCount: input.tools.length,
       estimatedCycleSeconds,
       dirtyOperationIds: dirty,

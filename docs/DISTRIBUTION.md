@@ -1,6 +1,6 @@
 # Distribution and client setup
 
-The supported end-user path is the npm package through `mastercam-mcp@latest`; the current repository package version is `0.2.0`. Users do not need a source checkout.
+The supported end-user path is the npm package through `mastercam-mcp@latest`; the current repository package version is `0.3.0`. Users do not need a source checkout.
 
 ## Codex
 

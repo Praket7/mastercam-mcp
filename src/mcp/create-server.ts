@@ -40,6 +40,8 @@ import { defaultPipe, selectedBackend } from "../platform.js";
 import { TOOL_DEFINITIONS, ToolEnvelopeSchema } from "./registry.js";
 import type { ToolDefinition } from "./registry.js";
 import { mastercamError } from "../errors.js";
+import { loadShopToolLibrary, mergeActiveJobTools } from "../shop-tool-library.js";
+import { analyzeNcProgram, AnalyzeNcProgramSchema } from "../nc-program.js";
 
 const READ_DEADLINE_MS = 30_000;
 const WRITE_DEADLINE_MS = 90_000;
@@ -266,10 +268,23 @@ export function createMcpServer(
               data: analyzePostRegression(PostRegressionSchema.parse(args))
             };
           } else if (name === "recommend_job_tooling") {
+            const parsed = RecommendJobToolingSchema.parse(args);
+            const library = loadShopToolLibrary();
+            let activeTools: unknown[] = [];
+            if (!(Array.isArray(args.tools) && args.tools.length > 0)) {
+              const active = await backend.call({ id: randomUUID(), tool: "list_tools", arguments: {} }, { signal: abortController.signal });
+              activeTools = active.ok && Array.isArray(active.data) ? active.data : [];
+            }
+            const candidates = Array.isArray(args.tools) && args.tools.length > 0
+              ? parsed.tools
+              : mergeActiveJobTools(library, activeTools)?.tools ?? [];
+            if (parsed.units && library?.units && parsed.units !== library.units) {
+              throw new Error(`Job units (${parsed.units}) do not match configured shop tool-library units (${library.units})`);
+            }
             result = {
               ok: true,
               tool: name,
-              data: recommendJobTooling(RecommendJobToolingSchema.parse(args))
+              data: recommendJobTooling({ ...parsed, units: parsed.units ?? library?.units, tools: candidates })
             };
           } else if (name === "analyze_toolpath_risk") {
             result = {
@@ -277,6 +292,8 @@ export function createMcpServer(
               tool: name,
               data: analyzeToolpathRisk(AnalyzeToolpathRiskSchema.parse(args))
             };
+          } else if (name === "analyze_nc_program") {
+            result = { ok: true, tool: name, data: analyzeNcProgram(AnalyzeNcProgramSchema.parse(args)) };
           } else if (name === "analyze_cycle_time") {
             result = {
               ok: true,
@@ -284,10 +301,55 @@ export function createMcpServer(
               data: analyzeCycleTime(AnalyzeCycleTimeSchema.parse(args))
             };
           } else if (name === "generate_operation_packet") {
+            const parsed = GenerateOperationPacketSchema.parse(args);
+            let operations = parsed.operations;
+            const notes = [...parsed.notes];
+            if (operations === undefined) {
+              const active = await backend.call({ id: randomUUID(), tool: "list_operations", arguments: { limit: 500 } }, { signal: abortController.signal });
+              operations = active.ok && Array.isArray(active.data)
+                ? active.data.flatMap((value, index) => {
+                    if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+                    const operation = value as Record<string, unknown>;
+                    const id = operation.id ?? operation.operationId;
+                    const name = typeof operation.name === "string" ? operation.name : undefined;
+                    if ((typeof id !== "number" && typeof id !== "string") || !name) return [];
+                    const feed = operation.feedRate ?? operation.feed;
+                    const spindle = operation.spindleSpeed;
+                    const number = (quantity: unknown): number | undefined => {
+                      if (typeof quantity === "number" && Number.isFinite(quantity) && quantity > 0) return quantity;
+                      if (quantity && typeof quantity === "object" && "value" in quantity) {
+                        const value = (quantity as { value?: unknown }).value;
+                        if (typeof value === "number" && Number.isFinite(value) && value > 0) return value;
+                      }
+                      return undefined;
+                    };
+                    return [{
+                      id,
+                      name,
+                      ...(typeof operation.type === "string" ? { type: operation.type } : {}),
+                      ...(typeof operation.tool === "number" ? { toolNumber: operation.tool } : {}),
+                      ...(typeof operation.wcs === "string" ? { wcs: operation.wcs } : {}),
+                      ...(typeof operation.plane === "string" ? { plane: operation.plane } : {}),
+                      ...(number(feed) !== undefined ? { feedRate: number(feed) } : {}),
+                      ...(number(spindle) !== undefined ? { spindleRpm: number(spindle) } : {}),
+                      ...(typeof operation.depth === "number" ? { depth: operation.depth } : {}),
+                      ...(typeof operation.toolpathDirty === "boolean" ? { toolpathDirty: operation.toolpathDirty } : {}),
+                      notes: [`Source: active Mastercam operation ${index + 1}`]
+                    }];
+                  })
+                : [];
+              if (operations.length === 0) notes.push("No active operation data was available; this packet is an empty template. Supply an operation tree or enable a supported live adapter.");
+            }
+            const library = loadShopToolLibrary();
+            let tools = parsed.tools;
+            if (tools.length === 0) {
+              const active = await backend.call({ id: randomUUID(), tool: "list_tools", arguments: {} }, { signal: abortController.signal });
+              tools = mergeActiveJobTools(library, active.ok && Array.isArray(active.data) ? active.data : [])?.tools ?? [];
+            }
             result = {
               ok: true,
               tool: name,
-              data: generateOperationPacket(GenerateOperationPacketSchema.parse(args))
+              data: generateOperationPacket({ ...parsed, operations, tools, notes })
             };
           } else if (name === "calculate_thread_tap") {
             result = {

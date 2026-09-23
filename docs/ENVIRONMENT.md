@@ -6,6 +6,10 @@ Node.js 24 was available through the bundled workspace runtime. Git was availabl
 
 No user name, license identifier, account identifier, or private machine path is stored here.
 
+## Shop tool catalog
+
+Set `MASTERCAM_MCP_TOOL_LIBRARY` to an operator-maintained JSON tool catalog to ground recommendations and setup packets in shop inventory. The `mastercam-mcp/tool-library/v1` schema, supported fields, size limits, and live-reference merge behavior are documented in [Job Intelligence](JOB-INTELLIGENCE.md#tooling-recommendations). JSON export is supported; proprietary Mastercam `.TOOLDB` parsing is not.
+
 
 ## Stage-B Mastercam 2027 read candidate
 

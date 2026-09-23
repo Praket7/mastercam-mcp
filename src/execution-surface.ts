@@ -20,6 +20,7 @@ export const SERVER_LOCAL_TOOL_NAMES = new Set([
   "analyze_post_regression",
   "recommend_job_tooling",
   "analyze_toolpath_risk",
+  "analyze_nc_program",
   "analyze_cycle_time",
   "generate_operation_packet",
   "calculate_thread_tap",
