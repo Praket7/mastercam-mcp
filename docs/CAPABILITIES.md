@@ -32,19 +32,19 @@ Counts: 65 capabilities declared, 58 fixture-supported, **0 live verified**.
 | get_stock | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares it. |
 | get_wcs | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares it. |
 | get_post_processor | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares it. |
-| get_programming_context | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares it. |
-| list_operations | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares it. |
-| get_operation | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares it. |
-| get_operation_parameters | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares it. |
-| find_operations | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares it. |
+| get_programming_context | yes | read | mock+2027-adapter | IMPLEMENTED | Mastercam 2027 Stage-B reader is implemented behind MASTERCAM_MCP_ENABLE_STAGE_B_READS=1 using runtime-probed SearchManager.GetOperations(); licensed LIVE_READ_VERIFIED acceptance is still required. |
+| list_operations | yes | read | mock+2027-adapter | IMPLEMENTED | Stage-B derives this read from the runtime-probed programming snapshot; licensed LIVE_READ_VERIFIED acceptance is still required. |
+| get_operation | yes | read | mock+2027-adapter | IMPLEMENTED | Stage-B requires stable unique numeric operation IDs from the runtime snapshot and fails closed otherwise; licensed LIVE_READ_VERIFIED acceptance is still required. |
+| get_operation_parameters | yes | read | mock+2027-adapter | IMPLEMENTED | Stage-B returns only runtime-reflected fields with mapping evidence and marks the parameter set partial; licensed LIVE_READ_VERIFIED acceptance is still required. |
+| find_operations | yes | read | mock+2027-adapter | IMPLEMENTED | Stage-B derives search results from the bounded programming snapshot; licensed LIVE_READ_VERIFIED acceptance is still required. |
 | explain_operation | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares it. |
 | get_operation_risks | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares it. |
-| get_dirty_toolpaths | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares it. |
-| get_toolpath_status | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares it. |
+| get_dirty_toolpaths | yes | read | mock+2027-adapter | IMPLEMENTED | Stage-B reports dirty state only when a runtime member is mapped; unknown state is never treated as current. Licensed LIVE_READ_VERIFIED acceptance is still required. |
+| get_toolpath_status | yes | read | mock+2027-adapter | IMPLEMENTED | Stage-B derives status from a mapped dirty/regeneration member and returns unknown when no member is proven; licensed LIVE_READ_VERIFIED acceptance is still required. |
 | estimate_cycle_time | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares it. |
 | compare_toolpaths | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares it. |
-| list_tools | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares it. |
-| get_tool | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares it. |
+| list_tools | yes | read | mock+2027-adapter | IMPLEMENTED | Stage-B extracts referenced tool records from active operation objects. Complete .TOOLDB/library coverage is not claimed; licensed LIVE_READ_VERIFIED acceptance is still required. |
+| get_tool | yes | read | mock+2027-adapter | IMPLEMENTED | Stage-B searches only the tools proven reachable from active operations; complete tool-library coverage is not claimed. Licensed LIVE_READ_VERIFIED acceptance is still required. |
 | capture_view | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares it. |
 | inspect | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares it. |
 | measure | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares it. |
@@ -80,7 +80,7 @@ Counts: 65 capabilities declared, 58 fixture-supported, **0 live verified**.
 
 - `IMPLEMENTED` means code exists and contract tests can exercise it. It is not proof that a real Mastercam release supports the tool.
 - `server-local` means the tool runs entirely in the TypeScript server and can be used alongside either backend; it does not imply a live Mastercam API mapping.
-- The native Stage A adapters map only `mastercam_status` and `mastercam_capabilities`; other native Mastercam tools remain unavailable until release-specific mappings are implemented and accepted.
+- Native adapters default to Stage A. Mastercam 2027 also contains opt-in Stage-B read candidates derived from a runtime-probed programming snapshot; they remain `IMPLEMENTED`, not `LIVE_READ_VERIFIED`, until licensed acceptance passes.
 - Standalone regeneration is withheld until it is transaction-bound to the exact approved mutation rather than accepting operation ids alone.
 - Simulation and collision results from the fixture backend are synthetic and never prove machine safety.
 - Posting, cycle start, DNC, and arbitrary script execution are deliberately unavailable.
