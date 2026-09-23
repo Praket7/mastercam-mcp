@@ -4,7 +4,7 @@ using System.Diagnostics;
 using System.IO;
 using MastercamMcp.Adapter.Abstractions;
 
-namespace MastercamMcp.Addin.2027
+namespace MastercamMcp.Addin.V2027
 {
     /// <summary>
     /// Mastercam 2027 adapter. Stage A environment reporting is always
