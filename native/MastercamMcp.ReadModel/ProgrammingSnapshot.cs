@@ -336,6 +336,21 @@ public static class SafeReflection
         return snapshot;
     }
 
+    public static string ComputeOperationFingerprint(OperationSnapshot operation)
+    {
+        var bytes = JsonSerializer.SerializeToUtf8Bytes(new
+        {
+            operation.Id,
+            operation.Name,
+            operation.Type,
+            operation.FeedRate,
+            operation.SpindleSpeed,
+            operation.Tool,
+            operation.ToolpathDirty
+        });
+        return Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
+    }
+
     public static string ComputeRevision(ProgrammingSnapshot snapshot)
     {
         var stable = new
