@@ -26,11 +26,25 @@ export const SERVER_LOCAL_TOOL_NAMES = new Set([
   "plan_od_rough_finish"
 ]);
 
-/** Native capabilities implemented by the current Stage-A adapters. */
+/** Native capabilities implemented by the always-on Stage-A adapters. */
 export const LIVE_NATIVE_STAGE_A_TOOL_NAMES = new Set([
   "mastercam_status",
   "mastercam_capabilities"
 ]);
+
+/**
+ * Opt-in Stage-B read-only mappings. These are IMPLEMENTED candidates, not
+ * LIVE_READ_VERIFIED capabilities. They are advertised only when the operator
+ * explicitly enables Stage-B reads on a licensed acceptance workstation.
+ */
+export const LIVE_NATIVE_STAGE_B_READ_TOOL_NAMES = new Set([
+  "get_programming_context"
+]);
+
+export function stageBReadsEnabled(): boolean {
+  const value = process.env.MASTERCAM_MCP_ENABLE_STAGE_B_READS?.trim().toLowerCase();
+  return value === "1" || value === "true";
+}
 
 export function isServerLocalTool(name: string): boolean {
   return SERVER_LOCAL_TOOL_NAMES.has(name);
@@ -38,4 +52,8 @@ export function isServerLocalTool(name: string): boolean {
 
 export function isStageANativeTool(name: string): boolean {
   return LIVE_NATIVE_STAGE_A_TOOL_NAMES.has(name);
+}
+
+export function isStageBNativeReadTool(name: string): boolean {
+  return LIVE_NATIVE_STAGE_B_READ_TOOL_NAMES.has(name);
 }
