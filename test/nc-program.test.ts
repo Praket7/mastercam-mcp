@@ -56,6 +56,37 @@ test("keeps modal arc direction and uses true arc length for cycle-time estimate
   assert.ok(!result.findings.some(item => item.code === "arc_modal_direction_unknown"));
 });
 
+test("uses XZ/I-K ordering for G18 and fails closed on unexpanded arc modes", () => {
+  const g18 = analyzeNcProgram({
+    program: "G21 G90 G18\nG1 X12 Z4 F100\nG3 X2 Z14 I-10 K0",
+    units: "mm",
+    coordinateFrame: "machine",
+    initialPosition: { x: 0, y: 0, z: 4 },
+    machine
+  });
+  assert.equal(g18.summary.parsedPathSegments, 9);
+  assert.ok(!g18.findings.some(item => item.code === "arc_motion_unknown"));
+
+  const unsupported = analyzeNcProgram({
+    program: "G21 G90 G17\nG1 X10 F100\nG91.1 G2 X0 Y10 I-10 P2 F100",
+    units: "mm",
+    coordinateFrame: "machine",
+    initialPosition: { x: 10, y: 0, z: 20 },
+    machine
+  });
+  assert.ok(unsupported.findings.some(item => item.code === "arc_turn_count_unknown"));
+  assert.ok(unsupported.summary.unknown > 0);
+
+  const partialAbsoluteCenter = analyzeNcProgram({
+    program: "G21 G90 G17 G90.1\nG1 X10 Y0 F100\nG3 X0 Y10 I0 F100",
+    units: "mm",
+    coordinateFrame: "machine",
+    initialPosition: { x: 10, y: 0, z: 20 },
+    machine
+  });
+  assert.ok(partialAbsoluteCenter.findings.some(item => item.code === "arc_motion_unknown"));
+});
+
 test("requires explicit motion mode and keeps G95 feed timing unknown", () => {
   const result = analyzeNcProgram({
     program: "G21 G91\nX10 Y0 Z0\nG95 G1 X20 F0.2",

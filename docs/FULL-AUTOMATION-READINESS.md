@@ -17,10 +17,10 @@ Repository: `Praket7/mastercam-mcp`
 
 ## Implemented in this change
 
-- Common G2/G3 arcs in G17/G18/G19 are approximated to a configurable chord error, bounded per arc and for the total parsed path, with modal arc direction, G90.1/G91.1 center mode, center offsets, and signed radius handling.
+- Common G2/G3 arcs in G17/G18/G19 are approximated to a configurable chord error, bounded per arc and for the total parsed path, with modal arc direction, G90.1/G91.1 center mode, center offsets, and signed radius handling. G18 axis order follows XZ/I-K. P-word multi-turn arcs fail closed as unknown.
 - Chorded arc segments feed existing swept-bound, travel, fixture, spindle/feed checks. The analytical arc length feeds cycle-time movement length. Arc approximation tolerance is included in the global safety margin.
 - Unknown feed engagement stays unknown; unsupported canned cycles, subprograms/macros, rotary motion, work offsets without transforms, controller behavior, and actual stock-removal engagement stay unknown. This remains static review, not machine simulation or machining authorization.
-- Full 139-test suite, ESLint, and TypeScript typecheck passed on the current checkout.
+- Full 140-test suite, ESLint, TypeScript typecheck, build, package dry-run, and GitHub CI passed for the initial PR commit. Follow-up arc-edge-case changes are being revalidated now.
 
 ## Remaining hard blockers and evidence needed
 

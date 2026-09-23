@@ -46,7 +46,7 @@ type Segment = {
 type ArcPlane = "G17" | "G18" | "G19";
 
 function arcAxes(plane: ArcPlane): { u: "x" | "y" | "z"; v: "x" | "y" | "z"; w: "x" | "y" | "z"; a: "I" | "J" | "K"; b: "I" | "J" | "K" } {
-  if (plane === "G18") return { u: "z", v: "x", w: "y", a: "K", b: "I" };
+  if (plane === "G18") return { u: "x", v: "z", w: "y", a: "I", b: "K" };
   if (plane === "G19") return { u: "y", v: "z", w: "x", a: "J", b: "K" };
   return { u: "x", v: "y", w: "z", a: "I", b: "J" };
 }
@@ -88,6 +88,7 @@ function buildArc(input: {
     const selected = candidates.find(center => Math.abs(sweepFor(center)) > Math.PI + 1e-9 === wantMajor) ?? candidates[0]!;
     [centerU, centerV] = selected as [number, number];
   } else if (input.centerU !== undefined || input.centerV !== undefined) {
+    if (input.absoluteCenter && (input.centerU === undefined || input.centerV === undefined)) return undefined;
     centerU = input.absoluteCenter ? input.centerU ?? startU : startU + (input.centerU ?? 0);
     centerV = input.absoluteCenter ? input.centerV ?? startV : startV + (input.centerV ?? 0);
   } else return undefined;
@@ -265,9 +266,17 @@ const supportedG = new Set([0, 1, 2, 3, 4, 17, 18, 19, 20, 21, 28, 30, 40, 41, 4
     }
     const id = `L${lineNumber}`;
     if (motion === "arc") {
+      if (parsed.has("P")) {
+        unknown(lineNumber, "arc_turn_count_unknown", "Arc P-word turn counts are controller-specific and are not expanded");
+        continue;
+      }
       const scaleFactor = unitFactor(programUnits, input.units);
       const centerWord = (key: "I" | "J" | "K") => last(parsed, key) === undefined ? undefined : last(parsed, key)! * scaleFactor;
       const rWord = last(parsed, "R");
+      if (rWord !== undefined && (centerWord(arcAxes(arcPlane).a) !== undefined || centerWord(arcAxes(arcPlane).b) !== undefined)) {
+        unknown(lineNumber, "arc_format_conflict", "Arc radius and center-offset formats are both present; controller precedence is unknown");
+        continue;
+      }
       const arc = buildArc({
         start,
         end,
