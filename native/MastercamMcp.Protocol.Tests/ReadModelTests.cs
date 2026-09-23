@@ -220,8 +220,11 @@ namespace MastercamMcp.Protocol.Tests
                     CancellationToken.None);
                 Assert.True(tools.Ok);
                 using var toolsJson = JsonDocument.Parse(JsonSerializer.Serialize(tools.Data));
-                Assert.Equal(2, toolsJson.RootElement.GetProperty("tools").GetArrayLength());
-                Assert.False(toolsJson.RootElement.GetProperty("coverage").GetProperty("completeLibrary").GetBoolean());
+                Assert.Equal(2, toolsJson.RootElement.GetArrayLength());
+                Assert.False(toolsJson.RootElement[0]
+                    .GetProperty("provenance")
+                    .GetProperty("completeLibraryRecord")
+                    .GetBoolean());
 
                 var dirty = ProgrammingContextTools.Invoke(
                     "get_dirty_toolpaths",
