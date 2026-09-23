@@ -13,6 +13,9 @@ namespace MastercamMcp.Addin.2027
     internal static class ProgrammingContextReader
     {
         public const int MaxOperations = 5000;
+        private static readonly object CacheLock = new object();
+        private static ProgrammingSnapshot? cachedSnapshot;
+        private static DateTimeOffset cacheExpiresAt;
 
         public static bool Enabled =>
             string.Equals(
@@ -47,6 +50,15 @@ namespace MastercamMcp.Addin.2027
             }
 
             cancellationToken.ThrowIfCancellationRequested();
+            lock (CacheLock)
+            {
+                if (cachedSnapshot != null && DateTimeOffset.UtcNow < cacheExpiresAt)
+                {
+                    snapshot = cachedSnapshot;
+                    return true;
+                }
+            }
+
             var probe = Probe();
             if (!probe.CanReadProgrammingContext)
             {
@@ -116,7 +128,9 @@ namespace MastercamMcp.Addin.2027
             }
 
             cancellationToken.ThrowIfCancellationRequested();
-            var operations = SafeReflection.EnumerateBounded(raw, MaxOperations).ToList();
+            // Read one extra record so the portable builder can prove/report
+            // truncation rather than silently accepting a full limit.
+            var operations = SafeReflection.EnumerateBounded(raw, MaxOperations + 1).ToList();
             snapshot = SafeReflection.BuildProgrammingSnapshot(
                 operations,
                 $"{searchManager.FullName}.{method.Name}",
@@ -128,6 +142,12 @@ namespace MastercamMcp.Addin.2027
                 Member = $"{searchManager.FullName}.{method.Name}",
                 Note = $"Return type: {method.ReturnType.FullName ?? method.ReturnType.Name}; runtime reflection prevents compile-time assumptions about per-operation members."
             });
+
+            lock (CacheLock)
+            {
+                cachedSnapshot = snapshot;
+                cacheExpiresAt = DateTimeOffset.UtcNow.AddMilliseconds(250);
+            }
             return true;
         }
     }
