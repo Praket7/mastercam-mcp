@@ -154,7 +154,12 @@ export const TOOL_MANIFEST: readonly ToolManifestEntry[] = [
   read("get_stock", "Report stock definition and units", inspection.getStockSchema),
   read("get_wcs", "Report the active work coordinate system", inspection.getWcsSchema),
   read("get_post_processor", "Report the assigned post processor metadata", inspection.getPostProcessorSchema),
-  read("get_programming_context", "Bounded context bundle: part, machine, stock, tools, operations, dirty state", inspection.getProgrammingContextSchema),
+  read("get_programming_context", "Bounded live/fixture context bundle with operations, referenced tools, revision, coverage, and explicit unknowns", inspection.getProgrammingContextSchema, {
+    legacySupport: false,
+    mc2027Support: true,
+    tier: "IMPLEMENTED",
+    tierEvidence: "Mastercam 2027 Stage-B reader is implemented behind MASTERCAM_MCP_ENABLE_STAGE_B_READS=1 using runtime-probed SearchManager.GetOperations(); licensed LIVE_READ_VERIFIED acceptance is still required."
+  }),
 
   read("list_operations", "List operations with explicit quantities and pagination", inspection.listOperationsSchema, { outputDataSchema: inspection.listOperationsOutputSchema }),
   read("get_operation", "Retrieve one operation by exact id; no fallback targeting", inspection.getOperationSchema, { outputDataSchema: inspection.getOperationOutputSchema, requiresExactTarget: true }),
