@@ -79,7 +79,7 @@ ${rows.join("\n")}
 
 - \`IMPLEMENTED\` means code exists and contract tests can exercise it. It is not proof that a real Mastercam release supports the tool.
 - \`server-local\` means the tool runs entirely in the TypeScript server and can be used alongside either backend; it does not imply a live Mastercam API mapping.
-- The native Stage A adapters map only \`mastercam_status\` and \`mastercam_capabilities\`; other native Mastercam tools remain unavailable until release-specific mappings are implemented and accepted.
+- Native adapters default to Stage A. Mastercam 2027 also contains opt-in Stage-B read candidates derived from a runtime-probed programming snapshot; they remain \`IMPLEMENTED\`, not \`LIVE_READ_VERIFIED\`, until licensed acceptance passes.
 - Standalone regeneration is withheld until it is transaction-bound to the exact approved mutation rather than accepting operation ids alone.
 - Simulation and collision results from the fixture backend are synthetic and never prove machine safety.
 - Posting, cycle start, DNC, and arbitrary script execution are deliberately unavailable.
