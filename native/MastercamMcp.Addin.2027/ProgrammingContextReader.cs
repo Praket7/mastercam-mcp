@@ -34,6 +34,15 @@ namespace MastercamMcp.Addin.2027
             return SafeReflection.ProbeLoadedAssemblies(AppDomain.CurrentDomain.GetAssemblies());
         }
 
+        public static void InvalidateCache()
+        {
+            lock (CacheLock)
+            {
+                cachedSnapshot = null;
+                cacheExpiresAt = default;
+            }
+        }
+
         public static bool TryRead(
             CancellationToken cancellationToken,
             out ProgrammingSnapshot? snapshot,
