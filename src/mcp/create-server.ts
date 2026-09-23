@@ -17,6 +17,20 @@ import {
   PostRegressionSchema,
   RegenerationImpactSchema
 } from "../manufacturing-intelligence.js";
+import {
+  analyzeCycleTime,
+  analyzeToolpathRisk,
+  calculateThreadTap,
+  generateOperationPacket,
+  planOdRoughFinish,
+  recommendJobTooling,
+  AnalyzeCycleTimeSchema,
+  AnalyzeToolpathRiskSchema,
+  CalculateThreadTapSchema,
+  GenerateOperationPacketSchema,
+  PlanOdRoughFinishSchema,
+  RecommendJobToolingSchema
+} from "../job-intelligence.js";
 import { defaultPipe, selectedBackend } from "../platform.js";
 import { TOOL_DEFINITIONS, ToolEnvelopeSchema } from "./registry.js";
 import type { ToolDefinition } from "./registry.js";
@@ -87,8 +101,8 @@ export function createMcpServer(
     {
       instructions:
         backendKind === "live"
-          ? "The native adapter is Stage A: only mastercam_status and mastercam_capabilities are native-backed today. Server-local diagnostics, compatibility, planning, setup-sheet, comparison, deterministic preflight, regeneration-impact, post-regression, and validation utilities remain available without claiming unverified Mastercam mappings."
-          : "Inspect before mutating. Use deterministic manufacturing_preflight and regression tools as review evidence. Mutations require preview_operation_parameters then apply_operation_parameter_preview with the returned approvalToken. Rollback uses the server-issued transactionId. Fixture data never proves live Mastercam behavior."
+          ? "The native adapter is Stage A: only mastercam_status and mastercam_capabilities are native-backed today. Server-local diagnostics, compatibility, tooling recommendation, toolpath-risk review, cycle-time analysis, operation packets, thread/tap calculations, OD process-plan preview, preflight, regeneration-impact, post-regression, and validation utilities remain available without claiming unverified Mastercam mappings."
+          : "Inspect before mutating. Ground tooling/process suggestions in supplied job state. Use toolpath-risk, cycle-time, thread/tap, manufacturing_preflight, and regression tools as deterministic review evidence. plan_od_rough_finish is non-executable preview only. Mutations require preview_operation_parameters then apply_operation_parameter_preview with the returned approvalToken. Rollback uses the server-issued transactionId. Fixture data never proves live Mastercam behavior."
     }
   );
 
@@ -241,6 +255,42 @@ export function createMcpServer(
               ok: true,
               tool: name,
               data: analyzePostRegression(PostRegressionSchema.parse(args))
+            };
+          } else if (name === "recommend_job_tooling") {
+            result = {
+              ok: true,
+              tool: name,
+              data: recommendJobTooling(RecommendJobToolingSchema.parse(args))
+            };
+          } else if (name === "analyze_toolpath_risk") {
+            result = {
+              ok: true,
+              tool: name,
+              data: analyzeToolpathRisk(AnalyzeToolpathRiskSchema.parse(args))
+            };
+          } else if (name === "analyze_cycle_time") {
+            result = {
+              ok: true,
+              tool: name,
+              data: analyzeCycleTime(AnalyzeCycleTimeSchema.parse(args))
+            };
+          } else if (name === "generate_operation_packet") {
+            result = {
+              ok: true,
+              tool: name,
+              data: generateOperationPacket(GenerateOperationPacketSchema.parse(args))
+            };
+          } else if (name === "calculate_thread_tap") {
+            result = {
+              ok: true,
+              tool: name,
+              data: calculateThreadTap(CalculateThreadTapSchema.parse(args))
+            };
+          } else if (name === "plan_od_rough_finish") {
+            result = {
+              ok: true,
+              tool: name,
+              data: planOdRoughFinish(PlanOdRoughFinishSchema.parse(args))
             };
           } else {
             result = await backend.call(
