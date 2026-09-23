@@ -259,20 +259,7 @@ namespace MastercamMcp.Addin.2027
         {
             var limit = GetInt(root, "limit", 200, 1, 500);
             var data = snapshot.Tools.Take(limit).Select(ToolPayload).ToArray();
-            return AdapterResult.Success(new
-            {
-                tools = data,
-                coverage = new
-                {
-                    referencedToolsOnly = true,
-                    completeLibrary = false,
-                    source = "tools referenced by active operations",
-                    unknowns = snapshot.Coverage.ReferencedToolsEnumerated
-                        ? Array.Empty<string>()
-                        : new[] { "No referenced tool records were extracted from the active operations." }
-                },
-                documentRevision = snapshot.DocumentRevision
-            }, snapshot.DocumentRevision);
+            return AdapterResult.Success(data, snapshot.DocumentRevision);
         }
 
         private static AdapterResult GetTool(ProgrammingSnapshot snapshot, JsonElement root)
