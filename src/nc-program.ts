@@ -9,6 +9,8 @@ export const AnalyzeNcProgramSchema = z.object({
   program: z.string().min(1).max(1_000_000),
   units: z.enum(["mm", "inch"]),
   coordinateFrame: z.enum(["machine", "work"]),
+  initialWorkOffset: z.enum(["G54", "G55", "G56", "G57", "G58", "G59"]).default("G54"),
+  workOffsets: z.partialRecord(z.enum(["G54", "G55", "G56", "G57", "G58", "G59"]), Vector3Schema).optional(),
   initialPosition: Vector3Schema,
   initialMotion: z.enum(["rapid", "feed"]).optional(),
   machine: z.object({
@@ -147,6 +149,7 @@ function unitFactor(programUnits: "mm" | "inch", analysisUnits: "mm" | "inch"): 
 /** Parses common G0/G1/G2/G3 motion. Unsupported controller features stay unknown. */
 export function analyzeNcProgram(input: Input) {
   input = AnalyzeNcProgramSchema.parse(input);
+  const workOffsets = input.workOffsets ?? {};
   if (input.program.split(/\r?\n/).length > 50_000) throw new Error("NC program exceeds the 50,000-line analysis limit");
 
   const findings: Array<{ line: number; code: string; message: string }> = [];
@@ -165,6 +168,10 @@ export function analyzeNcProgram(input: Input) {
   let arcCenterAbsolute = false;
   let cannedCycle = false;
   let hasWorkOffset = false;
+  let currentWorkOffset = input.initialWorkOffset;
+  const usedWorkOffsets = new Set<string>();
+  const missingWorkOffsets = new Set<string>();
+  let unsupportedWorkOffset = false;
   let hasExpandedArc = false;
   let pendingTool: number | undefined;
   const arcTolerance = input.arcChordError ?? (input.units === "mm" ? 0.05 : 0.002);
@@ -209,7 +216,14 @@ const supportedG = new Set([0, 1, 2, 3, 4, 17, 18, 19, 20, 21, 28, 30, 40, 41, 4
       } else if (whole === 80) cannedCycle = false;
       else if ([28, 30, 53].includes(whole)) unknown(lineNumber, "machine_reference_motion", `G${whole} machine/reference motion is not expanded`);
       else if ([41, 42, 43, 49].includes(whole)) unknown(lineNumber, "compensation", `G${whole} compensation may change the physical path and is not modeled`);
-      else if (whole >= 54 && whole <= 59) hasWorkOffset = true;
+      else if (Number.isInteger(code) && code >= 54 && code <= 59) {
+        hasWorkOffset = true;
+        currentWorkOffset = (["G54", "G55", "G56", "G57", "G58", "G59"] as const)[code - 54]!;
+      }
+      else if (code > 54 && code < 60) {
+        hasWorkOffset = true;
+        unsupportedWorkOffset = true;
+      }
       else if (whole === 96) {
         constantRpm = false;
         unknown(lineNumber, "constant_surface_speed", "G96 constant-surface-speed mode is not converted to axis RPM");
@@ -303,11 +317,21 @@ const supportedG = new Set([0, 1, 2, 3, 4, 17, 18, 19, 20, 21, 28, 30, 40, 41, 4
         continue;
       }
       hasExpandedArc = true;
+      const workOffset = input.coordinateFrame === "work" ? workOffsets[currentWorkOffset] : undefined;
+      if (input.coordinateFrame === "work") {
+        usedWorkOffsets.add(currentWorkOffset);
+        if (!workOffset) missingWorkOffsets.add(currentWorkOffset);
+      }
+      const toMachine = (point: Vec): Vec => workOffset ? {
+        x: point.x + workOffset.x,
+        y: point.y + workOffset.y,
+        z: point.z + workOffset.z
+      } : point;
       for (let i = 1; i < arc.points.length; i++) segments.push({
         id: `${id}.${i}`,
         motion: "feed",
-        start: arc.points[i - 1]!,
-        end: arc.points[i]!,
+        start: toMachine(arc.points[i - 1]!),
+        end: toMachine(arc.points[i]!),
         feedRate: feed,
         ...(spindle !== undefined && constantRpm ? { spindleRpm: spindle } : {}),
         engagement: "unknown",
@@ -320,14 +344,22 @@ const supportedG = new Set([0, 1, 2, 3, 4, 17, 18, 19, 20, 21, 28, 30, 40, 41, 4
     const segment: Segment = {
       id,
       motion,
-      start,
-      end,
+      start: input.coordinateFrame === "work" && workOffsets[currentWorkOffset]
+        ? { x: start.x + workOffsets[currentWorkOffset]!.x, y: start.y + workOffsets[currentWorkOffset]!.y, z: start.z + workOffsets[currentWorkOffset]!.z }
+        : start,
+      end: input.coordinateFrame === "work" && workOffsets[currentWorkOffset]
+        ? { x: end.x + workOffsets[currentWorkOffset]!.x, y: end.y + workOffsets[currentWorkOffset]!.y, z: end.z + workOffsets[currentWorkOffset]!.z }
+        : end,
       ...(motion === "feed" && feed !== undefined ? { feedRate: feed } : {}),
       ...(spindle !== undefined && constantRpm ? { spindleRpm: spindle } : {}),
       engagement: "unknown",
       toolRadius: input.toolRadius,
       holderRadius: input.holderRadius
     };
+    if (input.coordinateFrame === "work") {
+      usedWorkOffsets.add(currentWorkOffset);
+      if (!workOffsets[currentWorkOffset]) missingWorkOffsets.add(currentWorkOffset);
+    }
     segments.push(segment);
     events.push({
       id,
@@ -343,7 +375,8 @@ const supportedG = new Set([0, 1, 2, 3, 4, 17, 18, 19, 20, 21, 28, 30, 40, 41, 4
     min: { x: -1e12, y: -1e12, z: -1e12 },
     max: { x: 1e12, y: 1e12, z: 1e12 }
   };
-  const travelVerified = input.coordinateFrame === "machine" && !hasWorkOffset;
+  const travelVerified = input.coordinateFrame === "machine" && !hasWorkOffset ||
+    input.coordinateFrame === "work" && usedWorkOffsets.size > 0 && missingWorkOffsets.size === 0 && !unsupportedWorkOffset;
   const risk = segments.length > 0 ? analyzeToolpathRisk({
     segments,
     machine: {
@@ -351,12 +384,13 @@ const supportedG = new Set([0, 1, 2, 3, 4, 17, 18, 19, 20, 21, 28, 30, 40, 41, 4
       maxFeedRate: input.machine.maxFeedRate,
       maxSpindleRpm: input.machine.maxSpindleRpm
     },
-    stock: input.stock,
-    fixtures: input.fixtures,
+    stock: travelVerified ? input.stock : undefined,
+    fixtures: travelVerified ? input.fixtures : [],
     safetyMargin: input.safetyMargin + (hasExpandedArc ? arcTolerance : 0),
-    safeZ: input.safeZ
+    safeZ: travelVerified ? input.safeZ : undefined
   }) : undefined;
-  if (!travelVerified) unknown(0, input.coordinateFrame === "work" ? "work_coordinates" : "work_offset", "Machine travel checks are skipped because NC positions use a work offset and no WCS-to-machine transform was supplied");
+  if (missingWorkOffsets.size > 0) unknown(0, "work_offset_missing", `Machine travel checks need translation offsets for: ${[...missingWorkOffsets].join(", ")}`);
+  if (!travelVerified && missingWorkOffsets.size === 0) unknown(0, input.coordinateFrame === "work" ? "work_coordinates" : "work_offset", "Machine travel checks are skipped because NC positions use work coordinates without translation offsets, or select an unmapped work offset");
   const cycleTime = analyzeCycleTime({
     events,
     machineRapidRate: input.machine.rapidRate,
@@ -377,6 +411,6 @@ const supportedG = new Set([0, 1, 2, 3, 4, 17, 18, 19, 20, 21, 28, 30, 40, 41, 4
     risk,
     cycleTime,
     evidenceHash: sha256Of({ input, segments }),
-    safety: "Partial static review of linear and bounded G2/G3 arc motion. Canned cycles, macros, subprograms, rotary kinematics, work-offset transforms, controller/post behavior, compensation, and physical simulation remain unverified; this result never authorizes posting or machining."
+    safety: "Partial static review of linear and bounded G2/G3 arc motion. Translation-only work offsets are applied when explicitly supplied. Canned cycles, macros, subprograms, rotary kinematics, rotated coordinate frames, controller/post behavior, compensation, and physical simulation remain unverified; this result never authorizes posting or machining."
   };
 }

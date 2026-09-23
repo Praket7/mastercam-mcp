@@ -38,7 +38,7 @@ test("expands common arcs and still flags canned cycles and work-offset uncertai
   assert.equal(result.status, "REVIEW");
   assert.ok(result.summary.parsedLinearSegments > 10, "G2 arc is chorded for conservative swept-path checks");
   assert.ok(result.findings.some(item => item.code === "canned_cycle"));
-  assert.ok(result.findings.some(item => item.code === "work_coordinates"));
+  assert.ok(result.findings.some(item => item.code === "work_offset_missing"));
 });
 
 test("keeps modal arc direction and uses true arc length for cycle-time estimates", () => {
@@ -85,6 +85,26 @@ test("uses XZ/I-K ordering for G18 and fails closed on unexpanded arc modes", ()
     machine
   });
   assert.ok(partialAbsoluteCenter.findings.some(item => item.code === "arc_motion_unknown"));
+});
+
+test("maps explicitly supplied work offsets to machine travel and fails closed for missing offsets", () => {
+  const input = {
+    program: "G54 G0 X10 Y10 Z50",
+    units: "mm" as const,
+    coordinateFrame: "work" as const,
+    initialPosition: { x: 0, y: 0, z: 50 },
+    machine: { ...machine, travel: { min: { x: 0, y: 0, z: 0 }, max: { x: 100, y: 200, z: 200 } } },
+    fixtures: [{ id: "local-only-fixture", bounds: { min: { x: 9, y: 9, z: 49 }, max: { x: 11, y: 11, z: 51 } } }]
+  };
+  const mapped = analyzeNcProgram({ ...input, workOffsets: { G54: { x: 100, y: 0, z: 0 } } });
+  assert.equal(mapped.machineTravelChecked, true);
+  assert.ok(mapped.risk?.findings.some(item => item.id === "machine_overtravel"));
+
+  const missing = analyzeNcProgram(input);
+  assert.equal(missing.machineTravelChecked, false);
+  assert.ok(missing.findings.some(item => item.code === "work_offset_missing"));
+  assert.ok(!missing.risk?.findings.some(item => item.id === "machine_overtravel"));
+  assert.ok(!missing.risk?.findings.some(item => item.id === "fixture_intersection"), "fixture checks are skipped in untransformed coordinates");
 });
 
 test("requires explicit motion mode and keeps G95 feed timing unknown", () => {
