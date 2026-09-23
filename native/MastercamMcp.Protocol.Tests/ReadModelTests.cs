@@ -1,7 +1,7 @@
 using System;
 using System.Linq;
 using MastercamMcp.ReadModel;
-using MastercamMcp.Addin.2027;
+using MastercamMcp.Addin.V2027;
 using System.Text.Json;
 using System.Threading;
 using Xunit;
