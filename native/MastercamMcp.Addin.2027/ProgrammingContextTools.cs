@@ -6,7 +6,7 @@ using System.Threading;
 using MastercamMcp.Adapter.Abstractions;
 using MastercamMcp.ReadModel;
 
-namespace MastercamMcp.Addin.2027
+namespace MastercamMcp.Addin.V2027
 {
     internal static class ProgrammingContextTools
     {
