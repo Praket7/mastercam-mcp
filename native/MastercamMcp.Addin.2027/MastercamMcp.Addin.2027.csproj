@@ -13,6 +13,7 @@
     <ProjectReference Include="..\MastercamMcp.Protocol\MastercamMcp.Protocol.csproj" />
     <ProjectReference Include="..\MastercamMcp.Core\MastercamMcp.Core.csproj" />
     <ProjectReference Include="..\MastercamMcp.Adapter.Abstractions\MastercamMcp.Adapter.Abstractions.csproj" />
+    <ProjectReference Include="..\MastercamMcp.ReadModel\MastercamMcp.ReadModel.csproj" />
   </ItemGroup>
   <ItemGroup>
     <Reference Include="Mastercam.App.Types">
