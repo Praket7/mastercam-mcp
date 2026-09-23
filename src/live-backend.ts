@@ -17,15 +17,15 @@ const READ_TOOLS = new Set([
 
 const IDEMPOTENT_READS = new Set([
   "mastercam_status", "mastercam_capabilities", "get_version_report", "list_operations",
-  "get_operation", "get_operation_parameters", "list_tools", "get_stock", "get_wcs",
+  "get_operation", "get_operation_parameters", "list_tools", "get_tool", "get_stock", "get_wcs",
   "get_active_part", "get_machine_context", "get_programming_context", "discover_capabilities",
-  "find_operations", "verify_change"
+  "find_operations", "get_dirty_toolpaths", "get_toolpath_status", "verify_change"
 ]);
 
 const REVISION_CACHEABLE_READS = new Set([
   "get_active_part", "list_operations", "get_operation", "get_operation_parameters",
-  "list_tools", "get_stock", "get_wcs", "get_machine_context", "get_programming_context",
-  "find_operations", "verify_change"
+  "list_tools", "get_tool", "get_stock", "get_wcs", "get_machine_context", "get_programming_context",
+  "find_operations", "get_dirty_toolpaths", "get_toolpath_status", "verify_change"
 ]);
 
 const READ_DEADLINES_MS: Record<string, number> = {
