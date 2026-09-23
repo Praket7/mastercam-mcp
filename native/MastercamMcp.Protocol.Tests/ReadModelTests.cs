@@ -1,13 +1,17 @@
 using System;
 using System.Linq;
 using MastercamMcp.ReadModel;
+using MastercamMcp.Addin.2027;
+using System.Text.Json;
+using System.Threading;
 using Xunit;
 
 namespace Mastercam.Support
 {
     public static class SearchManager
     {
-        public static object[] GetOperations() => Array.Empty<object>();
+        public static object[] Operations { get; set; } = Array.Empty<object>();
+        public static object[] GetOperations() => Operations;
     }
 }
 
@@ -135,6 +139,133 @@ namespace MastercamMcp.Protocol.Tests
 
             Assert.Equal(5, snapshot.Operations.Count);
             Assert.Contains(snapshot.Coverage.Unknowns, item => item.Contains("truncated"));
+        }
+
+        [Fact]
+        public void StageBAdapterIsOptInAndReportsImplementedNotVerified()
+        {
+            var previous = Environment.GetEnvironmentVariable("MASTERCAM_MCP_ENABLE_STAGE_B_READS");
+            try
+            {
+                Environment.SetEnvironmentVariable("MASTERCAM_MCP_ENABLE_STAGE_B_READS", null);
+                var disabled = new EnvironmentAdapter().Capabilities()
+                    .Single(item => item.Name == "get_programming_context");
+                Assert.False(disabled.Supported);
+
+                Environment.SetEnvironmentVariable("MASTERCAM_MCP_ENABLE_STAGE_B_READS", "1");
+                var enabled = new EnvironmentAdapter().Capabilities()
+                    .Single(item => item.Name == "get_programming_context");
+                Assert.True(enabled.Supported);
+                Assert.Equal(MastercamMcp.Adapter.Abstractions.CapabilityTier.Implemented, enabled.Tier);
+            }
+            finally
+            {
+                Environment.SetEnvironmentVariable("MASTERCAM_MCP_ENABLE_STAGE_B_READS", previous);
+            }
+        }
+
+        [Fact]
+        public void StageBReaderBuildsContextAndDerivedReadsFromOneContract()
+        {
+            var previous = Environment.GetEnvironmentVariable("MASTERCAM_MCP_ENABLE_STAGE_B_READS");
+            try
+            {
+                Environment.SetEnvironmentVariable("MASTERCAM_MCP_ENABLE_STAGE_B_READS", "1");
+                Mastercam.Support.SearchManager.Operations = new object[]
+                {
+                    new FakeOperation
+                    {
+                        OperationId = 101,
+                        OperationName = "OD Rough",
+                        OperationType = "Turning Rough",
+                        FeedRate = new FakeQuantity { Value = 0.3, Unit = "mm/rev" },
+                        SpindleRpm = 1600,
+                        NeedsRegeneration = true,
+                        Tool = new FakeTool { ToolNumber = 7, ToolName = "CNMG", Diameter = 12.7 }
+                    },
+                    new FakeOperation
+                    {
+                        OperationId = 102,
+                        OperationName = "OD Finish",
+                        OperationType = "Turning Finish",
+                        FeedRate = new FakeQuantity { Value = 0.12, Unit = "mm/rev" },
+                        SpindleRpm = 2200,
+                        NeedsRegeneration = false,
+                        Tool = new FakeTool { ToolNumber = 8, ToolName = "VNMG", Diameter = 9.525 }
+                    }
+                };
+                ProgrammingContextReader.InvalidateCache();
+
+                var context = ProgrammingContextTools.Invoke(
+                    "get_programming_context",
+                    "{}",
+                    CancellationToken.None);
+                Assert.True(context.Ok);
+                var snapshot = Assert.IsType<ProgrammingSnapshot>(context.Data);
+                Assert.Equal(2, snapshot.Operations.Count);
+                Assert.True(snapshot.Coverage.StableOperationIds);
+
+                var operations = ProgrammingContextTools.Invoke(
+                    "list_operations",
+                    "{\"limit\":10,\"offset\":0}",
+                    CancellationToken.None);
+                Assert.True(operations.Ok);
+                using var operationsJson = JsonDocument.Parse(JsonSerializer.Serialize(operations.Data));
+                Assert.Equal(2, operationsJson.RootElement.GetArrayLength());
+                Assert.Equal(101, operationsJson.RootElement[0].GetProperty("id").GetInt32());
+
+                var tools = ProgrammingContextTools.Invoke(
+                    "list_tools",
+                    "{\"limit\":10}",
+                    CancellationToken.None);
+                Assert.True(tools.Ok);
+                using var toolsJson = JsonDocument.Parse(JsonSerializer.Serialize(tools.Data));
+                Assert.Equal(2, toolsJson.RootElement.GetProperty("tools").GetArrayLength());
+                Assert.False(toolsJson.RootElement.GetProperty("coverage").GetProperty("completeLibrary").GetBoolean());
+
+                var dirty = ProgrammingContextTools.Invoke(
+                    "get_dirty_toolpaths",
+                    "{}",
+                    CancellationToken.None);
+                Assert.True(dirty.Ok);
+                using var dirtyJson = JsonDocument.Parse(JsonSerializer.Serialize(dirty.Data));
+                Assert.Equal(101, dirtyJson.RootElement.GetProperty("operationIds")[0].GetInt32());
+            }
+            finally
+            {
+                ProgrammingContextReader.InvalidateCache();
+                Mastercam.Support.SearchManager.Operations = Array.Empty<object>();
+                Environment.SetEnvironmentVariable("MASTERCAM_MCP_ENABLE_STAGE_B_READS", previous);
+            }
+        }
+
+        [Fact]
+        public void IdentityDependentStageBReadsFailClosedWithoutStableIds()
+        {
+            var previous = Environment.GetEnvironmentVariable("MASTERCAM_MCP_ENABLE_STAGE_B_READS");
+            try
+            {
+                Environment.SetEnvironmentVariable("MASTERCAM_MCP_ENABLE_STAGE_B_READS", "1");
+                Mastercam.Support.SearchManager.Operations = new object[]
+                {
+                    new { Name = "No stable id", ToolNumber = 2 }
+                };
+                ProgrammingContextReader.InvalidateCache();
+
+                var result = ProgrammingContextTools.Invoke(
+                    "get_operation",
+                    "{\"operationId\":1}",
+                    CancellationToken.None);
+
+                Assert.False(result.Ok);
+                Assert.Equal("MAPPING_INCOMPLETE", result.ErrorCode);
+            }
+            finally
+            {
+                ProgrammingContextReader.InvalidateCache();
+                Mastercam.Support.SearchManager.Operations = Array.Empty<object>();
+                Environment.SetEnvironmentVariable("MASTERCAM_MCP_ENABLE_STAGE_B_READS", previous);
+            }
         }
     }
 }
