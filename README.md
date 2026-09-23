@@ -126,17 +126,26 @@ Use `MASTERCAM_MCP_FIXTURE` to load a JSON fixture containing a feed value and a
 
 ## Documentation
 
-Installation guidance is in `docs/INSTALLATION.md`. Environment settings are in `docs/ENVIRONMENT.md`. Capability details are in `docs/CAPABILITIES.md`. API evidence and the boundary around proprietary SDK files are in `docs/API-EVIDENCE.md`.
+Installation guidance is in `docs/INSTALLATION.md`. Environment settings are in `docs/ENVIRONMENT.md`. Capability details are in `docs/CAPABILITIES.md`. Job-intelligence design research is in `docs/JOB-INTELLIGENCE.md`. API evidence and the boundary around proprietary SDK files are in `docs/API-EVIDENCE.md`.
 
 ## Shop floor workflows
 
-The server can generate a setup sheet from inspection data, compare tool database snapshots, compare NC text files, and validate an operation against a declared machine profile. These workflows are portable and can run with the fixture backend on Windows, macOS, and Linux.
+The server now includes a portable job-intelligence layer in addition to setup-sheet, NC comparison, tool-database comparison, and machine-profile validation.
+
+- `recommend_job_tooling` ranks only tools from the supplied shop/tool library and hard-rejects known material, geometry, depth, or machine incompatibilities before scoring preferences.
+- `analyze_toolpath_risk` checks supplied motion segments against declared travel, feed/RPM limits, safe Z, stock and fixture bounding volumes, conservative swept envelopes, and optional approach-angle thresholds.
+- `analyze_cycle_time` separates cutting time from rapids, air-feed, dwell, and tool-change time, then returns reviewable non-cutting opportunities without claiming that all of that time can safely be removed.
+- `generate_operation_packet` builds setup and operation notes directly from a supplied operation tree and tool records while flagging dirty operations and unresolved tooling.
+- `calculate_thread_tap` resolves metric and Unified callouts, calculates basic thread geometry, cut-tap drill guidance, synchronized feed, and RPM from supplied geometry and cutting data.
+- `plan_od_rough_finish` converts a structured OD profile plus shop tooling/material/machine limits into a rough-and-finish process-plan preview. It is deliberately non-executable and cannot create Mastercam operations, post NC, transfer programs, or start a machine.
+
+These tools are server-local. They can consume fixture data or structured evidence supplied by an MCP client in live mode, but that does **not** mean the current native adapter can read the active Mastercam tool library or toolpath tree. Live native mappings remain Stage A until implemented and accepted on a licensed workstation.
 
 ```text
 MASTERCAM_MCP_BACKEND=mock pnpm test
 ```
 
-On PowerShell use `$env:MASTERCAM_MCP_BACKEND = "mock"` before starting the server. The generated setup sheet is a review document and requires approval. NC comparison is read only. Machine validation reports warnings when controller or holder information is missing.
+On PowerShell use `$env:MASTERCAM_MCP_BACKEND = "mock"` before starting the server. Generated recommendations and setup packets are review evidence, not machine authorization. NC comparison is read only, and machine/toolpath checks report unknowns when the supplied evidence is incomplete.
 
 ## Path policy
 
