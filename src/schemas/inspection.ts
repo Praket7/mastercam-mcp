@@ -67,6 +67,8 @@ export const getOperationOutputSchema = z.object({
   feedRate: z.unknown(),
   spindleSpeed: z.unknown(),
   tool: z.number().optional(),
+  toolpathDirty: z.boolean().nullable().optional(),
+  mappingEvidence: z.record(z.string(), z.string()).optional(),
   documentRevision: z.string(),
   operationFingerprint: z.string()
 });
