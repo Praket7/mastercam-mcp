@@ -15,6 +15,19 @@ namespace MastercamMcp.Addin.2027
     {
         public const string AdapterVersionValue = "0.2.0-2027-stage-b";
 
+        private static readonly string[] StageBReadTools =
+        {
+            "get_programming_context",
+            "list_operations",
+            "get_operation",
+            "get_operation_parameters",
+            "find_operations",
+            "get_dirty_toolpaths",
+            "get_toolpath_status",
+            "list_tools",
+            "get_tool"
+        };
+
         public AdapterInfo Info
         {
             get
@@ -40,7 +53,7 @@ namespace MastercamMcp.Addin.2027
                     ? "SearchManager.GetOperations() resolved at runtime; mapping is IMPLEMENTED but not live-read verified"
                     : string.Join(" ", probe.Notes);
 
-            return new List<Capability>
+            var capabilities = new List<Capability>
             {
                 new Capability
                 {
@@ -60,17 +73,23 @@ namespace MastercamMcp.Addin.2027
                     MappingVersion = 1,
                     Reason = "environment reporting; live acceptance run pending"
                 },
-                new Capability
+            };
+
+            foreach (var name in StageBReadTools)
+            {
+                capabilities.Add(new Capability
                 {
-                    Name = "get_programming_context",
+                    Name = name,
                     Supported = stageBSupported,
                     RiskClass = RiskClass.Read,
                     Tier = probe.CanReadProgrammingContext ? CapabilityTier.Implemented : CapabilityTier.Discovered,
                     RequiresActiveDocument = true,
                     MappingVersion = 1,
                     Reason = stageBReason
-                }
-            };
+                });
+            }
+
+            return capabilities;
         }
 
         public AdapterResult Invoke(
@@ -133,23 +152,9 @@ namespace MastercamMcp.Addin.2027
                 });
             }
 
-            if (tool == "get_programming_context")
+            if (ProgrammingContextTools.CanHandle(tool))
             {
-                if (!ProgrammingContextReader.TryRead(
-                        cancellationToken,
-                        out var snapshot,
-                        out var errorCode,
-                        out var errorMessage))
-                {
-                    return AdapterResult.Failure(
-                        errorCode ?? "BACKEND_UNAVAILABLE",
-                        errorMessage ?? "Unable to build the Mastercam programming-context snapshot");
-                }
-
-                if (snapshot == null)
-                    return AdapterResult.Failure("BACKEND_UNAVAILABLE", "Programming-context reader returned no snapshot");
-
-                return AdapterResult.Success(snapshot, snapshot.DocumentRevision);
+                return ProgrammingContextTools.Invoke(tool, argumentsJson, cancellationToken);
             }
 
             return AdapterResult.Failure(
