@@ -2,7 +2,7 @@
 
 Mastercam MCP connects an MCP client with a local Mastercam session through a protected Windows named pipe. It gives an assistant a careful workflow for inspection, planning, confirmation, verification, and recovery.
 
-The project includes a safe fixture backend so contributors can run the portable workflow without Mastercam or a license. The live adapter reports only capabilities that are actually mapped and verified. It never pretends that an unimplemented Mastercam action succeeded.
+The project includes a safe fixture backend so contributors can run the portable workflow without Mastercam or a license. The live adapter reports only capabilities that are actually implemented or mapped, with an explicit verification tier. It never labels an unaccepted mapping as live verified and never pretends that an unimplemented Mastercam action succeeded.
 
 ## Start without Mastercam
 
