@@ -21,6 +21,27 @@ Hard filters are applied before scoring, including declared material compatibili
 
 This follows the architecture direction in **Knowledge Graph Fusion with Large Language Models for Accurate, Explainable Manufacturing Process Planning** (arXiv/alphaXiv 2506.13026), which grounds tool and process decisions in structured manufacturing knowledge rather than allowing an LLM to free-associate feeds, speeds, or tooling.
 
+Set `MASTERCAM_MCP_TOOL_LIBRARY` to a JSON export using `mastercam-mcp/tool-library/v1` to supply the shop's actual catalog. Example:
+
+```json
+{
+  "schema": "mastercam-mcp/tool-library/v1",
+  "units": "mm",
+  "tools": [{
+    "number": 12, "name": "CNMG rougher", "type": "turning insert",
+    "insert": "CNMG 432", "grade": "P25", "diameter": 25,
+    "materials": ["4140"], "operations": ["turning rough"],
+    "holderStyle": "PCLNR", "machineLocation": "Turret station 4",
+    "lengthOutOfHolder": { "value": 32, "unit": "mm" },
+    "provenance": [{ "source": "shop export", "verified": true }]
+  }]
+}
+```
+
+The file is validated, limited to 2 MB and 5,000 tools, and merged with tool records referenced by the active Mastercam operations. Referenced live values override matching catalog identity fields; catalog material/operation compatibility remains intact. Without a catalog or referenced live tools, the result explicitly says `NO_TOOL_DATA`. The adapter does not yet read proprietary `.TOOLDB` files, and an exported JSON catalog is only as current as the shop's export process. Live Mastercam mapping remains an unverified candidate until licensed acceptance.
+
+Setup packets include holder style, tool location, stickout, flute/cutting length, workholding/setup references, provenance, and missing-data flags when those values are supplied. These fields reflect machinist requests in a [Reddit discussion about setup-sheet contents](https://www.reddit.com/r/Machinists/comments/1kmjxgm/what_do_your_set_up_sheets_look_like/); they are practical user feedback, not an industry standard.
+
 ## Toolpath risk review
 
 `analyze_toolpath_risk` performs conservative checks over the supplied motion model:
@@ -37,11 +58,15 @@ The swept-volume idea is aligned with **Separation Logic for Verifying Physical 
 
 The implementation here is intentionally simpler than a full verifier. A straight segment is conservatively represented by an expanded axis-aligned swept box. Arc moves are marked unknown unless the caller pre-segments the arc. This prevents an endpoint-only check from being mislabeled as complete arc or multi-axis verification.
 
+`analyze_nc_program` is a bounded parser for common linear G-code (`G0`/`G1`) with modal units, absolute/incremental positioning, feed, spindle, and common safety-state reporting. It can estimate listed linear move time and flag travel violations only when machine-coordinate positions and machine travel are supplied. Work offsets without a WCS transform, arcs, canned cycles, macros, subprogram flow, rotary motion, and controller-specific behavior are reported as unknown or skipped. It cannot infer stock engagement, actual cutting versus air motion, approach angle, collisions hidden between samples, or machine acceleration. Treat its output as a review aid; retain release-specific post simulation and prove-out.
+
 ## Cycle-time and air-time analysis
 
 `analyze_cycle_time` separates known time into cutting, air-feed, rapid, dwell, and tool-change buckets. It reports large non-cutting events as review opportunities and gives an upper bound on the listed non-cutting seconds.
 
 It does **not** claim those seconds are safely removable. Research on machining airtime consistently treats retract/link optimization as a constrained path-planning problem rather than a simple speed-up. For example, work on minimizing machining airtime models non-productive positioning and retraction as an optimization problem, while machine-tool research emphasizes acceleration, jerk, positioning, collision, and setup constraints.
+
+The NC parser cannot identify cutting engagement from G-code alone and therefore does not classify every feed move as cutting or air. This ceiling is consistent with published evidence that commanded-feed-only estimates can materially under-predict time when machine-axis acceleration and toolpath geometry are omitted ([Leal, 2022](https://doi.org/10.1016/j.rcim.2021.102293)). A [Reddit Mastercam timing request](https://www.reddit.com/r/CNC/comments/195hmjf/mastercam_toolpath_lenghttime/) also asked to expose toolpath length and estimated time; both are useful future operation-tree outputs once verified live fields exist.
 
 ## Setup and operation packets
 
@@ -68,6 +93,8 @@ References used during implementation:
 
 Form taps are deliberately different: the tool refuses to invent a generic form-tap drill diameter because manufacturer, material, lubrication, and desired thread percentage materially change that recommendation.
 
+Thread dimensions are calculated from a supplied callout or supplied dimensions. Automatic extraction of threads from native Mastercam part geometry is not implemented: the current live adapter does not expose mapped CAD feature geometry. A caller must provide a confirmed callout/dimension; do not treat a text prompt alone as measured geometry.
+
 ## Natural-language OD rough + finish planning
 
 `plan_od_rough_finish` is a preview tool. An MCP client can translate a request such as “make me a rough + finish toolpath for this OD profile” into a structured call containing:
@@ -83,6 +110,8 @@ Form taps are deliberately different: the tool refuses to invent a generic form-
 The engine selects compatible roughing and finishing candidates only from the supplied tool library, calculates radial stock removal and rough-pass count, and returns a finish profile plus verification gates.
 
 It returns `executable: false`. The plan must still be mapped to the release-specific Mastercam API, regenerated against actual geometry, simulated for stock removal/collision, and post-regression reviewed before it can become production state.
+
+Natural-language support is the MCP client's job: it should translate a request into the structured profile, stock, material, machine, and tool-library inputs above. The server does not interpret arbitrary prose into CAD geometry, and no post-ready toolpath is generated. Current research likewise places collision checking and machine constraints inside the actual planning loop; a language-model process-plan preview does not substitute for that work ([Zaragoza Chichell et al., 2024](https://doi.org/10.1016/j.cad.2024.103725); [alphaXiv CNC feedrate planning search](https://www.alphaxiv.org/abs/2606.12151)).
 
 This separation is consistent with recent manufacturing-agent research such as **Design-to-Plan: A Large Language Model-Based Multi-Agent Framework for Manufacturing Process Planning from 3D CAD Models and 2D Engineering Drawings** (alphaXiv 2608.24039) and **Physics-Grounded Multi-Agent Architecture for Traceable, Risk-Aware Human-AI Decision Support in Manufacturing** (alphaXiv 2605.04003): language-model reasoning is most defensible when coupled to deterministic extraction, physics/process constraints, traceable evidence, and human verification.
 

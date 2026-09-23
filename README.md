@@ -143,13 +143,15 @@ Installation guidance is in `docs/INSTALLATION.md`. Environment settings are in 
 The server now includes a portable job-intelligence layer in addition to setup-sheet, NC comparison, tool-database comparison, and machine-profile validation.
 
 - `recommend_job_tooling` ranks only tools from the supplied shop/tool library and hard-rejects known material, geometry, depth, or machine incompatibilities before scoring preferences.
+- `MASTERCAM_MCP_TOOL_LIBRARY` can point to a validated shop-export JSON catalog; live operation references are merged into it when available. See [the schema and limits](docs/JOB-INTELLIGENCE.md#tooling-recommendations).
 - `analyze_toolpath_risk` checks supplied motion segments against declared travel, feed/RPM limits, safe Z, stock and fixture bounding volumes, conservative swept envelopes, and optional approach-angle thresholds.
+- `analyze_nc_program` reviews bounded common G-code linear motion, estimates listed move time, and reports unsupported or ungrounded motion as unknown. It is not a machine simulation or safe-to-run approval.
 - `analyze_cycle_time` separates cutting time from rapids, air-feed, dwell, and tool-change time, then returns reviewable non-cutting opportunities without claiming that all of that time can safely be removed.
 - `generate_operation_packet` builds setup and operation notes directly from a supplied operation tree and tool records while flagging dirty operations and unresolved tooling.
 - `calculate_thread_tap` resolves metric and Unified callouts, calculates basic thread geometry, cut-tap drill guidance, synchronized feed, and RPM from supplied geometry and cutting data.
 - `plan_od_rough_finish` converts a structured OD profile plus shop tooling/material/machine limits into a rough-and-finish process-plan preview. It is deliberately non-executable and cannot create Mastercam operations, post NC, transfer programs, or start a machine.
 
-These tools are server-local. On Mastercam 2027, the opt-in Stage-B reader can now supply a coherent operation snapshot and tools referenced by those active operations. That is useful grounding for downstream job intelligence, but it is **not** a complete Mastercam tool-library export and it does not yet extract full toolpath motion, stock, WCS, or simulation evidence.
+These tools are server-local. On Mastercam 2027, the opt-in Stage-B reader can supply a coherent operation snapshot and tools referenced by those active operations. That is useful grounding for downstream job intelligence, but it is **not** a complete Mastercam tool-library export and it does not yet extract full toolpath motion, stock, WCS, CAD thread geometry, or simulation evidence. OD planning is a non-executable structured preview; client-side language understanding does not make it a posted toolpath.
 
 ```text
 MASTERCAM_MCP_BACKEND=mock pnpm test

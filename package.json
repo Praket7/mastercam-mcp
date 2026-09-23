@@ -1,6 +1,6 @@
 {
   "name": "mastercam-mcp",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "A secure local MCP bridge for a live Mastercam session",
   "repository": {
     "type": "git",

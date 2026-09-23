@@ -196,6 +196,9 @@ test("operation packet is derived from the supplied tree and flags unresolved to
     tools: [{
       number: 1,
       name: "OD rougher",
+      holderStyle: "ER32",
+      machineLocation: "Turret 2 / pocket 4",
+      lengthOutOfHolder: { value: 38, unit: "mm" },
       operations: ["turning rough"],
       materials: ["steel"],
       provenance: [{ source: "shop library" }]
@@ -220,11 +223,15 @@ test("operation packet is derived from the supplied tree and flags unresolved to
         estimatedCycleSeconds: 15
       }
     ],
-    notes: ["Verify jaw clearance"]
+    notes: ["Verify jaw clearance"],
+    setupReferences: [{ label: "Setup view", reference: "job-42/op1-view.png" }]
   });
 
   assert.match(result.markdown, /OD Rough/);
   assert.match(result.markdown, /Verify jaw clearance/);
+  assert.match(result.markdown, /length out of holder/i);
+  assert.match(result.markdown, /ER32/);
+  assert.match(result.markdown, /op1-view.png/);
   assert.equal(result.summary.estimatedCycleSeconds, 60);
   assert.deepEqual(result.summary.dirtyOperationIds, [20]);
   assert.deepEqual(result.summary.unresolvedTools, [{ operationId: 20, toolNumber: 7 }]);
