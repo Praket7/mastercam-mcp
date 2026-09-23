@@ -17,7 +17,13 @@ export const SERVER_LOCAL_TOOL_NAMES = new Set([
   "validate_machine_profile",
   "manufacturing_preflight",
   "analyze_regeneration_impact",
-  "analyze_post_regression"
+  "analyze_post_regression",
+  "recommend_job_tooling",
+  "analyze_toolpath_risk",
+  "analyze_cycle_time",
+  "generate_operation_packet",
+  "calculate_thread_tap",
+  "plan_od_rough_finish"
 ]);
 
 /** Native capabilities implemented by the current Stage-A adapters. */
