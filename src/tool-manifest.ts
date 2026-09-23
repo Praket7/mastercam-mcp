@@ -161,19 +161,19 @@ export const TOOL_MANIFEST: readonly ToolManifestEntry[] = [
     tierEvidence: "Mastercam 2027 Stage-B reader is implemented behind MASTERCAM_MCP_ENABLE_STAGE_B_READS=1 using runtime-probed SearchManager.GetOperations(); licensed LIVE_READ_VERIFIED acceptance is still required."
   }),
 
-  read("list_operations", "List operations with explicit quantities and pagination", inspection.listOperationsSchema, { outputDataSchema: inspection.listOperationsOutputSchema }),
-  read("get_operation", "Retrieve one operation by exact id; no fallback targeting", inspection.getOperationSchema, { outputDataSchema: inspection.getOperationOutputSchema, requiresExactTarget: true }),
-  read("get_operation_parameters", "Retrieve one operation's parameters by exact id", inspection.getOperationParametersSchema, { outputDataSchema: inspection.getOperationParametersOutputSchema, requiresExactTarget: true }),
-  read("find_operations", "Search operations by name, type, or tool number", inspection.findOperationsSchema),
+  read("list_operations", "List operations with explicit quantities and pagination", inspection.listOperationsSchema, { outputDataSchema: inspection.listOperationsOutputSchema, legacySupport: false, mc2027Support: true, tier: "IMPLEMENTED", tierEvidence: "Stage-B derives this read from the runtime-probed programming snapshot; licensed LIVE_READ_VERIFIED acceptance is still required." }),
+  read("get_operation", "Retrieve one operation by exact id; no fallback targeting", inspection.getOperationSchema, { outputDataSchema: inspection.getOperationOutputSchema, requiresExactTarget: true, legacySupport: false, mc2027Support: true, tier: "IMPLEMENTED", tierEvidence: "Stage-B requires stable unique numeric operation IDs from the runtime snapshot and fails closed otherwise; licensed LIVE_READ_VERIFIED acceptance is still required." }),
+  read("get_operation_parameters", "Retrieve one operation's proven parameters by exact id", inspection.getOperationParametersSchema, { outputDataSchema: inspection.getOperationParametersOutputSchema, requiresExactTarget: true, legacySupport: false, mc2027Support: true, tier: "IMPLEMENTED", tierEvidence: "Stage-B returns only runtime-reflected fields with mapping evidence and marks the parameter set partial; licensed LIVE_READ_VERIFIED acceptance is still required." }),
+  read("find_operations", "Search operations by name, type, or tool number", inspection.findOperationsSchema, { legacySupport: false, mc2027Support: true, tier: "IMPLEMENTED", tierEvidence: "Stage-B derives search results from the bounded programming snapshot; licensed LIVE_READ_VERIFIED acceptance is still required." }),
   read("explain_operation", "Explain an operation from its actual returned parameters", inspection.explainOperationSchema, { requiresExactTarget: true }),
   read("get_operation_risks", "Report verification scope and concrete risks for an operation", inspection.getOperationRisksSchema, { requiresExactTarget: true }),
-  read("get_dirty_toolpaths", "List operations whose toolpaths need regeneration", inspection.getDirtyToolpathsSchema),
-  read("get_toolpath_status", "Report toolpath generation state for an operation", inspection.getToolpathStatusSchema, { requiresExactTarget: true }),
+  read("get_dirty_toolpaths", "List operations whose mapped dirty state requires regeneration and preserve unknown state", inspection.getDirtyToolpathsSchema, { legacySupport: false, mc2027Support: true, tier: "IMPLEMENTED", tierEvidence: "Stage-B reports dirty state only when a runtime member is mapped; unknown state is never treated as current. Licensed LIVE_READ_VERIFIED acceptance is still required." }),
+  read("get_toolpath_status", "Report mapped toolpath dirty/current/unknown state for an operation", inspection.getToolpathStatusSchema, { requiresExactTarget: true, legacySupport: false, mc2027Support: true, tier: "IMPLEMENTED", tierEvidence: "Stage-B derives status from a mapped dirty/regeneration member and returns unknown when no member is proven; licensed LIVE_READ_VERIFIED acceptance is still required." }),
   read("estimate_cycle_time", "Estimate cycle time for selected operations", inspection.estimateCycleTimeSchema),
   read("compare_toolpaths", "Compare two operations' toolpaths", inspection.compareToolpathsSchema),
 
-  read("list_tools", "List cutting tools with units", inspection.listToolsSchema),
-  read("get_tool", "Retrieve one tool by id or number", inspection.getToolSchema),
+  read("list_tools", "List tools referenced by active operations; does not claim complete library coverage", inspection.listToolsSchema, { legacySupport: false, mc2027Support: true, tier: "IMPLEMENTED", tierEvidence: "Stage-B extracts referenced tool records from active operation objects. Complete .TOOLDB/library coverage is not claimed; licensed LIVE_READ_VERIFIED acceptance is still required." }),
+  read("get_tool", "Retrieve one referenced active-operation tool by id, number, or exact name", inspection.getToolSchema, { legacySupport: false, mc2027Support: true, tier: "IMPLEMENTED", tierEvidence: "Stage-B searches only the tools proven reachable from active operations; complete tool-library coverage is not claimed. Licensed LIVE_READ_VERIFIED acceptance is still required." }),
   read("capture_view", "Capture a bounded view image of the Mastercam graphics window", inspection.captureViewSchema),
 
   read("inspect", "Inspect a target and return its current values", inspection.inspectSchema, { requiresExactTarget: true }),
