@@ -88,13 +88,29 @@ This separation is consistent with recent manufacturing-agent research such as *
 
 ## Current live boundary
 
-These tools are **server-local**. They can run next to the live backend when structured evidence is supplied, but the current native Mastercam adapters still expose Stage A environment reporting only.
+The manufacturing-intelligence tools remain server-local, but Mastercam 2027 now has an opt-in **Stage-B read candidate** that can populate part of their grounding context directly from the active operation graph.
+
+With `MASTERCAM_MCP_ENABLE_STAGE_B_READS=1`, the native adapter runtime-probes the public `Mastercam.Support.SearchManager.GetOperations()` contract and builds one bounded, revisioned snapshot. The following live-read candidates are derived from that snapshot:
+
+- `get_programming_context`
+- `list_operations`
+- `get_operation`
+- `get_operation_parameters`
+- `find_operations`
+- `get_dirty_toolpaths`
+- `get_toolpath_status`
+- `list_tools`
+- `get_tool`
+
+The snapshot carries per-field mapping evidence and explicit unknowns. Exact operation tools fail closed unless unique numeric operation IDs are proven. Tool records are limited to tooling referenced by active operations, so `list_tools` is **not** a claim of complete `.TOOLDB` coverage.
 
 Therefore:
 
-- “tool library” means records supplied to `recommend_job_tooling`, not an unverified claim that the add-in can already read a live Mastercam tool database
-- “toolpath” means motion supplied to `analyze_toolpath_risk`, not an unverified claim that the add-in can already extract every Mastercam toolpath entity
-- “operation tree” means supplied operation data, not a live-read capability promotion
-- `plan_od_rough_finish` is process-plan preview, not operation creation
+- tooling recommendations can be grounded in referenced live-operation tools when those fields are present, but a complete shop library still requires a separately verified library mapping
+- operation-tree data can now come from the opt-in 2027 Stage-B snapshot
+- toolpath risk analysis still requires actual motion segments; operation metadata or dirty state is not motion verification
+- cycle-time analysis still requires motion/event timing evidence
+- stock, WCS/planes, active-part identity, and full toolpath motion remain explicit Stage-B unknowns today
+- `plan_od_rough_finish` remains a non-executable process-plan preview and does not create Mastercam operations
 
-The next native milestone is a licensed Mastercam 2027 read-only adapter that can populate these schemas directly from the active job. Only after live acceptance should those mappings move to a `LIVE_READ_VERIFIED` tier.
+Portable CI compiles and exercises the Stage-B reflection/derivation layer using synthetic Mastercam-shaped objects. That proves software behavior, not a licensed 2027 mapping. A real workstation must pass `acceptance --live`; its `stageBContextReady` result is tracked separately from full `liveReadReady`. Only after that evidence should any candidate move to `LIVE_READ_VERIFIED`.
