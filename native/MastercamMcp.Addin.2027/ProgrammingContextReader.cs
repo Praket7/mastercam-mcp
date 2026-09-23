@@ -4,7 +4,7 @@ using System.Reflection;
 using System.Threading;
 using MastercamMcp.ReadModel;
 
-namespace MastercamMcp.Addin.2027
+namespace MastercamMcp.Addin.V2027
 {
     /// <summary>
     /// Stage-B read-only extractor. It invokes only the public, zero-argument
