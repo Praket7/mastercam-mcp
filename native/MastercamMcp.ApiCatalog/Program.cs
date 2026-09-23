@@ -6,7 +6,7 @@ using System.Text.Json;
 // PERF-03: discover all resolver paths once and build ONE MetadataLoadContext
 // instead of constructing a new load context per target assembly.
 var roots = args.Length == 0 ? new[] { Environment.GetEnvironmentVariable("MASTERCAM_ROOT") ?? "" } : args;
-var wanted = new[] { "NETHook3_0.dll", "ToolNetApi.dll", "SimAccessManaged.dll" };
+var fixedTargets = new[] { "ToolNetApi.dll", "SimAccessManaged.dll" };
 
 var runtimeDirectory = Path.GetDirectoryName(typeof(object).Assembly.Location)!;
 var frameworkReferenceDirectory = Path.Combine(
@@ -35,12 +35,22 @@ if (Directory.Exists(frameworkReferenceDirectory))
 
 var assemblies = new List<object>();
 var loaderExceptions = new List<string>();
+var targetFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+foreach (var root in roots.Where(Directory.Exists))
+{
+    foreach (var file in Directory.EnumerateFiles(root, "NETHook*.dll"))
+        targetFiles.Add(file);
+    foreach (var name in fixedTargets)
+    {
+        var file = Path.Combine(root, name);
+        if (File.Exists(file)) targetFiles.Add(file);
+    }
+}
 
 if (resolverPaths.Count > 0)
 {
     using var loadContext = new MetadataLoadContext(new PathAssemblyResolver(resolverPaths), typeof(object).Assembly.GetName().Name);
-    foreach (var root in roots.Where(Directory.Exists))
-    foreach (var file in wanted.Select(name => Path.Combine(root, name)).Where(File.Exists))
+    foreach (var file in targetFiles.OrderBy(path => path, StringComparer.OrdinalIgnoreCase))
     {
         try
         {
@@ -96,7 +106,17 @@ var output = JsonSerializer.Serialize(
         proprietaryFilesRemainLocal = true,
         catalogSchemaVersion = 2,
         loaderExceptions,
-        assemblies
+        assemblies,
+        stageBDiscovery = new
+        {
+            nethookAssemblies = targetFiles
+                .Select(Path.GetFileName)
+                .Where(name => name != null && name.StartsWith("NETHook", StringComparison.OrdinalIgnoreCase))
+                .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
+                .ToArray(),
+            requiredOperationContract = "Mastercam.Support.SearchManager.GetOperations()",
+            note = "The catalog records local SDK shapes only; it does not promote any capability to LIVE_READ_VERIFIED."
+        }
     },
     new JsonSerializerOptions { WriteIndented = true });
 
