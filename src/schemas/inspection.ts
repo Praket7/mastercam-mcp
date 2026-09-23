@@ -12,7 +12,15 @@ export const mastercamStatusOutputSchema = z.object({
   adapter: z.string(),
   runtime: z.string(),
   mastercamVersion: z.string(),
-  protocolVersion: z.number()
+  protocolVersion: z.number(),
+  stageBReadsEnabled: z.boolean().optional(),
+  stageBProgrammingContextProbe: z.object({
+    searchManagerFound: z.boolean(),
+    getOperationsFound: z.boolean(),
+    searchManagerAssembly: z.string().nullable().optional(),
+    getOperationsReturnType: z.string().nullable().optional(),
+    notes: z.array(z.string())
+  }).optional()
 });
 export const mastercamCapabilitiesSchema = z.object({ refresh: z.boolean().optional() }).strict();
 export const mastercamCapabilitiesOutputSchema = z.object({
