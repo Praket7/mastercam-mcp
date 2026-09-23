@@ -109,6 +109,11 @@ public static class SafeReflection
         "ToolpathDirty", "Dirty", "NeedsRegeneration", "NeedsRegen", "IsDirty"
     };
 
+    private static readonly string[] OperationToolNumberMembers =
+    {
+        "ToolNumber", "ToolNo", "ToolNum"
+    };
+
     private static readonly string[] ToolNumberMembers =
     {
         "ToolNumber", "ToolNo", "ToolNum", "Number", "ID", "Id"
@@ -236,7 +241,7 @@ public static class SafeReflection
             result.ToolpathDirty = dirty;
             result.Evidence["toolpathDirty"] = dirtyMember!;
         }
-        if (TryGetInt(operation, ToolNumberMembers, out var toolNumber, out var toolNumberMember))
+        if (TryGetInt(operation, OperationToolNumberMembers, out var toolNumber, out var toolNumberMember))
         {
             result.Tool = toolNumber;
             result.Evidence["tool"] = toolNumberMember!;
