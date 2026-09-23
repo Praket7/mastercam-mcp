@@ -191,7 +191,7 @@ export const TOOL_MANIFEST: readonly ToolManifestEntry[] = [
   read("analyze_post_regression", "Risk-rank semantic NC changes against an approved baseline for human review", PostRegressionSchema),
   read("recommend_job_tooling", "Rank tooling from the supplied job/tool library using hard compatibility constraints and provenance", RecommendJobToolingSchema),
   read("analyze_toolpath_risk", "Check supplied toolpath segments for travel, rapid, fixture-envelope, limit, and approach-angle risks", AnalyzeToolpathRiskSchema),
-  read("analyze_nc_program", "Parse bounded G-code linear motion and flag risky rapids, feed/spindle limits, unsupported motion, and reviewable cycle-time evidence", AnalyzeNcProgramSchema),
+  read("analyze_nc_program", "Parse bounded linear and planar G-code arc motion; flag risky rapids, feed/spindle limits, unsupported motion, and reviewable cycle-time evidence", AnalyzeNcProgramSchema),
   read("analyze_cycle_time", "Decompose supplied motion/events into cutting and non-cutting time and identify reviewable air-time opportunities", AnalyzeCycleTimeSchema),
   read("generate_operation_packet", "Generate setup and operation notes from the supplied operation tree and tool records", GenerateOperationPacketSchema),
   read("calculate_thread_tap", "Calculate grounded metric or unified thread/tapping geometry, tap drill, RPM, and feed from supplied geometry", CalculateThreadTapSchema),

@@ -56,13 +56,13 @@ Setup packets include holder style, tool location, stickout, flute/cutting lengt
 
 The swept-volume idea is aligned with **Separation Logic for Verifying Physical Collisions of CNC Programs** (arXiv/alphaXiv 2605.10437), which models physical occupancy as a deterministic spatial resource and uses geometric expansion/safety margins before logical verification.
 
-The implementation here is intentionally simpler than a full verifier. A straight segment is conservatively represented by an expanded axis-aligned swept box. Arc moves are marked unknown unless the caller pre-segments the arc. This prevents an endpoint-only check from being mislabeled as complete arc or multi-axis verification.
+The implementation here is intentionally simpler than a full verifier. A straight segment is conservatively represented by an expanded axis-aligned swept box. Common G2/G3 arcs in G17/G18/G19 are chorded within a configured tolerance and checked as expanded segments; their analytical length is used for the movement-time estimate. Unsupported or inconsistent arc definitions remain unknown. Chording and axis-aligned bounds are conservative approximations, not a swept-solid machine simulation.
 
-`analyze_nc_program` is a bounded parser for common linear G-code (`G0`/`G1`) with modal units, absolute/incremental positioning, feed, spindle, and common safety-state reporting. It can estimate listed linear move time and flag travel violations only when machine-coordinate positions and machine travel are supplied. Work offsets without a WCS transform, arcs, canned cycles, macros, subprogram flow, rotary motion, and controller-specific behavior are reported as unknown or skipped. It cannot infer stock engagement, actual cutting versus air motion, approach angle, collisions hidden between samples, or machine acceleration. Treat its output as a review aid; retain release-specific post simulation and prove-out.
+`analyze_nc_program` is a bounded parser for common linear and planar arc G-code (`G0`–`G3`) with modal units, absolute/incremental positioning, feed, spindle, and common safety-state reporting. It can estimate listed motion length and flag travel violations only when machine-coordinate positions and machine travel are supplied. Work offsets without a WCS transform, canned cycles, macros, subprogram flow, rotary motion, and controller-specific behavior are reported as unknown or skipped. It cannot infer stock engagement, actual cutting versus air motion, approach angle, collisions hidden between samples, or machine acceleration. Treat its output as a review aid; retain release-specific post simulation and prove-out.
 
 ## Cycle-time and air-time analysis
 
-`analyze_cycle_time` separates known time into cutting, air-feed, rapid, dwell, and tool-change buckets. It reports large non-cutting events as review opportunities and gives an upper bound on the listed non-cutting seconds.
+`analyze_cycle_time` separates known time into cutting, air-feed, rapid, dwell, and tool-change buckets. It also reports commanded feed-motion time with unknown engagement separately as `unknownEngagementSeconds`; this time is not added to category-known time until cutting versus air motion is verified. It reports large non-cutting events as review opportunities and gives an upper bound on the listed non-cutting seconds.
 
 It does **not** claim those seconds are safely removable. Research on machining airtime consistently treats retract/link optimization as a constrained path-planning problem rather than a simple speed-up. For example, work on minimizing machining airtime models non-productive positioning and retraction as an optimization problem, while machine-tool research emphasizes acceleration, jerk, positioning, collision, and setup constraints.
 
@@ -93,7 +93,7 @@ References used during implementation:
 
 Form taps are deliberately different: the tool refuses to invent a generic form-tap drill diameter because manufacturer, material, lubrication, and desired thread percentage materially change that recommendation.
 
-Thread dimensions are calculated from a supplied callout or supplied dimensions. Automatic extraction of threads from native Mastercam part geometry is not implemented: the current live adapter does not expose mapped CAD feature geometry. A caller must provide a confirmed callout/dimension; do not treat a text prompt alone as measured geometry.
+Thread dimensions are calculated from a supplied callout or supplied dimensions. Automatic extraction of threads from native Mastercam part geometry is not implemented: the current live adapter does not expose mapped CAD feature geometry. A caller must provide a confirmed callout/dimension; do not treat a text prompt alone as measured geometry. Recent research on B-rep machining-feature recognition depends on analytic face-adjacency data and labeled training/validation evidence; a triangulated mesh reader alone cannot establish thread pitch, class, or tolerance. Mastercam's current public developer entry point requires access to its developer program and release-specific SDK; geometry extraction therefore needs licensed Windows acceptance against the target release and representative part files.
 
 ## Natural-language OD rough + finish planning
 
@@ -109,11 +109,17 @@ Thread dimensions are calculated from a supplied callout or supplied dimensions.
 
 The engine selects compatible roughing and finishing candidates only from the supplied tool library, calculates radial stock removal and rough-pass count, and returns a finish profile plus verification gates.
 
-It returns `executable: false`. The plan must still be mapped to the release-specific Mastercam API, regenerated against actual geometry, simulated for stock removal/collision, and post-regression reviewed before it can become production state.
+The result includes rough-pass profile offsets and a finish profile, but returns `executable: false`. The plan must still be mapped to the release-specific Mastercam API, regenerated against actual geometry, simulated for stock removal/collision, and post-regression reviewed before it can become production state. Generic G-code generation would not meet that bar: a controller/post, machine kinematics, stock, workholding, insert orientation, and licensed Mastercam mutation/posting APIs are not present in this environment.
 
 Natural-language support is the MCP client's job: it should translate a request into the structured profile, stock, material, machine, and tool-library inputs above. The server does not interpret arbitrary prose into CAD geometry, and no post-ready toolpath is generated. Current research likewise places collision checking and machine constraints inside the actual planning loop; a language-model process-plan preview does not substitute for that work ([Zaragoza Chichell et al., 2024](https://doi.org/10.1016/j.cad.2024.103725); [alphaXiv CNC feedrate planning search](https://www.alphaxiv.org/abs/2606.12151)).
 
 This separation is consistent with recent manufacturing-agent research such as **Design-to-Plan: A Large Language Model-Based Multi-Agent Framework for Manufacturing Process Planning from 3D CAD Models and 2D Engineering Drawings** (alphaXiv 2608.24039) and **Physics-Grounded Multi-Agent Architecture for Traceable, Risk-Aware Human-AI Decision Support in Manufacturing** (alphaXiv 2605.04003): language-model reasoning is most defensible when coupled to deterministic extraction, physics/process constraints, traceable evidence, and human verification.
+
+## Native `.TOOLDB` loading boundary
+
+Mastercam tool libraries are commonly distributed in `.TOOLDB` format. Historical Mastercam community material identifies SQLite internals and a `TlToolMill` table, but the current vendor documentation/API contract does not publish a stable schema. The repository has no representative licensed `.TOOLDB` fixture, and the schema can vary by release/library. The importer therefore remains operator-exported JSON plus tools proven referenced by active operations; parsing guessed column names would silently mis-map grades, inserts, units, or tool geometry. A production importer needs a versioned vendor schema/API or representative databases for each supported Mastercam release, read-only access, explicit field mapping, and acceptance against known tool records.
+
+References: [Mastercam Third-Party Developers](https://www.mastercam.com/community/3rd-party-developers/), [NET-Hook documentation](https://nethookdocs.mastercam.com/), [historical TOOLDB format note](https://www.emastercam.com/forums/topic/82303-reading-tooldb-in-mastercam-x6-using-chooks). The community note is historical evidence only, not a current schema guarantee.
 
 ## Current live boundary
 

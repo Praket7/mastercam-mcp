@@ -117,6 +117,7 @@ const MoveEventSchema = z.object({
   motion: z.enum(["rapid", "feed"]),
   start: Vector3Schema,
   end: Vector3Schema,
+  pathLength: Positive.optional(),
   feedRate: Positive.optional(),
   engaged: z.boolean().optional()
 }).strict();
@@ -560,6 +561,7 @@ export function analyzeCycleTime(input: z.infer<typeof AnalyzeCycleTimeSchema>) 
   let dwellSeconds = 0;
   let toolChangeSeconds = 0;
   let unknownMoveCount = 0;
+  let unknownEngagementSeconds = 0;
   const opportunities: Array<{
     id: string;
     kind: string;
@@ -597,7 +599,7 @@ export function analyzeCycleTime(input: z.infer<typeof AnalyzeCycleTimeSchema>) 
       continue;
     }
 
-    const length = distance(event.start, event.end);
+    const length = event.pathLength ?? distance(event.start, event.end);
     const rate = event.motion === "rapid" ? input.machineRapidRate : event.feedRate;
     if (rate === undefined || rate <= 0) {
       unknownMoveCount += 1;
@@ -630,6 +632,7 @@ export function analyzeCycleTime(input: z.infer<typeof AnalyzeCycleTimeSchema>) 
       }
     } else {
       unknownMoveCount += 1;
+      unknownEngagementSeconds += seconds;
     }
   }
 
@@ -650,6 +653,7 @@ export function analyzeCycleTime(input: z.infer<typeof AnalyzeCycleTimeSchema>) 
     },
     nonCuttingShare: knownSeconds > 0 ? nonCuttingSeconds / knownSeconds : 0,
     unknownMoveCount,
+    unknownEngagementSeconds,
     opportunities: opportunities.slice(0, 100),
     upperBoundSecondsIfListedNonCuttingWereRemoved: opportunities.reduce((sum, item) => sum + item.seconds, 0),
     evidenceHash: sha256Of(input),

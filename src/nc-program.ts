@@ -24,6 +24,8 @@ export const AnalyzeNcProgramSchema = z.object({
   holderRadius: Nonnegative.default(0),
   safetyMargin: Nonnegative.default(0),
   defaultToolChangeSeconds: Nonnegative.default(8),
+  arcChordError: Positive.optional(),
+  maxArcSegments: z.number().int().min(8).max(10000).default(2048),
   dwellPMilliseconds: z.boolean().default(false)
 }).strict();
 
@@ -40,6 +42,82 @@ type Segment = {
   toolRadius: number;
   holderRadius: number;
 };
+
+type ArcPlane = "G17" | "G18" | "G19";
+
+function arcAxes(plane: ArcPlane): { u: "x" | "y" | "z"; v: "x" | "y" | "z"; w: "x" | "y" | "z"; a: "I" | "J" | "K"; b: "I" | "J" | "K" } {
+  if (plane === "G18") return { u: "z", v: "x", w: "y", a: "K", b: "I" };
+  if (plane === "G19") return { u: "y", v: "z", w: "x", a: "J", b: "K" };
+  return { u: "x", v: "y", w: "z", a: "I", b: "J" };
+}
+
+function directedSweep(start: number, end: number, clockwise: boolean): number {
+  let sweep = end - start;
+  if (clockwise) {
+    while (sweep >= 0) sweep -= Math.PI * 2;
+  } else {
+    while (sweep <= 0) sweep += Math.PI * 2;
+  }
+  return sweep;
+}
+
+function buildArc(input: {
+  start: Vec; end: Vec; plane: ArcPlane; clockwise: boolean;
+  centerU?: number; centerV?: number; radiusWord?: number;
+  absoluteCenter: boolean; units: "mm" | "inch"; error: number; maxSegments: number;
+}) : { points: Vec[]; length: number } | undefined {
+  const { u, v, w } = arcAxes(input.plane);
+  const startU = input.start[u], startV = input.start[v];
+  const endU = input.end[u], endV = input.end[v];
+  const du = endU - startU, dv = endV - startV;
+  const chord = Math.hypot(du, dv);
+  let centerU: number, centerV: number;
+
+  if (input.radiusWord !== undefined) {
+    const radius = Math.abs(input.radiusWord);
+    if (chord <= 1e-12 || chord > 2 * radius) return undefined;
+    const height = Math.sqrt(Math.max(0, radius * radius - chord * chord / 4));
+    const midU = (startU + endU) / 2, midV = (startV + endV) / 2;
+    const perpU = -dv / chord, perpV = du / chord;
+    const candidates = [
+      [midU + perpU * height, midV + perpV * height],
+      [midU - perpU * height, midV - perpV * height]
+    ];
+    const sweepFor = ([cu, cv]: number[]) => directedSweep(Math.atan2(startV - cv!, startU - cu!), Math.atan2(endV - cv!, endU - cu!), input.clockwise);
+    const wantMajor = input.radiusWord < 0;
+    const selected = candidates.find(center => Math.abs(sweepFor(center)) > Math.PI + 1e-9 === wantMajor) ?? candidates[0]!;
+    [centerU, centerV] = selected as [number, number];
+  } else if (input.centerU !== undefined || input.centerV !== undefined) {
+    centerU = input.absoluteCenter ? input.centerU ?? startU : startU + (input.centerU ?? 0);
+    centerV = input.absoluteCenter ? input.centerV ?? startV : startV + (input.centerV ?? 0);
+  } else return undefined;
+
+  const radius = Math.hypot(startU - centerU, startV - centerV);
+  if (!(radius > 0)) return undefined;
+  const endRadius = Math.hypot(endU - centerU, endV - centerV);
+  const tolerance = input.units === "mm" ? 0.01 : 0.0005;
+  if (Math.abs(radius - endRadius) > Math.max(tolerance, radius * 1e-4)) return undefined;
+  const startAngle = Math.atan2(startV - centerV, startU - centerU);
+  const endAngle = Math.atan2(endV - centerV, endU - centerU);
+  const fullCircle = chord <= tolerance && (input.centerU !== undefined || input.centerV !== undefined);
+  const sweep = fullCircle ? (input.clockwise ? -2 * Math.PI : 2 * Math.PI) : directedSweep(startAngle, endAngle, input.clockwise);
+  const maxAngle = 2 * Math.acos(Math.max(-1, Math.min(1, 1 - input.error / radius)));
+  if (!(maxAngle > 0)) return undefined;
+  const count = Math.ceil(Math.abs(sweep) / Math.min(maxAngle, Math.PI / 2));
+  if (count < 1 || count > input.maxSegments) return undefined;
+
+  const points: Vec[] = [input.start];
+  for (let i = 1; i <= count; i++) {
+    const ratio = i / count;
+    const angle = startAngle + sweep * ratio;
+    const point = { ...input.start };
+    point[u] = i === count ? endU : centerU + radius * Math.cos(angle);
+    point[v] = i === count ? endV : centerV + radius * Math.sin(angle);
+    point[w] = input.start[w] + (input.end[w] - input.start[w]) * ratio;
+    points.push(point);
+  }
+  return { points, length: Math.hypot(radius * sweep, input.end[w] - input.start[w]) };
+}
 
 function stripComments(line: string): string {
   return line.replace(/\([^)]*\)/g, " ").replace(/;.*$/, "").trim();
@@ -65,7 +143,7 @@ function unitFactor(programUnits: "mm" | "inch", analysisUnits: "mm" | "inch"): 
   return programUnits === "inch" ? 25.4 : 1 / 25.4;
 }
 
-/** Parses only common, explicit G0/G1 motion. Unsupported motion stays an unknown. */
+/** Parses common G0/G1/G2/G3 motion. Unsupported controller features stay unknown. */
 export function analyzeNcProgram(input: Input) {
   input = AnalyzeNcProgramSchema.parse(input);
   if (input.program.split(/\r?\n/).length > 50_000) throw new Error("NC program exceeds the 50,000-line analysis limit");
@@ -77,16 +155,21 @@ export function analyzeNcProgram(input: Input) {
   let programUnits = input.units;
   let absolute = true;
   let motion: "rapid" | "feed" | "arc" | undefined = input.initialMotion;
+  let arcClockwise: boolean | undefined;
   let feed: number | undefined;
   let spindle: number | undefined;
   let feedPerMinute = true;
   let constantRpm = true;
+  let arcPlane: ArcPlane = "G17";
+  let arcCenterAbsolute = false;
   let cannedCycle = false;
   let hasWorkOffset = false;
+  let hasExpandedArc = false;
   let pendingTool: number | undefined;
+  const arcTolerance = input.arcChordError ?? (input.units === "mm" ? 0.05 : 0.002);
 
   const unknown = (line: number, code: string, message: string) => findings.push({ line, code, message });
-const supportedG = new Set([0, 1, 2, 3, 4, 17, 18, 19, 20, 21, 28, 30, 40, 41, 42, 43, 49, 53, 54, 55, 56, 57, 58, 59, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 94, 95, 96, 97]);
+const supportedG = new Set([0, 1, 2, 3, 4, 17, 18, 19, 20, 21, 28, 30, 40, 41, 42, 43, 49, 53, 54, 55, 56, 57, 58, 59, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 90.1, 91, 91.1, 94, 95, 96, 97]);
 
   for (const [index, raw] of input.program.split(/\r?\n/).entries()) {
     const lineNumber = index + 1;
@@ -105,7 +188,10 @@ const supportedG = new Set([0, 1, 2, 3, 4, 17, 18, 19, 20, 21, 28, 30, 40, 41, 4
 
     for (const code of gCodes) {
       const whole = Math.trunc(code);
-      if (whole === 20) programUnits = "inch";
+      if (code === 90.1) arcCenterAbsolute = true;
+      else if (code === 91.1) arcCenterAbsolute = false;
+      else if (whole === 17 || whole === 18 || whole === 19) arcPlane = `G${whole}` as ArcPlane;
+      else if (whole === 20) programUnits = "inch";
       else if (whole === 21) programUnits = "mm";
       else if (whole === 90) absolute = true;
       else if (whole === 91) absolute = false;
@@ -115,10 +201,7 @@ const supportedG = new Set([0, 1, 2, 3, 4, 17, 18, 19, 20, 21, 28, 30, 40, 41, 4
         unknown(lineNumber, "feed_per_revolution", "G95 feed-per-revolution motion needs spindle synchronization and is not timed or limit-checked");
       } else if (whole === 0) motion = "rapid";
       else if (whole === 1) motion = "feed";
-      else if (whole === 2 || whole === 3) {
-        motion = "arc";
-        unknown(lineNumber, "arc_motion", "G2/G3 arc geometry is not expanded; full-arc clearance and cycle time remain unknown");
-      }
+      else if (code === 2 || code === 3) { motion = "arc"; arcClockwise = code === 2; }
       else if (whole >= 81 && whole <= 89) {
         cannedCycle = true;
         unknown(lineNumber, "canned_cycle", `G${whole} canned-cycle motion is not expanded`);
@@ -132,12 +215,10 @@ const supportedG = new Set([0, 1, 2, 3, 4, 17, 18, 19, 20, 21, 28, 30, 40, 41, 4
       } else if (whole === 97) constantRpm = true;
     }
 
-    if ([17, 18, 19].some(code => gCodes.some(value => Math.trunc(value) === code))) {
-      if (gCodes.some(value => [2, 3].includes(Math.trunc(value)))) unknown(lineNumber, "arc_plane", "Arc plane changes are not geometrically verified");
-    }
     if (["A", "B", "C"].some(axis => parsed.has(axis))) unknown(lineNumber, "rotary_motion", "Rotary-axis motion is not kinematically transformed or checked");
+    if (["U", "V", "W"].some(axis => parsed.has(axis))) unknown(lineNumber, "secondary_axis_motion", "Secondary-axis motion (U/V/W) is controller-specific and is not transformed");
     if (["I", "J", "K", "R"].some(axis => parsed.has(axis))) {
-      if (gCodes.some(code => [2, 3].includes(Math.trunc(code)))) {
+      if (motion === "arc") {
         // Arc lines are intentionally kept out of the linear segment list.
       } else {
         unknown(lineNumber, "arc_words_without_arc", "Arc-center/radius words without a parsed arc are not interpreted");
@@ -162,7 +243,8 @@ const supportedG = new Set([0, 1, 2, 3, 4, 17, 18, 19, 20, 21, 28, 30, 40, 41, 4
     }
 
     const hasLinearAxis = ["X", "Y", "Z"].some(axis => parsed.has(axis));
-    if (!hasLinearAxis) continue;
+    const hasArcCenter = ["I", "J", "K", "R"].some(axis => parsed.has(axis));
+    if (!hasLinearAxis && !(motion === "arc" && hasArcCenter)) continue;
     const start = { ...position };
     for (const axis of ["X", "Y", "Z"] as const) {
       const value = last(parsed, axis);
@@ -172,7 +254,7 @@ const supportedG = new Set([0, 1, 2, 3, 4, 17, 18, 19, 20, 21, 28, 30, 40, 41, 4
     }
     const end = { ...position };
     const cycleLine = gCodes.some(code => Math.trunc(code) >= 81 && Math.trunc(code) <= 89);
-    if (motion === "arc" || cycleLine || cannedCycle || gCodes.some(code => [28, 30, 53].includes(Math.trunc(code)))) continue;
+    if (cycleLine || cannedCycle || gCodes.some(code => [28, 30, 53].includes(Math.trunc(code)))) continue;
     if (!motion) {
       unknown(lineNumber, "motion_mode_unknown", "Axis words appear before an explicit or configured G0/G1 mode");
       continue;
@@ -182,6 +264,50 @@ const supportedG = new Set([0, 1, 2, 3, 4, 17, 18, 19, 20, 21, 28, 30, 40, 41, 4
       continue;
     }
     const id = `L${lineNumber}`;
+    if (motion === "arc") {
+      const scaleFactor = unitFactor(programUnits, input.units);
+      const centerWord = (key: "I" | "J" | "K") => last(parsed, key) === undefined ? undefined : last(parsed, key)! * scaleFactor;
+      const rWord = last(parsed, "R");
+      const arc = buildArc({
+        start,
+        end,
+        plane: arcPlane,
+        clockwise: arcClockwise ?? false,
+        centerU: centerWord(arcAxes(arcPlane).a),
+        centerV: centerWord(arcAxes(arcPlane).b),
+        radiusWord: rWord === undefined ? undefined : rWord * scaleFactor,
+        absoluteCenter: arcCenterAbsolute,
+        units: input.units,
+        error: arcTolerance,
+        maxSegments: input.maxArcSegments
+      });
+      if (arcClockwise === undefined) {
+        unknown(lineNumber, "arc_modal_direction_unknown", "Arc direction is unknown until an explicit G2/G3 is seen");
+        continue;
+      }
+      if (!arc) {
+        unknown(lineNumber, "arc_motion_unknown", "Arc center/radius is absent, inconsistent, or exceeds the segment limit");
+        continue;
+      }
+      if (segments.length + arc.points.length - 1 > 10_000) {
+        unknown(lineNumber, "segment_limit", "Expanded NC motion exceeds the 10,000-segment safety-analysis limit");
+        continue;
+      }
+      hasExpandedArc = true;
+      for (let i = 1; i < arc.points.length; i++) segments.push({
+        id: `${id}.${i}`,
+        motion: "feed",
+        start: arc.points[i - 1]!,
+        end: arc.points[i]!,
+        feedRate: feed,
+        ...(spindle !== undefined && constantRpm ? { spindleRpm: spindle } : {}),
+        engagement: "unknown",
+        toolRadius: input.toolRadius,
+        holderRadius: input.holderRadius
+      });
+      events.push({ id, kind: "move", motion: "feed", start, end, pathLength: arc.length, ...(feedPerMinute && feed !== undefined ? { feedRate: feed } : {}) });
+      continue;
+    }
     const segment: Segment = {
       id,
       motion,
@@ -218,7 +344,7 @@ const supportedG = new Set([0, 1, 2, 3, 4, 17, 18, 19, 20, 21, 28, 30, 40, 41, 4
     },
     stock: input.stock,
     fixtures: input.fixtures,
-    safetyMargin: input.safetyMargin,
+    safetyMargin: input.safetyMargin + (hasExpandedArc ? arcTolerance : 0),
     safeZ: input.safeZ
   }) : undefined;
   if (!travelVerified) unknown(0, input.coordinateFrame === "work" ? "work_coordinates" : "work_offset", "Machine travel checks are skipped because NC positions use a work offset and no WCS-to-machine transform was supplied");
@@ -237,11 +363,11 @@ const supportedG = new Set([0, 1, 2, 3, 4, 17, 18, 19, 20, 21, 28, 30, 40, 41, 4
     coordinateFrame: input.coordinateFrame,
     machineTravelChecked: travelVerified,
     units: input.units,
-    summary: { parsedLinearSegments: segments.length, sourceLines: input.program.split(/\r?\n/).length, blockers, warnings: risk?.summary.warnings ?? 0, unknown: allUnknowns },
+    summary: { parsedPathSegments: segments.length, parsedLinearSegments: segments.length, sourceLines: input.program.split(/\r?\n/).length, blockers, warnings: risk?.summary.warnings ?? 0, unknown: allUnknowns },
     findings,
     risk,
     cycleTime,
     evidenceHash: sha256Of({ input, segments }),
-    safety: "Partial static review of parsed G0/G1 moves only. Arcs, canned cycles, rotary kinematics, controller/post behavior, compensation, and physical simulation are not fully verified; this result never authorizes posting or machining."
+    safety: "Partial static review of linear and bounded G2/G3 arc motion. Canned cycles, macros, subprograms, rotary kinematics, work-offset transforms, controller/post behavior, compensation, and physical simulation remain unverified; this result never authorizes posting or machining."
   };
 }
