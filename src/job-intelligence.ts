@@ -315,6 +315,7 @@ function toolCompatibility(tool: JobTool, feature: JobFeature, material: string,
 }
 
 export function recommendJobTooling(input: z.infer<typeof RecommendJobToolingSchema>) {
+  input = RecommendJobToolingSchema.parse(input);
   const features = input.features.map(feature => {
     const candidates = input.tools.map(tool => {
       const compatibility = toolCompatibility(tool, feature, input.material, input.machine);
@@ -406,6 +407,7 @@ function approachAngleDeg(toolAxis: Vec, normal: Vec): number | undefined {
 }
 
 export function analyzeToolpathRisk(input: z.infer<typeof AnalyzeToolpathRiskSchema>) {
+  input = AnalyzeToolpathRiskSchema.parse(input);
   const findings: Array<{
     id: string;
     severity: "blocker" | "warning" | "unknown";
@@ -540,6 +542,7 @@ export function analyzeToolpathRisk(input: z.infer<typeof AnalyzeToolpathRiskSch
 }
 
 export function analyzeCycleTime(input: z.infer<typeof AnalyzeCycleTimeSchema>) {
+  input = AnalyzeCycleTimeSchema.parse(input);
   let cuttingSeconds = 0;
   let airFeedSeconds = 0;
   let rapidSeconds = 0;
@@ -651,6 +654,7 @@ function displayValue(value: unknown): string {
 }
 
 export function generateOperationPacket(input: z.infer<typeof GenerateOperationPacketSchema>) {
+  input = GenerateOperationPacketSchema.parse(input);
   const toolsByNumber = new Map<number, JobTool>();
   for (const tool of input.tools) {
     if (tool.number !== undefined) toolsByNumber.set(tool.number, tool);
@@ -777,6 +781,7 @@ function resolveThreadGeometry(input: z.infer<typeof CalculateThreadTapSchema>) 
 }
 
 export function calculateThreadTap(input: z.infer<typeof CalculateThreadTapSchema>) {
+  input = CalculateThreadTapSchema.parse(input);
   const resolved = resolveThreadGeometry(input);
   if (resolved.nominalDiameter === undefined || resolved.pitch === undefined) {
     return {
@@ -870,6 +875,7 @@ function operationToolCandidates(
 }
 
 export function planOdRoughFinish(input: z.infer<typeof PlanOdRoughFinishSchema>) {
+  input = PlanOdRoughFinishSchema.parse(input);
   const minProfileDiameter = Math.min(...input.profile.map(point => point.diameter));
   const maxProfileDiameter = Math.max(...input.profile.map(point => point.diameter));
   const radialRemoval = (input.stockDiameter - minProfileDiameter) / 2;
