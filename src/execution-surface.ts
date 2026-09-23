@@ -38,7 +38,15 @@ export const LIVE_NATIVE_STAGE_A_TOOL_NAMES = new Set([
  * explicitly enables Stage-B reads on a licensed acceptance workstation.
  */
 export const LIVE_NATIVE_STAGE_B_READ_TOOL_NAMES = new Set([
-  "get_programming_context"
+  "get_programming_context",
+  "list_operations",
+  "get_operation",
+  "get_operation_parameters",
+  "find_operations",
+  "get_dirty_toolpaths",
+  "get_toolpath_status",
+  "list_tools",
+  "get_tool"
 ]);
 
 export function stageBReadsEnabled(): boolean {
