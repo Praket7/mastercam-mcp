@@ -46,8 +46,8 @@ export const COMPATIBILITY_MATRIX = [
     release: "2027",
     runtime: ".NET 10",
     adapter: "MastercamMcp.Addin.2027",
-    status: "stage-a-environment-only",
-    evidence: "The .NET 10 adapter project exists; licensed load acceptance and operation mappings remain unverified"
+    status: "stage-b-read-candidate",
+    evidence: "The .NET 10 adapter includes an opt-in runtime-probed operation snapshot and derived read tools; licensed Mastercam 2027 acceptance is required before LIVE_READ_VERIFIED"
   }
 ] as const;
 
@@ -107,8 +107,9 @@ export function compatibilityReport(installations: Installation[] = detectInstal
     detected: installations,
     liveMappingsVerified: false,
     stageAAdaptersImplemented: ["MastercamMcp.Addin.Legacy", "MastercamMcp.Addin.2027"],
+    stageBReadCandidates: ["MastercamMcp.Addin.2027"],
     note:
-      "Both native adapter families exist, but only environment reporting is implemented today. " +
-      "Commercial live inspection or mutation support requires release-specific mappings plus licensed acceptance evidence."
+      "Legacy releases remain Stage A. Mastercam 2027 has an opt-in Stage-B read candidate built from a runtime-probed programming snapshot. " +
+      "No mapping is LIVE_READ_VERIFIED until licensed acceptance evidence proves it."
   };
 }
