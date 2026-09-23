@@ -200,6 +200,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           dotnet build native/MastercamMcp.Adapter.Abstractions/MastercamMcp.Adapter.Abstractions.csproj -c Release
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet build native/MastercamMcp.ReadModel/MastercamMcp.ReadModel.csproj -c Release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           dotnet build native/MastercamMcp.Core/MastercamMcp.Core.csproj -c Release
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           dotnet build native/MastercamMcp.ApiCatalog/MastercamMcp.ApiCatalog.csproj -c Release
@@ -253,6 +255,7 @@ jobs:
           set -euo pipefail
           dotnet build native/MastercamMcp.Protocol/MastercamMcp.Protocol.csproj -c Release
           dotnet build native/MastercamMcp.Adapter.Abstractions/MastercamMcp.Adapter.Abstractions.csproj -c Release
+          dotnet build native/MastercamMcp.ReadModel/MastercamMcp.ReadModel.csproj -c Release
           dotnet build native/MastercamMcp.Core/MastercamMcp.Core.csproj -c Release
           dotnet build native/MastercamMcp.ApiCatalog/MastercamMcp.ApiCatalog.csproj -c Release
           dotnet test native/MastercamMcp.Protocol.Tests/MastercamMcp.Protocol.Tests.csproj -c Release
