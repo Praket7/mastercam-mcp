@@ -13,5 +13,6 @@
   <ItemGroup>
     <ProjectReference Include="..\MastercamMcp.Protocol\MastercamMcp.Protocol.csproj" />
     <ProjectReference Include="..\MastercamMcp.Core\MastercamMcp.Core.csproj" />
+    <ProjectReference Include="..\MastercamMcp.ReadModel\MastercamMcp.ReadModel.csproj" />
   </ItemGroup>
 </Project>
