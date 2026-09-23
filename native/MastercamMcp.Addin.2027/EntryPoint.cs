@@ -15,7 +15,7 @@ using Mastercam.App.Types;
 using MastercamMcp.Core;
 using MastercamMcp.Protocol;
 
-namespace MastercamMcp.Addin.2027
+namespace MastercamMcp.Addin.V2027
 {
     public sealed class EntryPoint : NetHook3App
     {

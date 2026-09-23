@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
-    <LangVersion>9.0</LangVersion>
+    <LangVersion>latest</LangVersion>
     <Nullable>disable</Nullable>
     <IsPackable>false</IsPackable>
   </PropertyGroup>
@@ -12,6 +12,13 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\MastercamMcp.Protocol\MastercamMcp.Protocol.csproj" />
+    <ProjectReference Include="..\MastercamMcp.Adapter.Abstractions\MastercamMcp.Adapter.Abstractions.csproj" />
     <ProjectReference Include="..\MastercamMcp.Core\MastercamMcp.Core.csproj" />
+    <ProjectReference Include="..\MastercamMcp.ReadModel\MastercamMcp.ReadModel.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="..\MastercamMcp.Addin.2027\ProgrammingContextReader.cs" Link="StageB\ProgrammingContextReader.cs" />
+    <Compile Include="..\MastercamMcp.Addin.2027\ProgrammingContextTools.cs" Link="StageB\ProgrammingContextTools.cs" />
+    <Compile Include="..\MastercamMcp.Addin.2027\EnvironmentAdapter.cs" Link="StageB\EnvironmentAdapter.cs" />
   </ItemGroup>
 </Project>

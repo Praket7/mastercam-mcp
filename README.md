@@ -2,7 +2,7 @@
 
 Mastercam MCP connects an MCP client with a local Mastercam session through a protected Windows named pipe. It gives an assistant a careful workflow for inspection, planning, confirmation, verification, and recovery.
 
-The project includes a safe fixture backend so contributors can run the portable workflow without Mastercam or a license. The live adapter reports only capabilities that are actually mapped and verified. It never pretends that an unimplemented Mastercam action succeeded.
+The project includes a safe fixture backend so contributors can run the portable workflow without Mastercam or a license. The live adapter reports only capabilities that are actually implemented or mapped, with an explicit verification tier. It never labels an unaccepted mapping as live verified and never pretends that an unimplemented Mastercam action succeeded.
 
 ## Start without Mastercam
 
@@ -52,9 +52,9 @@ The default server profile is read only. Writes require `MASTERCAM_MCP_PROFILE=w
 
 The portable fixture backend implements the public inspection and safety contract: active part, geometry, selection, machine groups, operations, tools, stock, WCS, post processor, toolpath state, cycle estimates, previews, verification, rollback, simulation, collision models, visual context, and machine context.
 
-The native Legacy and 2027 adapters currently implement **Stage A environment reporting only**: `mastercam_status` and `mastercam_capabilities`. They do not advertise operation, tool, stock, WCS, simulation, or mutation tools until those mappings are implemented against the matching Mastercam SDK and pass licensed live acceptance.
+The Legacy adapter remains **Stage A environment reporting only**. The Mastercam 2027 adapter also contains an **opt-in Stage-B read candidate** built around a bounded programming snapshot. With Stage B enabled it can expose `get_programming_context`, operation search/exact reads, partial proven operation parameters, dirty-state reads, and tools referenced by active operations.
 
-This distinction is deliberate. A fixture pass proves the MCP contract and safety pipeline, not live Mastercam behavior. Run `mastercam-mcp acceptance --live` on Windows to see the exact live-readiness blockers for the installed release.
+Stage B is hidden by default and is still tier `IMPLEMENTED`, not `LIVE_READ_VERIFIED`. It does not yet claim active-part, stock, WCS, full tool-library, complete toolpath-motion, simulation, or mutation coverage. This distinction is deliberate: portable CI proves the contracts and mapper, while only a licensed Mastercam 2027 acceptance run can prove live behavior.
 
 ## Live Mastercam setup
 
@@ -71,7 +71,17 @@ After starting Mastercam run the diagnostic command.
 npx -y mastercam-mcp@latest doctor
 ```
 
-Both native adapter families are present, including the .NET 10 adapter for Mastercam 2027, but only environment reporting is implemented today. The compatibility report and `acceptance --live` command show what the add in can actually prove. A live acceptance run exits nonzero until the required inspection mappings pass, and `--allow-writes` additionally gates preview, apply, verify, and rollback readiness.
+For the Mastercam 2027 Stage-B acceptance candidate, set the environment variable **before launching Mastercam** so the in-process add-in inherits it:
+
+```powershell
+$env:MASTERCAM_MCP_ENABLE_STAGE_B_READS = "1"
+# launch Mastercam 2027 from this PowerShell session, load the add-in, then:
+npx -y mastercam-mcp@latest acceptance --live
+```
+
+Do not add this flag to generated client configuration until the workstation acceptance result is understood. The flag enables read candidates only; it does not enable writes.
+
+Both native adapter families are present, including the .NET 10 adapter for Mastercam 2027. To evaluate the 2027 Stage-B reader on a licensed workstation, start Mastercam with `MASTERCAM_MCP_ENABLE_STAGE_B_READS=1`, keep the MCP profile read-only, and run `acceptance --live`. The report exposes `stageBContextReady` separately from full `liveReadReady`, so operation-snapshot success cannot be mistaken for complete live inspection coverage.
 
 ## macOS setup
 
@@ -139,7 +149,7 @@ The server now includes a portable job-intelligence layer in addition to setup-s
 - `calculate_thread_tap` resolves metric and Unified callouts, calculates basic thread geometry, cut-tap drill guidance, synchronized feed, and RPM from supplied geometry and cutting data.
 - `plan_od_rough_finish` converts a structured OD profile plus shop tooling/material/machine limits into a rough-and-finish process-plan preview. It is deliberately non-executable and cannot create Mastercam operations, post NC, transfer programs, or start a machine.
 
-These tools are server-local. They can consume fixture data or structured evidence supplied by an MCP client in live mode, but that does **not** mean the current native adapter can read the active Mastercam tool library or toolpath tree. Live native mappings remain Stage A until implemented and accepted on a licensed workstation.
+These tools are server-local. On Mastercam 2027, the opt-in Stage-B reader can now supply a coherent operation snapshot and tools referenced by those active operations. That is useful grounding for downstream job intelligence, but it is **not** a complete Mastercam tool-library export and it does not yet extract full toolpath motion, stock, WCS, or simulation evidence.
 
 ```text
 MASTERCAM_MCP_BACKEND=mock pnpm test

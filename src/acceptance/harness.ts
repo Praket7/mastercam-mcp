@@ -12,6 +12,7 @@ export interface AcceptanceTestResult {
 }
 
 export interface AcceptanceReadiness {
+  stageBContextReady: boolean;
   liveReadReady: boolean;
   liveWriteReady: boolean;
   liveReadBlockers: string[];
@@ -44,7 +45,7 @@ export interface AcceptanceOptions {
 }
 
 type AcceptanceTestName =
-  | "status" | "activePart" | "operations" | "tools" | "stock" | "wcs"
+  | "status" | "programmingContext" | "activePart" | "operations" | "tools" | "stock" | "wcs"
   | "preview" | "apply" | "verify" | "rollback" | "simulation" | "collisions";
 
 interface Quantity { value: number; unit: string }
@@ -116,6 +117,29 @@ async function testStatus(ctx: TestContext): Promise<unknown> {
   if (!result.data || typeof result.data !== "object") throw new Error("mastercam_status missing data");
   ctx.statusInfo = result.data as Record<string, unknown>;
   return result.data;
+}
+
+async function testProgrammingContext(ctx: TestContext): Promise<unknown> {
+  const result = requireOk(await ctx.backend.call({
+    id: "a1b",
+    tool: "get_programming_context",
+    arguments: { includeGeometry: false }
+  }), "get_programming_context");
+  if (!result.data || typeof result.data !== "object") throw new Error("get_programming_context missing data");
+  const data = result.data as {
+    operations?: unknown[];
+    coverage?: { operationsEnumerated?: boolean; stableOperationIds?: boolean };
+    documentRevision?: string;
+  };
+  if (!Array.isArray(data.operations)) throw new Error("get_programming_context missing operations array");
+  if (data.coverage && data.coverage.operationsEnumerated === false) {
+    throw new Error("programming context did not enumerate operations");
+  }
+  return {
+    operationCount: data.operations.length,
+    stableOperationIds: data.coverage?.stableOperationIds,
+    documentRevision: data.documentRevision
+  };
 }
 
 async function testActivePart(ctx: TestContext): Promise<unknown> {
@@ -257,6 +281,9 @@ export async function runAcceptance(backend: Backend, options: AcceptanceOptions
   };
 
   await runTest("status", testStatus, ctx);
+  if (options.mode === "live") {
+    await runTest("programmingContext", testProgrammingContext, ctx);
+  }
   await runTest("activePart", testActivePart, ctx);
   await runTest("operations", testOperations, ctx);
   await runTest("tools", testTools, ctx);
@@ -295,6 +322,8 @@ export async function runAcceptance(backend: Backend, options: AcceptanceOptions
     : options.mode === "live"
       ? ["write readiness not evaluated; rerun on a disposable part with --allow-writes"]
       : ["fixture mode does not establish live Mastercam write readiness"];
+  const stageBContextReady =
+    options.mode === "live" && ctx.results.programmingContext?.status === "PASS";
   const liveReadReady = options.mode === "live" && liveReadBlockers.length === 0;
   const liveWriteReady = options.mode === "live" && ctx.allowWrites && liveWriteBlockers.length === 0;
   const conclusion: AcceptanceReadiness["conclusion"] =
@@ -318,6 +347,7 @@ export async function runAcceptance(backend: Backend, options: AcceptanceOptions
     tests: ctx.results,
     overall,
     readiness: {
+      stageBContextReady,
       liveReadReady,
       liveWriteReady,
       liveReadBlockers,

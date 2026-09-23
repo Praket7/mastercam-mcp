@@ -5,7 +5,12 @@ import { allowed, DEFAULT_PROFILE, categoryOf, SUPPORTED_PROTOCOL_REVISIONS, FOR
 import type { Profile } from "../contracts.js";
 import type { Backend, ToolResult } from "../backend.js";
 import { LiveBackend } from "../live-backend.js";
-import { SERVER_LOCAL_TOOL_NAMES, LIVE_NATIVE_STAGE_A_TOOL_NAMES } from "../execution-surface.js";
+import {
+  SERVER_LOCAL_TOOL_NAMES,
+  LIVE_NATIVE_STAGE_A_TOOL_NAMES,
+  LIVE_NATIVE_STAGE_B_READ_TOOL_NAMES,
+  stageBReadsEnabled
+} from "../execution-surface.js";
 import { doctor } from "../diagnostics.js";
 import { VERSION } from "../version.js";
 import { compareNc, compareToolDatabases, setupSheet, validateMachine } from "../shop.js";
@@ -50,9 +55,11 @@ export function advertisedToolDefinitions(
   backendKind: "mock" | "live"
 ): ToolDefinition[] {
   if (backendKind === "mock") return TOOL_DEFINITIONS;
+  const stageB = stageBReadsEnabled();
   return TOOL_DEFINITIONS.filter(
     definition =>
       LIVE_NATIVE_STAGE_A_TOOL_NAMES.has(definition.name) ||
+      (stageB && LIVE_NATIVE_STAGE_B_READ_TOOL_NAMES.has(definition.name)) ||
       SERVER_LOCAL_TOOL_NAMES.has(definition.name)
   );
 }
@@ -101,7 +108,9 @@ export function createMcpServer(
     {
       instructions:
         backendKind === "live"
-          ? "The native adapter is Stage A: only mastercam_status and mastercam_capabilities are native-backed today. Server-local diagnostics, compatibility, tooling recommendation, toolpath-risk review, cycle-time analysis, operation packets, thread/tap calculations, OD process-plan preview, preflight, regeneration-impact, post-regression, and validation utilities remain available without claiming unverified Mastercam mappings."
+          ? stageBReadsEnabled()
+            ? "The native adapter has opt-in Stage-B read-only programming-context extraction enabled. It remains IMPLEMENTED, not LIVE_READ_VERIFIED, until licensed acceptance passes. Server-local manufacturing intelligence remains available without implying additional native mappings."
+            : "The native adapter is Stage A by default: only mastercam_status and mastercam_capabilities are native-backed. Stage-B programming-context extraction is installed but hidden until MASTERCAM_MCP_ENABLE_STAGE_B_READS=1 is set on a licensed acceptance workstation. Server-local manufacturing intelligence remains available."
           : "Inspect before mutating. Ground tooling/process suggestions in supplied job state. Use toolpath-risk, cycle-time, thread/tap, manufacturing_preflight, and regression tools as deterministic review evidence. plan_od_rough_finish is non-executable preview only. Mutations require preview_operation_parameters then apply_operation_parameter_preview with the returned approvalToken. Rollback uses the server-issued transactionId. Fixture data never proves live Mastercam behavior."
     }
   );
