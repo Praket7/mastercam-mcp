@@ -91,6 +91,19 @@ namespace MastercamMcp.Protocol.Tests
         }
 
         [Fact]
+        public void OperationIdIsNeverReusedAsToolNumber()
+        {
+            var operation = new { Id = 77, Name = "No explicit tool" };
+            var mapped = SafeReflection.MapOperation(operation);
+            var snapshot = SafeReflection.BuildProgrammingSnapshot(new object[] { operation }, "test");
+
+            Assert.Equal(77, mapped.Id);
+            Assert.Null(mapped.Tool);
+            Assert.Null(mapped.ToolRecord);
+            Assert.Empty(snapshot.Tools);
+        }
+
+        [Fact]
         public void SnapshotRevisionIsDeterministicAndStableIdsAreRequired()
         {
             var operation = new FakeOperation
