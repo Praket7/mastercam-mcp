@@ -281,7 +281,9 @@ export async function runAcceptance(backend: Backend, options: AcceptanceOptions
   };
 
   await runTest("status", testStatus, ctx);
-  await runTest("programmingContext", testProgrammingContext, ctx);
+  if (options.mode === "live") {
+    await runTest("programmingContext", testProgrammingContext, ctx);
+  }
   await runTest("activePart", testActivePart, ctx);
   await runTest("operations", testOperations, ctx);
   await runTest("tools", testTools, ctx);
