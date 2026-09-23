@@ -20,6 +20,7 @@
     "native/MastercamMcp.Protocol/**/*",
     "native/MastercamMcp.Core/**/*",
     "native/MastercamMcp.Adapter.Abstractions/**/*",
+    "native/MastercamMcp.ReadModel/**/*",
     "native/MastercamMcp.Addin.Legacy/**/*",
     "native/MastercamMcp.Addin.2027/**/*",
     "native/MastercamMcp.ApiCatalog/**/*",
