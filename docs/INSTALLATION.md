@@ -8,7 +8,9 @@ Build the external server with `pnpm install` followed by `pnpm run build` when 
 
 Build the release-specific add in from `native/MastercamMcp.Addin.Legacy` or `native/MastercamMcp.Addin.2027` after setting `MASTERCAM_ROOT` to the user-supplied Mastercam installation. The project deliberately references the local proprietary NET Hook assembly and never copies it into the repository or npm package.
 
-Install the resulting add in in the Mastercam `chooks` directory for the matching release. Start Mastercam first, load the add in, then start the MCP server with stdio. Keep `MASTERCAM_MCP_PROFILE=read` during initial validation. The current Stage-A adapters expose only `mastercam_status` and `mastercam_capabilities`; installation alone does not make operation inspection or mutation live-ready.
+Install the resulting add in in the Mastercam `chooks` directory for the matching release. The installer copies the project-owned dependency closure, including `MastercamMcp.ReadModel.dll`, while excluding Mastercam SDK/runtime assemblies. Keep `MASTERCAM_MCP_PROFILE=read` during initial validation.
+
+Legacy releases remain Stage A. Mastercam 2027 includes an opt-in Stage-B read candidate. To evaluate it, set `MASTERCAM_MCP_ENABLE_STAGE_B_READS=1` **before launching Mastercam** so the in-process add-in inherits the setting. Do not enable this automatically in client configuration before acceptance.
 
 After installation run:
 
@@ -16,6 +18,16 @@ After installation run:
 npx -y mastercam-mcp@latest doctor
 npx -y mastercam-mcp@latest acceptance --live
 ```
+
+For Mastercam 2027 Stage-B evaluation from PowerShell:
+
+```powershell
+$env:MASTERCAM_MCP_ENABLE_STAGE_B_READS = "1"
+# Launch Mastercam 2027 from this same shell/session, load the add-in, then run:
+npx -y mastercam-mcp@latest acceptance --live
+```
+
+A successful `stageBContextReady` proves the operation/tool snapshot path on that workstation. Full `liveReadReady` still requires the separate active-part, stock, and WCS acceptance gates.
 
 Do **not** enable the write profile merely because installation or fixture tests passed. Write enablement belongs only on a disposable test part after release-specific live mappings exist and the acceptance report shows the required live reads are ready. Then evaluate writes explicitly with `acceptance --live --allow-writes`. A live write profile should remain disabled unless that controlled acceptance path reports write readiness.
 
