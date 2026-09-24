@@ -19,7 +19,11 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
   ]);
 }
 
-async function withStdioClient(run: (client: Client) => Promise<void>, extraEnv: Record<string, string> = {}) {
+async function withStdioClient(
+  run: (client: Client) => Promise<void>,
+  extraEnv: Record<string, string> = {},
+  operatorApproval = false
+) {
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [tsx, "src/server.ts"],
@@ -34,8 +38,18 @@ async function withStdioClient(run: (client: Client) => Promise<void>, extraEnv:
   });
   const client = new Client(
     { name: "protocol-test", version: "1.0" },
-    { versionNegotiation: { mode: { pin: "2026-07-28" } } }
+    {
+      versionNegotiation: { mode: { pin: "2026-07-28" } },
+      ...(operatorApproval ? { capabilities: { elicitation: { form: {} } } } : {})
+    }
   );
+  if (operatorApproval) {
+    client.setRequestHandler("elicitation/create", async request => {
+      assert.match(request.params.message, /Before:.*After:/s);
+      assert.match(request.params.message, /Document revision/);
+      return { action: "accept", content: { confirm: true } };
+    });
+  }
 
   await withTimeout(client.connect(transport), 15_000, "stdio MCP connect");
   assert.equal(client.getProtocolEra(), "modern");
@@ -169,6 +183,44 @@ test("preview requires quantity units; bare numbers are rejected (SAFE-01)", asy
       emptyChanges.content[0] && "text" in emptyChanges.content[0] ? emptyChanges.content[0].text : "";
     assert.match(emptyText, /feedRate|spindleSpeed|invalid/i);
   });
+});
+
+test("a preview token alone cannot apply a change without the MCP client approval round trip", async () => {
+  await withStdioClient(async client => {
+    const before = await client.callTool({ name: "list_operations", arguments: {} });
+    const initial = (before.structuredContent as { data?: Array<Record<string, unknown>> }).data ?? [];
+    const operation = initial.find(item => item.id === 4);
+    assert.ok(operation);
+    const originalFeed = operation.feedRate;
+    const previewResult = await client.callTool({
+      name: "preview_operation_parameters",
+      arguments: { operationId: 4, changes: { feedRate: { value: 1234, unit: "mm/min" } } }
+    });
+    const token = (previewResult.structuredContent as { data?: { approvalToken?: string } }).data?.approvalToken;
+    assert.ok(token);
+
+    await assert.rejects(
+      () => client.callTool({ name: "apply_operation_parameter_preview", arguments: { approvalToken: token } }),
+      /elicitation|input|required|capability/i
+    );
+    const after = await client.callTool({ name: "list_operations", arguments: {} });
+    const current = ((after.structuredContent as { data?: Array<Record<string, unknown>> }).data ?? []).find(item => item.id === 4);
+    assert.deepEqual(current?.feedRate, originalFeed);
+  });
+});
+
+test("the MCP operator approval round trip applies the exact signed preview", async () => {
+  await withStdioClient(async client => {
+    const preview = await client.callTool({
+      name: "preview_operation_parameters",
+      arguments: { operationId: 4, changes: { feedRate: { value: 1234, unit: "mm/min" } } }
+    });
+    const token = (preview.structuredContent as { data?: { approvalToken?: string } }).data?.approvalToken;
+    assert.ok(token);
+    const applied = await client.callTool({ name: "apply_operation_parameter_preview", arguments: { approvalToken: token } });
+    assert.notEqual(applied.isError, true);
+    assert.equal((applied.structuredContent as { data?: { applied?: boolean } }).data?.applied, true);
+  }, {}, true);
 });
 
 test("capability registry never claims live verification (P0-01 contract)", async () => {

@@ -1,25 +1,33 @@
 # Shop floor workflows
 
-## Setup sheets
+These tools help gather job information before a programmer reviews a change. Their output is evidence for a person to check. It is not a machine approval.
 
-Collect the active part, machine context, stock, WCS, operations, and tools. Pass those values to `generate_setup_sheet`. Treat the result as a draft until a responsible person approves the part revision and machine setup.
+## Prepare a setup note
 
-## Tool database comparison
+Gather the part name, stock, machine, work offset, operations, and tools. Send that information to `generate_setup_sheet`. The result is a draft. Check the part revision and setup at the machine before using it.
 
-Pass two parsed snapshots to `compare_tool_databases`. The operation is read only and returns hashes and changed line counts. Keep the original files untouched and require a checkout process before shared database edits.
+## Check tool lists
 
-## NC comparison
+Send two tool list files to `compare_tool_databases`. The result shows tools that changed or moved. The tool does not edit either file. Follow your shop's normal approval process before changing a shared tool list.
 
-Pass the previous and new NC text to `compare_nc_files`. Review tool numbers, changed lines, added lines, removed lines, offsets, spindle commands, and rapid motion before releasing a program.
+## Review two NC programs
 
-## Machine validation
+Send the old and new program text to `compare_nc_files`. Read the changed lines. Pay close attention to tool numbers, offsets, spindle commands, feeds, and rapid moves.
 
-Pass an operation and a machine profile to `validate_machine_profile`. A valid result means only that the declared values do not violate the declared limits. It does not certify a real machine, fixture, controller, tool, or material setup.
+`analyze_nc_program` can review a limited set of common straight moves and arcs. It cannot understand every controller command. It cannot replace Mastercam Verify or a machine simulation. Unknown motion must be checked in the correct CAM and machine tools.
 
-## Cross platform behavior
+## Check a machine profile
 
-The setup sheet, comparison, validation, fixture, and protocol tests use portable Node APIs. Live Mastercam access remains Windows only because the NET Hook add in runs inside Mastercam. On macOS and Linux use the fixture backend, recorded responses, or exported text and JSON data.
+Send the operation data and declared machine limits to `validate_machine_profile`. The result checks the values you supplied. It cannot confirm that those values match the real machine, fixture, tool, or material.
 
-## Path evidence
+## Build a tool or thread recommendation
 
-The standard Windows locations used by the installer are based on the Mastercam administrator guide and NET Hook examples. The project accepts a custom root so installations outside Program Files do not depend on guessed paths.
+Tool suggestions use the catalog supplied to the server. Confirm the tool, holder, insert, material, and cutting data with the source. Thread calculations need a confirmed callout or dimensions. They do not discover features inside a CAD model.
+
+## Draft a turning plan
+
+`plan_od_rough_finish` can organize a supplied outside diameter profile into a roughing and finishing proposal. The result is a review document. It does not create Mastercam operations or machine code.
+
+## What a passing check means
+
+Portable tests show that the software handled the supplied data as expected. They do not show that a licensed Mastercam session, post, controller, or physical machine will behave the same way. Use your established simulation and prove out process before cutting a part.

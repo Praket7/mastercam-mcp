@@ -3,6 +3,10 @@ import { TOOL_MANIFEST } from "../tool-manifest.js";
 
 export type { Profile };
 
+export function parseHardReadOnly(value: string | undefined): boolean {
+  return value !== "0";
+}
+
 export interface SafetyPolicy {
   profile: Profile;
   hardReadOnly: boolean;
@@ -42,5 +46,5 @@ export function validateProfileConfig(profile: string, hardReadOnly: string): { 
   if (!valid.includes(profile as (typeof valid)[number])) {
     throw new Error(`Invalid profile: ${profile}. Valid profiles: ${valid.join(", ")}`);
   }
-  return { profile: profile as Profile, hardReadOnly: hardReadOnly !== "0" };
+  return { profile: profile as Profile, hardReadOnly: parseHardReadOnly(hardReadOnly) };
 }

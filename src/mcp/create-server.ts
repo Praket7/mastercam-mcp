@@ -1,5 +1,5 @@
-import { randomUUID } from "node:crypto";
-import { McpServer } from "@modelcontextprotocol/server";
+import { randomBytes, randomUUID } from "node:crypto";
+import { createRequestStateCodec, inputRequired, inputResponse, McpServer } from "@modelcontextprotocol/server";
 import type * as z from "zod/v4";
 import { allowed, DEFAULT_PROFILE, categoryOf, SUPPORTED_PROTOCOL_REVISIONS, FORBIDDEN_TOOLS } from "../contracts.js";
 import type { Profile } from "../contracts.js";
@@ -46,6 +46,64 @@ import { analyzeNcProgram, AnalyzeNcProgramSchema } from "../nc-program.js";
 const READ_DEADLINE_MS = 30_000;
 const WRITE_DEADLINE_MS = 90_000;
 const ADVANCED_DEADLINE_MS = 120_000;
+const pendingMutationPreviews = new Map<string, Record<string, unknown>>();
+interface OperatorApprovalState {
+  token: string;
+  operationId: unknown;
+  before: unknown;
+  after: unknown;
+  documentRevision: unknown;
+  operationFingerprint: unknown;
+  expiresAt: unknown;
+}
+const operatorApprovalState = createRequestStateCodec<OperatorApprovalState>({
+  key: randomBytes(32),
+  ttlSeconds: 600,
+  bind: ctx => ctx.http?.authInfo?.clientId ?? ctx.http?.req?.headers.get("authorization") ?? ctx.sessionId ?? "local-stdio"
+});
+
+function rememberMutationPreview(data: unknown): void {
+  if (!data || typeof data !== "object" || Array.isArray(data)) return;
+  const preview = data as Record<string, unknown>;
+  if (typeof preview.approvalToken !== "string" || typeof preview.expiresAt !== "string") return;
+  const expiry = Date.parse(preview.expiresAt);
+  if (!Number.isFinite(expiry) || expiry <= Date.now()) return;
+  for (const [token, record] of pendingMutationPreviews) {
+    if (Date.parse(String(record.expiresAt)) <= Date.now()) pendingMutationPreviews.delete(token);
+  }
+  pendingMutationPreviews.set(preview.approvalToken, preview);
+  while (pendingMutationPreviews.size > 500) {
+    const oldest = pendingMutationPreviews.keys().next().value;
+    if (oldest === undefined) break;
+    pendingMutationPreviews.delete(oldest);
+  }
+}
+
+function approvalPrompt(preview: Record<string, unknown>): string {
+  return [
+    `Approve this Mastercam change for operation ${String(preview.operationId)}?`,
+    `Before: ${JSON.stringify(preview.before)}`,
+    `After: ${JSON.stringify(preview.after)}`,
+    `Document revision: ${String(preview.documentRevision)}`,
+    `Operation fingerprint: ${String(preview.operationFingerprint)}`,
+    `Approval expires: ${String(preview.expiresAt)}`,
+    "The MCP client must show this request to the operator and return an explicit yes."
+  ].join("\n");
+}
+
+function approvalStateMatches(
+  preview: Record<string, unknown>,
+  token: string,
+  state: OperatorApprovalState | undefined
+): boolean {
+  return Boolean(state && state.token === token &&
+    state.operationId === preview.operationId &&
+    state.documentRevision === preview.documentRevision &&
+    state.operationFingerprint === preview.operationFingerprint &&
+    state.expiresAt === preview.expiresAt &&
+    JSON.stringify(state.before) === JSON.stringify(preview.before) &&
+    JSON.stringify(state.after) === JSON.stringify(preview.after));
+}
 
 /**
  * Portable/mock mode exposes the complete registered contract. Live mode
@@ -108,12 +166,13 @@ export function createMcpServer(
   const server = new McpServer(
     { name: "mastercam-mcp", version: VERSION },
     {
+      requestState: { verify: operatorApprovalState.verify },
       instructions:
         backendKind === "live"
           ? stageBReadsEnabled()
             ? "The native adapter has opt-in Stage-B read-only programming-context extraction enabled. It remains IMPLEMENTED, not LIVE_READ_VERIFIED, until licensed acceptance passes. Server-local manufacturing intelligence remains available without implying additional native mappings."
             : "The native adapter is Stage A by default: only mastercam_status and mastercam_capabilities are native-backed. Stage-B programming-context extraction is installed but hidden until MASTERCAM_MCP_ENABLE_STAGE_B_READS=1 is set on a licensed acceptance workstation. Server-local manufacturing intelligence remains available."
-          : "Inspect before mutating. Ground tooling/process suggestions in supplied job state. Use toolpath-risk, cycle-time, thread/tap, manufacturing_preflight, and regression tools as deterministic review evidence. plan_od_rough_finish is non-executable preview only. Mutations require preview_operation_parameters then apply_operation_parameter_preview with the returned approvalToken. Rollback uses the server-issued transactionId. Fixture data never proves live Mastercam behavior."
+          : "Inspect before mutating. Ground tooling/process suggestions in supplied job state. Use toolpath-risk, cycle-time, thread/tap, manufacturing_preflight, and regression tools as deterministic review evidence. plan_od_rough_finish is non-executable preview only. Mutations require preview_operation_parameters, explicit MCP client operator approval of the displayed exact change, then apply_operation_parameter_preview with the returned approvalToken. Rollback uses the server-issued transactionId. Fixture data never proves live Mastercam behavior."
     }
   );
 
@@ -206,6 +265,69 @@ export function createMcpServer(
         try {
           if (abortController.signal.aborted) {
             throw new Error("CANCELLED: request aborted before execution");
+          }
+
+          if (name === "apply_operation_parameter_preview") {
+            const token = typeof args.approvalToken === "string" ? args.approvalToken : "";
+            const preview = pendingMutationPreviews.get(token);
+            if (!preview || Date.parse(String(preview.expiresAt)) <= Date.now()) {
+              pendingMutationPreviews.delete(token);
+              return envelope({
+                ok: false,
+                tool: name,
+                error: mastercamError("APPROVAL_TOKEN_INVALID", "A fresh preview is required before operator approval")
+              }, definition.outputSchema);
+            }
+            const state = ctx.mcpReq.requestState<OperatorApprovalState>();
+            if (state && !approvalStateMatches(preview, token, state)) {
+              pendingMutationPreviews.delete(token);
+              return envelope({
+                ok: false,
+                tool: name,
+                error: mastercamError("APPROVAL_REQUIRED", "Approval state does not match this preview, client session, or document revision")
+              }, definition.outputSchema);
+            }
+            const response = inputResponse(ctx.mcpReq.inputResponses, "operatorApproval");
+            if (response.kind !== "missing" && (!state || !approvalStateMatches(preview, token, state))) {
+              pendingMutationPreviews.delete(token);
+              return envelope({
+                ok: false,
+                tool: name,
+                error: mastercamError("APPROVAL_REQUIRED", "Operator input is missing its signed preview request state")
+              }, definition.outputSchema);
+            }
+            if (response.kind === "missing") {
+              return inputRequired({
+                requestState: await operatorApprovalState.mint({
+                  token,
+                  operationId: preview.operationId,
+                  before: preview.before,
+                  after: preview.after,
+                  documentRevision: preview.documentRevision,
+                  operationFingerprint: preview.operationFingerprint,
+                  expiresAt: preview.expiresAt
+                }, ctx),
+                inputRequests: {
+                  operatorApproval: inputRequired.elicit({
+                    message: approvalPrompt(preview),
+                    requestedSchema: {
+                      type: "object",
+                      properties: { confirm: { type: "boolean", title: "I approve this exact change" } },
+                      required: ["confirm"]
+                    }
+                  })
+                }
+              });
+            }
+            if (response.kind !== "elicit" || response.action !== "accept" || response.content?.confirm !== true) {
+              pendingMutationPreviews.delete(token);
+              return envelope({
+                ok: false,
+                tool: name,
+                error: mastercamError("APPROVAL_REQUIRED", "The operator declined or did not confirm this exact change")
+              }, definition.outputSchema);
+            }
+            pendingMutationPreviews.delete(token);
           }
 
           let result: ToolResult;
@@ -383,6 +505,8 @@ export function createMcpServer(
               { signal: abortController.signal }
             );
           }
+
+          if (name === "preview_operation_parameters" && result.ok) rememberMutationPreview(result.data);
 
           // Cancellation/deadline is authoritative even if a backend ignores
           // AbortSignal and returns a late successful result.

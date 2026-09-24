@@ -3,6 +3,7 @@ import net from "node:net";
 import { access, constants, mkdir } from "node:fs/promises";
 import { detectInstallations, compatibilityReport } from "./compatibility.js";
 import { VERSION } from "./version.js";
+import { parseHardReadOnly } from "./safety/policy.js";
 
 export interface DoctorCheck { ok: boolean; value: unknown; required?: string }
 
@@ -67,7 +68,7 @@ export async function doctor(pipe: string, backend: string) {
     mastercam: { ok: backend === "mock" || installations.length > 0, value: installations.map(item => item.version) },
     audit: { ok: auditWritable, value: auditWritable ? "writable" : "not writable" },
     backend: { ok: true, value: backend },
-    security: { ok: true, value: { hardReadOnly: process.env.MASTERCAM_MCP_HARD_READ_ONLY !== "0", profile: process.env.MASTERCAM_MCP_PROFILE ?? "read", httpToken: Boolean(process.env.MASTERCAM_MCP_HTTP_TOKEN) } }
+    security: { ok: true, value: { hardReadOnly: parseHardReadOnly(process.env.MASTERCAM_MCP_HARD_READ_ONLY), profile: process.env.MASTERCAM_MCP_PROFILE ?? "read", httpToken: Boolean(process.env.MASTERCAM_MCP_HTTP_TOKEN) } }
   };
   return {
     ok: Object.values(checks).every(check => check.ok),

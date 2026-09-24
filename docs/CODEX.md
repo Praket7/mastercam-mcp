@@ -1,11 +1,11 @@
-# Codex configuration
+# Codex setup
 
-Register the published server as a local stdio MCP server. Codex can download the current package automatically through npm.
+The npm package does not yet include the current source branch. Build the source checkout first. Add the full path to `dist/cli.js` in your Codex MCP settings.
 
 ```toml
 [mcp_servers.mastercam]
-command = 'npx.cmd'
-args = ['-y', 'mastercam-mcp@latest', 'serve']
+command = 'node'
+args = ['C:\path\to\mastercam-mcp\dist\cli.js', 'serve']
 enabled = true
 
 [mcp_servers.mastercam.env]
@@ -13,6 +13,8 @@ MASTERCAM_MCP_PROFILE = 'read'
 MASTERCAM_MCP_BACKEND = 'live'
 ```
 
-The read profile prevents public write tools from executing. Capability discovery remains authoritative: the current native adapters expose only Stage A environment/status capabilities until release-specific mappings pass licensed live acceptance.
+Replace the example path with your project folder. Use `mock` when no live Mastercam session is available.
 
-After installing the add in, start Mastercam and run `npx -y mastercam-mcp@latest doctor`, followed by `npx -y mastercam-mcp@latest acceptance --live`. A mock/fixture pass validates the MCP contract but is not evidence that Mastercam operations work live.
+The read profile blocks write tools. Live capability discovery remains authoritative. A passing fixture check does not prove that the native adapter works in Mastercam.
+
+After installation, run `node dist/cli.js doctor`, then `node dist/cli.js acceptance --live` on the licensed Windows workstation.
