@@ -22,8 +22,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          registry-url: https://registry.npmjs.org
           cache: pnpm
+      - name: Install npm trusted publishing support
+        run: npm install --global npm@11.19.1
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: |
@@ -122,9 +123,7 @@ jobs:
           MASTERCAM_MCP_BACKEND=mock npx mastercam-mcp doctor
           npx mastercam-mcp acceptance --mock
       - name: Publish package
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: pnpm publish --access public --no-git-checks --provenance
+        run: npm publish --access public --provenance
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
