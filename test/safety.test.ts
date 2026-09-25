@@ -1,9 +1,15 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
 import { ApprovalLedger, fingerprintOperation, documentRevision } from "../src/safety/approval.js";
 import { AuditLog, redact } from "../src/audit/audit-log.js";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+
+const testDirectory = mkdtempSync(join(tmpdir(), "mastercam-mcp-safety-"));
+let tempFileId = 0;
+const tempAuditPath = () => join(testDirectory, `audit-${tempFileId++}.jsonl`);
+test.after(() => rmSync(testDirectory, { recursive: true, force: true }));
 
 test("ApprovalLedger creates and validates approvals", () => {
   const ledger = new ApprovalLedger();
@@ -101,7 +107,7 @@ test("audit redaction never reveals deep or generically named secrets", () => {
 });
 
 test("AuditLog appends and queries entries", async () => {
-  const path = join(tmpdir(), `test-audit-${Date.now()}.jsonl`);
+  const path = tempAuditPath();
   const log = new AuditLog({ path, enabled: true });
   log.record({ requestId: "req-1", transactionId: "tx-1", tool: "test_tool", target: { operationId: 1 }, policy: {} });
   await log.flush();
@@ -110,7 +116,7 @@ test("AuditLog appends and queries entries", async () => {
 });
 
 test("recordCritical is persisted before it resolves", async () => {
-  const path = join(tmpdir(), `test-audit-critical-${Date.now()}.jsonl`);
+  const path = tempAuditPath();
   const log = new AuditLog({ path, enabled: true });
   await log.recordCritical({ requestId: "critical-1", tool: "apply_change", verified: false });
   const text = await import("node:fs/promises").then(m => m.readFile(path, "utf8"));
@@ -118,7 +124,7 @@ test("recordCritical is persisted before it resolves", async () => {
 });
 
 test("AuditLog verifies hash chain", async () => {
-  const path = join(tmpdir(), `test-audit-${Date.now()}.jsonl`);
+  const path = tempAuditPath();
   const log = new AuditLog({ path, enabled: true });
   log.record({ requestId: "req-1", tool: "tool1", target: {} });
   log.record({ requestId: "req-2", tool: "tool2", target: {} });
@@ -129,7 +135,7 @@ test("AuditLog verifies hash chain", async () => {
 });
 
 test("AuditLog resumes a valid chain across restart", async () => {
-  const path = join(tmpdir(), `test-audit-restart-${Date.now()}.jsonl`);
+  const path = tempAuditPath();
   const first = new AuditLog({ path, enabled: true });
   first.record({ requestId: "r1", tool: "first" });
   await first.flush();
@@ -146,7 +152,7 @@ test("AuditLog resumes a valid chain across restart", async () => {
 });
 
 test("AuditLog rotation preserves an anchored hash chain", async () => {
-  const path = join(tmpdir(), `test-audit-rotate-${Date.now()}.jsonl`);
+  const path = tempAuditPath();
   const log = new AuditLog({ path, enabled: true, maxFileBytes: 350, maxRotatedFiles: 2 });
   for (let i = 0; i < 8; i++) {
     log.record({ requestId: `rot-${i}`, tool: "rotation_test", target: { i, padding: "x".repeat(80) } });
@@ -167,7 +173,7 @@ test("AuditLog rotation preserves an anchored hash chain", async () => {
 });
 
 test("AuditLog startup rejects tampering in a retained rotated segment", async () => {
-  const path = join(tmpdir(), `test-audit-tamper-${Date.now()}.jsonl`);
+  const path = tempAuditPath();
   const options = { path, enabled: true, maxFileBytes: 350, maxRotatedFiles: 2 };
   const log = new AuditLog(options);
   for (let i = 0; i < 10; i++) {

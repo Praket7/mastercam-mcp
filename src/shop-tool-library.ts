@@ -1,4 +1,4 @@
-import { readFileSync, statSync } from "node:fs";
+import { constants, fstatSync, openSync, readFileSync, closeSync } from "node:fs";
 import { basename } from "node:path";
 import * as z from "zod/v4";
 import { JobToolSchema } from "./job-intelligence.js";
@@ -37,14 +37,19 @@ export type ShopToolLibrary = {
 /** Load an operator-configured, exported shop inventory; no tool data is guessed. */
 export function loadShopToolLibrary(path = process.env.MASTERCAM_MCP_TOOL_LIBRARY): ShopToolLibrary | undefined {
   if (!path?.trim()) return undefined;
-  const info = statSync(path);
-  if (!info.isFile()) throw new Error("Configured tool library must be a regular file");
-  if (info.size > 10_000_000) throw new Error("Configured tool library exceeds the 10 MB limit");
+  const descriptor = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
   let json: unknown;
   try {
-    json = JSON.parse(readFileSync(path, "utf8"));
-  } catch (error) {
-    throw new Error(`Configured tool library is not valid JSON: ${error instanceof Error ? error.message : String(error)}`);
+    const info = fstatSync(descriptor);
+    if (!info.isFile()) throw new Error("Configured tool library must be a regular file");
+    if (info.size > 10_000_000) throw new Error("Configured tool library exceeds the 10 MB limit");
+    try {
+      json = JSON.parse(readFileSync(descriptor, "utf8"));
+    } catch (error) {
+      throw new Error(`Configured tool library is not valid JSON: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  } finally {
+    closeSync(descriptor);
   }
   if (json && typeof json === "object" && "schemaVersion" in json) {
     const isoCatalog = IsoCatalogSchema.parse(json);
