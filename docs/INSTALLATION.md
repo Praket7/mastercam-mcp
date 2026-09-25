@@ -1,58 +1,82 @@
-# Installation
+# Install Mastercam MCP
 
-Install Node.js 22 or newer and the .NET SDK supported by the installed Mastercam release.
+## Pick a setup
 
-For end users, run `npx -y mastercam-mcp@latest install -ConfigureClients`. This detects Mastercam, builds against its local NET Hook assembly, requests Windows administrator approval, copies both the add in DLL and its function table into `chooks`, and adds read-profile entries to Codex and Claude Desktop.
+| Setup | What it needs | What it can do |
+| --- | --- | --- |
+| Portable | Node.js 22 or newer | Use sample data or review files you provide |
+| Mastercam Stage A | Windows, licensed Mastercam, matching local NET Hook files | Report the installed Mastercam environment |
+| Mastercam 2027 Stage B | Stage A items plus a supervised acceptance run | Read a limited operation snapshot |
 
-Build the external server with `pnpm install` followed by `pnpm run build` when working from source.
+The npm registry currently serves version 0.2.0 as `latest`. Version 0.3.0 is not on npm. Use a source checkout to try this branch. Do not copy an old `npx ...@latest` command from an earlier guide.
 
-Build the release-specific add in from `native/MastercamMcp.Addin.Legacy` or `native/MastercamMcp.Addin.2027` after setting `MASTERCAM_ROOT` to the user-supplied Mastercam installation. The project deliberately references the local proprietary NET Hook assembly and never copies it into the repository or npm package.
+## Portable setup
 
-Install the resulting add in in the Mastercam `chooks` directory for the matching release. The installer copies the project-owned dependency closure, including `MastercamMcp.ReadModel.dll`, while excluding Mastercam SDK/runtime assemblies. Keep `MASTERCAM_MCP_PROFILE=read` during initial validation.
-
-Legacy releases remain Stage A. Mastercam 2027 includes an opt-in Stage-B read candidate. To evaluate it, set `MASTERCAM_MCP_ENABLE_STAGE_B_READS=1` **before launching Mastercam** so the in-process add-in inherits the setting. Do not enable this automatically in client configuration before acceptance.
-
-After installation run:
-
-```text
-npx -y mastercam-mcp@latest doctor
-npx -y mastercam-mcp@latest acceptance --live
-```
-
-For Mastercam 2027 Stage-B evaluation from PowerShell:
-
-```powershell
-$env:MASTERCAM_MCP_ENABLE_STAGE_B_READS = "1"
-# Launch Mastercam 2027 from this same shell/session, load the add-in, then run:
-npx -y mastercam-mcp@latest acceptance --live
-```
-
-A successful `stageBContextReady` proves the operation/tool snapshot path on that workstation. Full `liveReadReady` still requires the separate active-part, stock, and WCS acceptance gates.
-
-Do **not** enable the write profile merely because installation or fixture tests passed. Write enablement belongs only on a disposable test part after release-specific live mappings exist and the acceptance report shows the required live reads are ready. Then evaluate writes explicitly with `acceptance --live --allow-writes`. A live write profile should remain disabled unless that controlled acceptance path reports write readiness.
-
-The installer supports `-ListInstallations` to show detected Mastercam versions and `-Uninstall -MastercamRoot "..."` to remove only the MCP add in files from a selected installation.
-
-## macOS and Linux
-
-The portable server works on macOS and Linux with Node.js 22 or newer. These systems start in fixture mode when no backend is selected. This allows setup sheet generation, tool database comparison, NC comparison, machine validation, MCP stdio, local HTTP, and automated contract tests without Mastercam.
+Install Node.js 22 or newer. Open a terminal in the project folder. Run:
 
 ```text
 pnpm install
 pnpm run build
 pnpm test
-npx -y mastercam-mcp@latest doctor
-npx -y mastercam-mcp@latest serve
 ```
 
-Set `MASTERCAM_MCP_BACKEND=mock` when a client configuration needs an explicit value. Use `MASTERCAM_MCP_FIXTURE` to load a portable JSON fixture. Live NET Hook communication is available only on Windows because the add in runs inside Mastercam.
+To start the fixture server on Windows PowerShell, run:
 
-## Cross platform path behavior
+```powershell
+$env:MASTERCAM_MCP_BACKEND = "mock"
+node dist/cli.js serve
+```
 
-The portable layer uses the current working folder and environment values rather than a fixed home folder. Windows live installation uses the selected Mastercam root and its `chooks` folder. Mastercam administrator guidance places shared data under the public documents folder. macOS and Linux do not attempt to create Windows folders.
+On macOS or Linux, run:
 
-## Protocol compatibility
+```sh
+MASTERCAM_MCP_BACKEND=mock node dist/cli.js serve
+```
 
-The server explicitly supports MCP revision `2026-07-28` through the SDK v2 serving entry points. Legacy 2025-era clients remain supported as a compatibility path, but HTTP legacy serving is stateless and should not be used as evidence that a client negotiated the modern revision. The repository smoke tests pin `2026-07-28` to verify the current protocol path.
+The fixture uses sample data. It never connects to a machine.
 
-Mastercam release-specific add-ins still require the matching locally installed proprietary NET Hook assemblies. Public CI validates the portable shared projects and protocol/native contract layers; a release-specific add-in is not considered live verified until it builds, loads, and passes acceptance testing in a licensed Mastercam installation.
+## Windows Mastercam setup
+
+Live access needs a licensed Mastercam installation, the matching local NET Hook files, and the .NET SDK supported by that release. Mastercam must be running before the MCP server connects.
+
+Run the installer from PowerShell. Administrator approval is needed to copy files into the protected Mastercam folder.
+
+```powershell
+.\install.ps1 -ListInstallations
+.\install.ps1 -MastercamRoot "C:\Program Files\Mastercam 2026" -ConfigureClients
+```
+
+The add in must match the installed Mastercam release. The package does not include Mastercam's private SDK files. The installer uses the files already installed on your workstation.
+
+Start the server in read only mode. Check the connection before trying any write workflow.
+
+```powershell
+$env:MASTERCAM_MCP_PROFILE = "read"
+node dist/cli.js doctor
+node dist/cli.js acceptance --live
+```
+
+## Mastercam 2027 read candidate
+
+Stage B is off by default. Set its switch before starting Mastercam. The add in reads this value when the application starts.
+
+```powershell
+$env:MASTERCAM_MCP_ENABLE_STAGE_B_READS = "1"
+```
+
+Launch Mastercam from that PowerShell session. Load the add in. Then run `node dist/cli.js acceptance --live` in another terminal.
+
+`stageBContextReady` means the supported operation snapshot passed its checks. `liveReadReady` means all required read checks passed. Neither status proves machine simulation or write readiness.
+
+## Write protection
+
+The server starts with writes locked. A write profile alone does not unlock them. Both settings below are needed for the narrow preview and approval workflow.
+
+```powershell
+$env:MASTERCAM_MCP_PROFILE = "write"
+$env:MASTERCAM_MCP_HARD_READ_ONLY = "0"
+```
+
+The connected MCP client must show the proposed before and after values to an operator. It must support MCP approval input. If the client cannot collect a clear approval, the server refuses the change. The server checks the part again before applying it.
+
+Keep writes disabled until the matching Mastercam release passes live acceptance on a disposable test part. Posting, machine control, program transfer, and cycle start are not available.

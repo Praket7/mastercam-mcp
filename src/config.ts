@@ -1,9 +1,10 @@
 import * as z from "zod/v4";
 import type { Profile } from "./contracts.js";
+import { parseHardReadOnly } from "./safety/policy.js";
 
 export const ConfigSchema = z.object({
   profile: z.enum(["read", "write", "all"]).default("read"),
-  hardReadOnly: z.boolean().default(false),
+  hardReadOnly: z.boolean().default(true),
   backend: z.enum(["auto", "mock", "live", "pipe"]).default("auto"),
   pipe: z.string().default("\\\\.\\pipe\\mastercam-mcp-default"),
   audit: z.object({
@@ -58,7 +59,7 @@ function parseStringArray(value: string | undefined): string[] {
 export function loadConfig(): Config {
   const raw = {
     profile: process.env.MASTERCAM_MCP_PROFILE ?? "read",
-    hardReadOnly: parseBoolean(process.env.MASTERCAM_MCP_HARD_READ_ONLY, false),
+    hardReadOnly: parseHardReadOnly(process.env.MASTERCAM_MCP_HARD_READ_ONLY),
     backend: process.env.MASTERCAM_MCP_BACKEND ?? "auto",
     pipe: process.env.MASTERCAM_MCP_PIPE ?? "\\\\.\\pipe\\mastercam-mcp-default",
     audit: {
@@ -102,7 +103,7 @@ export function validateProfileConfig(profile: string, hardReadOnly: string): { 
   if (!validProfiles.includes(profile as (typeof validProfiles)[number])) {
     throw new Error(`Invalid profile: ${profile}. Valid profiles: ${validProfiles.join(", ")}`);
   }
-  return { profile: profile as Profile, hardReadOnly: hardReadOnly !== "0" };
+  return { profile: profile as Profile, hardReadOnly: parseHardReadOnly(hardReadOnly) };
 }
 
 export const config = loadConfig();

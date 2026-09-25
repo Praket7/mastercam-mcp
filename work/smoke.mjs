@@ -8,8 +8,17 @@ const timeout = (ms, label) => new Promise((_, reject) => {
 
 const client = new Client(
   { name: 'smoke', version: '1.0.0' },
-  { versionNegotiation: { mode: { pin: '2026-07-28' } } }
+  {
+    versionNegotiation: { mode: { pin: '2026-07-28' } },
+    capabilities: { elicitation: { form: {} } }
+  }
 );
+client.setRequestHandler('elicitation/create', async request => {
+  if (!request.params.message.includes('Before:') || !request.params.message.includes('After:')) {
+    throw new Error('operator approval prompt did not show the exact preview');
+  }
+  return { action: 'accept', content: { confirm: true } };
+});
 const sdkTransport = new StdioClientTransport({
   command: process.execPath,
   args: ['node_modules/tsx/dist/cli.mjs', 'src/server.ts'],

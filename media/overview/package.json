@@ -1,0 +1,15 @@
+{
+  "name": "mastercam-mcp-overview-video",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "render": "remotion render src/index.jsx MastercamOverview out/mastercam_overview.mp4",
+    "still": "remotion still src/index.jsx MastercamOverview out/mastercam_overview.png --frame=120"
+  },
+  "dependencies": {
+    "@remotion/cli": "4.0.527",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "remotion": "4.0.527"
+  }
+}

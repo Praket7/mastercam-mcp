@@ -1,5 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { TOOL_DEFINITIONS } from "../src/mcp/registry.js";
@@ -16,7 +19,11 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
   ]);
 }
 
-async function withStdioClient(run: (client: Client) => Promise<void>) {
+async function withStdioClient(
+  run: (client: Client) => Promise<void>,
+  extraEnv: Record<string, string> = {},
+  operatorApproval = false
+) {
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [tsx, "src/server.ts"],
@@ -25,13 +32,24 @@ async function withStdioClient(run: (client: Client) => Promise<void>) {
       MASTERCAM_MCP_BACKEND: "mock",
       MASTERCAM_MCP_AUDIT: "0",
       MASTERCAM_MCP_PROFILE: "all",
-      MASTERCAM_MCP_HARD_READ_ONLY: "0"
+      MASTERCAM_MCP_HARD_READ_ONLY: "0",
+      ...extraEnv
     }
   });
   const client = new Client(
     { name: "protocol-test", version: "1.0" },
-    { versionNegotiation: { mode: { pin: "2026-07-28" } } }
+    {
+      versionNegotiation: { mode: { pin: "2026-07-28" } },
+      ...(operatorApproval ? { capabilities: { elicitation: { form: {} } } } : {})
+    }
   );
+  if (operatorApproval) {
+    client.setRequestHandler("elicitation/create", async request => {
+      assert.match(request.params.message, /Before:.*After:/s);
+      assert.match(request.params.message, /Document revision/);
+      return { action: "accept", content: { confirm: true } };
+    });
+  }
 
   await withTimeout(client.connect(transport), 15_000, "stdio MCP connect");
   assert.equal(client.getProtocolEra(), "modern");
@@ -42,6 +60,41 @@ async function withStdioClient(run: (client: Client) => Promise<void>) {
     await withTimeout(transport.close(), 5_000, "stdio transport close").catch(() => undefined);
   }
 }
+
+test("OD planning uses configured ISO catalog records when tool inputs are omitted", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "mastercam-od-catalog-"));
+  const path = join(directory, "catalog.json");
+  writeFileSync(path, JSON.stringify({
+    schemaVersion: "1.1",
+    publisher: "Test Toolmaker",
+    tools: [
+      { toolNbr: "ROUGH-1", name: "OD rough insert", toolTypes: ["turning rough"], specs: {} },
+      { toolNbr: "FINISH-1", name: "OD finish insert", toolTypes: ["turning finish"], specs: {} }
+    ]
+  }));
+  try {
+    await withStdioClient(async client => {
+      const result = await client.callTool({
+        name: "plan_od_rough_finish",
+        arguments: {
+          intent: "Rough and finish this OD profile",
+          units: "mm",
+          material: "4140",
+          stockDiameter: 30,
+          profile: [{ z: 0, diameter: 20 }, { z: -40, diameter: 24 }],
+          finishAllowanceRadial: 0.2,
+          roughDepthRadial: 1
+        }
+      });
+      assert.notEqual(result.isError, true, result.content[0] && "text" in result.content[0] ? result.content[0].text : "");
+      const data = (result.structuredContent as { data?: { toolSelection?: { rough?: { toolId?: string }; finish?: { toolId?: string } } } }).data;
+      assert.equal(data?.toolSelection?.rough?.toolId, "ROUGH-1");
+      assert.equal(data?.toolSelection?.finish?.toolId, "FINISH-1");
+    }, { MASTERCAM_MCP_TOOL_LIBRARY: path });
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
 
 test("every registered tool has a strict input schema and annotations (ARCH-01/03)", () => {
   assert.ok(TOOL_DEFINITIONS.length >= 40);
@@ -130,6 +183,44 @@ test("preview requires quantity units; bare numbers are rejected (SAFE-01)", asy
       emptyChanges.content[0] && "text" in emptyChanges.content[0] ? emptyChanges.content[0].text : "";
     assert.match(emptyText, /feedRate|spindleSpeed|invalid/i);
   });
+});
+
+test("a preview token alone cannot apply a change without the MCP client approval round trip", async () => {
+  await withStdioClient(async client => {
+    const before = await client.callTool({ name: "list_operations", arguments: {} });
+    const initial = (before.structuredContent as { data?: Array<Record<string, unknown>> }).data ?? [];
+    const operation = initial.find(item => item.id === 4);
+    assert.ok(operation);
+    const originalFeed = operation.feedRate;
+    const previewResult = await client.callTool({
+      name: "preview_operation_parameters",
+      arguments: { operationId: 4, changes: { feedRate: { value: 1234, unit: "mm/min" } } }
+    });
+    const token = (previewResult.structuredContent as { data?: { approvalToken?: string } }).data?.approvalToken;
+    assert.ok(token);
+
+    await assert.rejects(
+      () => client.callTool({ name: "apply_operation_parameter_preview", arguments: { approvalToken: token } }),
+      /elicitation|input|required|capability/i
+    );
+    const after = await client.callTool({ name: "list_operations", arguments: {} });
+    const current = ((after.structuredContent as { data?: Array<Record<string, unknown>> }).data ?? []).find(item => item.id === 4);
+    assert.deepEqual(current?.feedRate, originalFeed);
+  });
+});
+
+test("the MCP operator approval round trip applies the exact signed preview", async () => {
+  await withStdioClient(async client => {
+    const preview = await client.callTool({
+      name: "preview_operation_parameters",
+      arguments: { operationId: 4, changes: { feedRate: { value: 1234, unit: "mm/min" } } }
+    });
+    const token = (preview.structuredContent as { data?: { approvalToken?: string } }).data?.approvalToken;
+    assert.ok(token);
+    const applied = await client.callTool({ name: "apply_operation_parameter_preview", arguments: { approvalToken: token } });
+    assert.notEqual(applied.isError, true);
+    assert.equal((applied.structuredContent as { data?: { applied?: boolean } }).data?.applied, true);
+  }, {}, true);
 });
 
 test("capability registry never claims live verification (P0-01 contract)", async () => {

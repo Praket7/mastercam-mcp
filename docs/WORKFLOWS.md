@@ -27,9 +27,10 @@ The public parameter mutation path is deliberately narrow:
 1. Inspect the exact operation and current values.
 2. Call `preview_operation_parameters` with an explicit `operationId` and unit-bearing feed and/or spindle quantity.
 3. Review the returned before/after values, risks, document revision, operation fingerprint, expiration, and server-minted `approvalToken`.
-4. Call `apply_operation_parameter_preview` with that `approvalToken`. The server rejects stale, expired, reused, or mismatched approvals.
-5. Call `verify_change` to reread the operation and compare the expected unit-bearing values.
-6. Keep the returned transaction/rollback receipt. If the change must be reversed and the state has not diverged, call `rollback_change` with the server-issued transaction identifier.
+4. Call `apply_operation_parameter_preview` with that `approvalToken`. The server asks the MCP client to present the exact proposed change to its operator. The operator must approve through the client's elicitation flow. A token by itself is not approval. Clients without that flow fail closed.
+5. The server rejects stale, expired, reused, or mismatched approvals when it checks the current document.
+6. Call `verify_change` to reread the operation and compare the expected unit-bearing values.
+7. Keep the returned transaction/rollback receipt. If the change must be reversed and the state has not diverged, call `rollback_change` with the server-issued transaction identifier.
 
 There is no direct `set_feed_speed` tool. `change_tool` and `update_stock` are also withheld until they have equivalent preview/approval workflows and verified backends.
 
@@ -42,7 +43,7 @@ There is no direct `set_feed_speed` tool. `change_tool` and `update_stock` are a
 Run the live acceptance harness only on a licensed Windows Mastercam workstation with the matching release adapter loaded:
 
 ```text
-npx -y mastercam-mcp@latest acceptance --live
+node dist/cli.js acceptance --live
 ```
 
 The command exits nonzero until the required live inspection mappings pass. Write readiness is evaluated separately on a disposable test part with `--allow-writes`; fixture success never promotes a live capability.

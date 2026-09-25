@@ -25,7 +25,7 @@ test("parses modal G0/G1 moves, converts units, and flags overtravel and risky r
   assert.equal(result.cycleTime.unknownMoveCount, 1, "G1 engagement remains unknown instead of being guessed");
 });
 
-test("flags arcs, canned cycles, and work-offset travel uncertainty instead of declaring a clean path", () => {
+test("expands common arcs and still flags canned cycles and work-offset uncertainty", () => {
   const result = analyzeNcProgram({
     program: "G21 G90 G54\nG0 X10 Y10 Z100\nG2 X20 Y10 I5 J0\nG81 X20 Y10 Z-10 R2 F100",
     units: "mm",
@@ -36,9 +36,75 @@ test("flags arcs, canned cycles, and work-offset travel uncertainty instead of d
   });
   assert.equal(result.machineTravelChecked, false);
   assert.equal(result.status, "REVIEW");
-  assert.ok(result.findings.some(item => item.code === "arc_motion"));
+  assert.ok(result.summary.parsedLinearSegments > 10, "G2 arc is chorded for conservative swept-path checks");
   assert.ok(result.findings.some(item => item.code === "canned_cycle"));
-  assert.ok(result.findings.some(item => item.code === "work_coordinates"));
+  assert.ok(result.findings.some(item => item.code === "work_offset_missing"));
+});
+
+test("keeps modal arc direction and uses true arc length for cycle-time estimates", () => {
+  const result = analyzeNcProgram({
+    program: "G21 G90 G17\nG1 X10 Y0 F100\nG3 X0 Y10 I-10 J0\nX-10 Y0 I0 J-10",
+    units: "mm",
+    coordinateFrame: "machine",
+    initialPosition: { x: 10, y: 0, z: 20 },
+    machine
+  });
+  assert.ok(result.summary.parsedLinearSegments > 10);
+  assert.equal(result.cycleTime.unknownMoveCount, 3, "cutting engagement remains unknown for each move");
+  assert.ok(Math.abs(result.cycleTime.unknownEngagementSeconds - Math.PI * 10 / 100 * 60) < 1e-9);
+  assert.ok(!result.findings.some(item => item.code === "arc_motion_unknown"));
+  assert.ok(!result.findings.some(item => item.code === "arc_modal_direction_unknown"));
+});
+
+test("uses XZ/I-K ordering for G18 and fails closed on unexpanded arc modes", () => {
+  const g18 = analyzeNcProgram({
+    program: "G21 G90 G18\nG1 X12 Z4 F100\nG3 X2 Z14 I-10 K0",
+    units: "mm",
+    coordinateFrame: "machine",
+    initialPosition: { x: 0, y: 0, z: 4 },
+    machine
+  });
+  assert.equal(g18.summary.parsedPathSegments, 9);
+  assert.ok(!g18.findings.some(item => item.code === "arc_motion_unknown"));
+
+  const unsupported = analyzeNcProgram({
+    program: "G21 G90 G17\nG1 X10 F100\nG91.1 G2 X0 Y10 I-10 P2 F100",
+    units: "mm",
+    coordinateFrame: "machine",
+    initialPosition: { x: 10, y: 0, z: 20 },
+    machine
+  });
+  assert.ok(unsupported.findings.some(item => item.code === "arc_turn_count_unknown"));
+  assert.ok(unsupported.summary.unknown > 0);
+
+  const partialAbsoluteCenter = analyzeNcProgram({
+    program: "G21 G90 G17 G90.1\nG1 X10 Y0 F100\nG3 X0 Y10 I0 F100",
+    units: "mm",
+    coordinateFrame: "machine",
+    initialPosition: { x: 10, y: 0, z: 20 },
+    machine
+  });
+  assert.ok(partialAbsoluteCenter.findings.some(item => item.code === "arc_motion_unknown"));
+});
+
+test("maps explicitly supplied work offsets to machine travel and fails closed for missing offsets", () => {
+  const input = {
+    program: "G54 G0 X10 Y10 Z50",
+    units: "mm" as const,
+    coordinateFrame: "work" as const,
+    initialPosition: { x: 0, y: 0, z: 50 },
+    machine: { ...machine, travel: { min: { x: 0, y: 0, z: 0 }, max: { x: 100, y: 200, z: 200 } } },
+    fixtures: [{ id: "local-only-fixture", bounds: { min: { x: 9, y: 9, z: 49 }, max: { x: 11, y: 11, z: 51 } } }]
+  };
+  const mapped = analyzeNcProgram({ ...input, workOffsets: { G54: { x: 100, y: 0, z: 0 } } });
+  assert.equal(mapped.machineTravelChecked, true);
+  assert.ok(mapped.risk?.findings.some(item => item.id === "machine_overtravel"));
+
+  const missing = analyzeNcProgram(input);
+  assert.equal(missing.machineTravelChecked, false);
+  assert.ok(missing.findings.some(item => item.code === "work_offset_missing"));
+  assert.ok(!missing.risk?.findings.some(item => item.id === "machine_overtravel"));
+  assert.ok(!missing.risk?.findings.some(item => item.id === "fixture_intersection"), "fixture checks are skipped in untransformed coordinates");
 });
 
 test("requires explicit motion mode and keeps G95 feed timing unknown", () => {

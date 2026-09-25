@@ -69,7 +69,7 @@ export const RecommendJobToolingSchema = z.object({
   material: z.string().min(1).max(128),
   units: z.enum(["mm", "inch"]).optional(),
   features: z.array(JobFeatureSchema).min(1).max(100),
-  tools: z.array(JobToolSchema).max(500).default([]),
+  tools: z.array(JobToolSchema).max(20000).default([]),
   machine: z.object({
     maxToolDiameter: Positive.optional(),
     maxRpm: Positive.optional(),
@@ -117,6 +117,7 @@ const MoveEventSchema = z.object({
   motion: z.enum(["rapid", "feed"]),
   start: Vector3Schema,
   end: Vector3Schema,
+  pathLength: Positive.optional(),
   feedRate: Positive.optional(),
   engaged: z.boolean().optional()
 }).strict();
@@ -167,7 +168,7 @@ export const GenerateOperationPacketSchema = z.object({
   stock: z.record(z.string(), z.unknown()).optional(),
   wcs: z.record(z.string(), z.unknown()).optional(),
   operations: z.array(OperationPacketOperationSchema).max(500).optional(),
-  tools: z.array(JobToolSchema).max(500).default([]),
+  tools: z.array(JobToolSchema).max(20000).default([]),
   verification: z.object({
     simulationPassed: z.boolean().optional(),
     collisionCheckPassed: z.boolean().optional(),
@@ -206,7 +207,7 @@ export const PlanOdRoughFinishSchema = z.object({
   material: z.string().min(1).max(128),
   stockDiameter: Positive,
   profile: z.array(OdPointSchema).min(2).max(1000),
-  tools: z.array(JobToolSchema).min(1).max(500),
+  tools: z.array(JobToolSchema).max(20000).default([]),
   machine: z.object({
     maxRpm: Positive.optional(),
     maxFeedRate: Positive.optional()
@@ -560,6 +561,7 @@ export function analyzeCycleTime(input: z.infer<typeof AnalyzeCycleTimeSchema>) 
   let dwellSeconds = 0;
   let toolChangeSeconds = 0;
   let unknownMoveCount = 0;
+  let unknownEngagementSeconds = 0;
   const opportunities: Array<{
     id: string;
     kind: string;
@@ -597,7 +599,7 @@ export function analyzeCycleTime(input: z.infer<typeof AnalyzeCycleTimeSchema>) 
       continue;
     }
 
-    const length = distance(event.start, event.end);
+    const length = event.pathLength ?? distance(event.start, event.end);
     const rate = event.motion === "rapid" ? input.machineRapidRate : event.feedRate;
     if (rate === undefined || rate <= 0) {
       unknownMoveCount += 1;
@@ -630,6 +632,7 @@ export function analyzeCycleTime(input: z.infer<typeof AnalyzeCycleTimeSchema>) 
       }
     } else {
       unknownMoveCount += 1;
+      unknownEngagementSeconds += seconds;
     }
   }
 
@@ -650,6 +653,7 @@ export function analyzeCycleTime(input: z.infer<typeof AnalyzeCycleTimeSchema>) 
     },
     nonCuttingShare: knownSeconds > 0 ? nonCuttingSeconds / knownSeconds : 0,
     unknownMoveCount,
+    unknownEngagementSeconds,
     opportunities: opportunities.slice(0, 100),
     upperBoundSecondsIfListedNonCuttingWereRemoved: opportunities.reduce((sum, item) => sum + item.seconds, 0),
     evidenceHash: sha256Of(input),

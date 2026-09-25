@@ -1,13 +1,19 @@
 # Distribution and client setup
 
-The supported end-user path is the npm package through `mastercam-mcp@latest`; the current repository package version is `0.3.0`. Users do not need a source checkout.
+## Current package status
+
+The GitHub source is version 0.3.0. The npm registry still reports version 0.2.0 as `latest`. It does not contain version 0.3.0. This source branch is open for review. Do not use an npm `latest` command to get the features in this branch.
+
+For a local source install, build the project with `pnpm install` and `pnpm run build`. Point your MCP client to `dist/cli.js` inside that checkout. Use the full path to the file.
 
 ## Codex
 
+Add an MCP entry that points to the source checkout on your computer.
+
 ```toml
 [mcp_servers.mastercam]
-command = 'npx.cmd'
-args = ['-y', 'mastercam-mcp@latest', 'serve']
+command = 'node'
+args = ['C:\path\to\mastercam-mcp\dist\cli.js', 'serve']
 enabled = true
 
 [mcp_servers.mastercam.env]
@@ -15,15 +21,17 @@ MASTERCAM_MCP_PROFILE = 'read'
 MASTERCAM_MCP_BACKEND = 'live'
 ```
 
+Replace the example path with the actual project folder. Use `mock` as the backend when working without a licensed Windows Mastercam session.
+
 ## Claude Desktop
 
-Add this entry inside the existing `mcpServers` object.
+Add this entry inside the existing `mcpServers` object. Replace the example path.
 
 ```json
 {
   "mastercam": {
-    "command": "npx.cmd",
-    "args": ["-y", "mastercam-mcp@latest", "serve"],
+    "command": "node",
+    "args": ["C:\\path\\to\\mastercam-mcp\\dist\\cli.js", "serve"],
     "env": {
       "MASTERCAM_MCP_PROFILE": "read",
       "MASTERCAM_MCP_BACKEND": "live"
@@ -32,18 +40,16 @@ Add this entry inside the existing `mcpServers` object.
 }
 ```
 
-The read profile prevents mutation tools from running. Live capability discovery remains authoritative: the current Stage-A native adapters expose only environment/status capabilities until release-specific Mastercam mappings pass licensed acceptance.
+The read profile blocks write tools. Capability discovery reports what the selected backend can actually do. A fixture result does not prove live Mastercam behavior.
 
-## Windows add in installation
+## ChatGPT or another remote client
 
-Run this once from PowerShell.
+Use the HTTP entry point only behind an authenticated private connection. Set a strong `MASTERCAM_MCP_HTTP_TOKEN`. Keep the listener on localhost unless a protected tunnel or reverse proxy is required. Remote access also needs allowed origins plus TLS at the trusted boundary. Never expose the Windows named pipe or Mastercam add in directly.
 
-```powershell
-npx -y mastercam-mcp@latest install -ConfigureClients
-```
+An MCP client must support the current protocol's operator input flow before it can approve a parameter change. If the client cannot present an approval request, changes fail closed.
 
-Windows shows its standard administrator confirmation because Mastercam is normally under Program Files. Accepting that prompt is the only elevation step. The installer keeps existing client entries and does not overwrite a server named `mastercam`.
+## Windows add in
 
-The package does not contain proprietary Mastercam assemblies. It compiles the add in against the user's local installation and copies only this project's add in DLL and function table into the selected local `chooks` folder.
+Build against the local Mastercam installation. Run `install.ps1` from PowerShell with administrator approval. The installer copies this project's files into the selected `chooks` folder. Mastercam's private SDK files remain on the licensed workstation.
 
-After installation, run `npx -y mastercam-mcp@latest doctor` and then `npx -y mastercam-mcp@latest acceptance --live`. A fixture/mock acceptance pass is useful for contract testing but is not evidence of live Mastercam readiness.
+After installation, run `node dist/cli.js doctor`, then run `node dist/cli.js acceptance --live` on that workstation. Mock acceptance checks the portable contract only. It does not establish live readiness.
