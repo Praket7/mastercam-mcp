@@ -151,6 +151,36 @@ test("unknown tool call fails with a typed MCP error (BUG-02 contract)", async (
   });
 });
 
+test("a selected stdio catalog limits discovery and rejects omitted tools", async () => {
+  const selected = ["mastercam_status", "mastercam_help", "discover_capabilities"];
+  await withStdioClient(async client => {
+    const { tools } = await client.listTools();
+    assert.deepEqual(tools.map(tool => tool.name), selected);
+    const result = await client.callTool({ name: "mastercam_status", arguments: {} });
+    assert.equal(result.structuredContent?.ok, true);
+
+    for (const name of ["mastercam_help", "discover_capabilities"]) {
+      const result = await client.callTool({ name, arguments: {} });
+      const data = result.structuredContent?.data as { tools: { name: string }[] };
+      assert.deepEqual(data.tools.map(tool => tool.name), selected);
+    }
+    await assert.rejects(
+      () => client.callTool({ name: "list_operations", arguments: {} }),
+      /not found|unknown|tool/i
+    );
+  }, { MASTERCAM_MCP_TOOLS: selected.join(",") });
+});
+
+test("an allowlisted mutation is still refused by hard read only", async () => {
+  await withStdioClient(async client => {
+    const result = await client.callTool({
+      name: "apply_operation_parameter_preview", arguments: { approvalToken: "not-an-approval" }
+    });
+    assert.equal(result.isError, true);
+    assert.equal((result.structuredContent?.error as { code: string }).code, "PROFILE_DENIED");
+  }, { MASTERCAM_MCP_TOOLS: "apply_operation_parameter_preview", MASTERCAM_MCP_HARD_READ_ONLY: "1" });
+});
+
 test("tool call returns structuredContent plus text content (ARCH-02)", async () => {
   await withStdioClient(async client => {
     const result = await client.callTool({ name: "mastercam_status", arguments: {} });
