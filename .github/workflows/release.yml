@@ -123,7 +123,17 @@ jobs:
           MASTERCAM_MCP_BACKEND=mock npx mastercam-mcp doctor
           npx mastercam-mcp acceptance --mock
       - name: Publish package
-        run: npm publish --access public --provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          package_name=$(node -p "require('./package.json').name")
+          package_version=$(node -p "require('./package.json').version")
+          published_version=$(npm view "${package_name}@${package_version}" version --json 2>/dev/null || true)
+          if [ "$published_version" = "\"${package_version}\"" ] || [ "$published_version" = "$package_version" ]; then
+            echo "$package_name@$package_version is already published; skipping duplicate publish."
+          else
+            npm publish --access public --provenance
+          fi
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
