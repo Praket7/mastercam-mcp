@@ -37,7 +37,7 @@ async function stopChild(child: ChildProcess): Promise<void> {
   child.unref();
 }
 
-test("streamable http serves 2026-07-28 and keeps stateless legacy fallback", async () => {
+async function checkHttp(toolAllowlist?: string): Promise<void> {
   const child = spawn(process.execPath, [tsx, "src/http.ts"], {
     env: {
       ...process.env,
@@ -45,7 +45,8 @@ test("streamable http serves 2026-07-28 and keeps stateless legacy fallback", as
       MASTERCAM_MCP_AUDIT: "0",
       MASTERCAM_MCP_PROFILE: "all",
       MASTERCAM_MCP_HARD_READ_ONLY: "0",
-      MASTERCAM_MCP_HTTP_PORT: String(PORT)
+      MASTERCAM_MCP_HTTP_PORT: String(PORT),
+      ...(toolAllowlist === undefined ? {} : { MASTERCAM_MCP_TOOLS: toolAllowlist })
     },
     stdio: ["ignore", "ignore", "pipe"]
   });
@@ -84,7 +85,15 @@ test("streamable http serves 2026-07-28 and keeps stateless legacy fallback", as
     assert.equal(client.getProtocolEra(), "modern");
 
     const tools = await withTimeout(client.listTools(), 10_000, "HTTP tools/list");
-    assert.ok(tools.tools.length >= 40, `expected full tool registry, got ${tools.tools.length}`);
+    if (toolAllowlist) {
+      assert.deepEqual(tools.tools.map(tool => tool.name), toolAllowlist.split(","));
+      await assert.rejects(
+        () => client!.callTool({ name: "list_operations", arguments: {} }),
+        /not found|unknown|tool/i
+      );
+    } else {
+      assert.ok(tools.tools.length >= 40, `expected full tool registry, got ${tools.tools.length}`);
+    }
     const status = await withTimeout(
       client.callTool({ name: "mastercam_status", arguments: {} }),
       10_000,
@@ -144,4 +153,8 @@ test("streamable http serves 2026-07-28 and keeps stateless legacy fallback", as
     }
     await stopChild(child);
   }
-});
+}
+
+test("streamable http serves 2026-07-28 and keeps stateless legacy fallback", () => checkHttp());
+test("streamable http advertises and enforces a selected tool catalog", () =>
+  checkHttp("mastercam_status,mastercam_help,discover_capabilities"));
