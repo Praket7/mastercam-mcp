@@ -85,6 +85,40 @@ export function loadShopToolLibrary(path = process.env.MASTERCAM_MCP_TOOL_LIBRAR
       })
     };
   }
+  if (json && typeof json === "object" && "schemaVersion" in json) {
+    const isoCatalog = IsoCatalogSchema.parse(json);
+    return {
+      schema: "mastercam-mcp/tool-library/v1",
+      units: "mm",
+      tools: isoCatalog.tools.map(tool => {
+        const dimension = (key: string): number | undefined => {
+          const value = tool.specs[key];
+          if (value && typeof value === "object" && !Array.isArray(value)) {
+            const record = value as Record<string, unknown>;
+            const number = typeof record.mm === "number" ? record.mm : record.in;
+            return typeof number === "number" && Number.isFinite(number) && number > 0 ? number : undefined;
+          }
+          return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
+        };
+        return JobToolSchema.parse({
+          id: tool.toolNbr,
+          name: tool.name,
+          type: tool.toolTypes.join(", ") || "cutting tool",
+          ...(dimension("DC") === undefined ? {} : { diameter: dimension("DC") }),
+          ...(dimension("APMX") === undefined ? {} : { fluteLength: dimension("APMX"), maxDepth: dimension("APMX") }),
+          ...(dimension("OAL") === undefined ? {} : { overallLength: dimension("OAL") }),
+          ...(tool.coatings.length === 0 ? {} : { coating: tool.coatings.join(", ") }),
+          materials: [],
+          operations: tool.toolTypes.map(type => /end mill/i.test(type) ? "milling" : type.toLowerCase()),
+          provenance: [{
+            source: `${isoCatalog.publisher} ISO 13399 catalog v${isoCatalog.schemaVersion}${isoCatalog.generated ? ` generated ${isoCatalog.generated}` : ""}`,
+            ...(tool.url === undefined ? {} : { reference: tool.url }),
+            verified: false
+          }]
+        });
+      })
+    };
+  }
   const parsed = ToolLibrarySchema.parse(json);
   return {
     ...parsed,
