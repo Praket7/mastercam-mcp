@@ -44,7 +44,8 @@ function isoDimensionMm(value: unknown): number | undefined {
     }
     return undefined;
   }
-  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
+  // A scalar has no declared length unit in the supported ISO envelope.
+  return undefined;
 }
 
 /** Load an operator-configured, exported shop inventory; no tool data is guessed. */
