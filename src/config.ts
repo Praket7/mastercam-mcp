@@ -5,6 +5,7 @@ import { parseHardReadOnly } from "./safety/policy.js";
 export const ConfigSchema = z.object({
   profile: z.enum(["read", "write", "all"]).default("read"),
   hardReadOnly: z.boolean().default(true),
+  toolAllowlist: z.array(z.string().trim().min(1)).optional(),
   backend: z.enum(["auto", "mock", "live", "pipe"]).default("auto"),
   pipe: z.string().default("\\\\.\\pipe\\mastercam-mcp-default"),
   audit: z.object({
@@ -60,6 +61,9 @@ export function loadConfig(): Config {
   const raw = {
     profile: process.env.MASTERCAM_MCP_PROFILE ?? "read",
     hardReadOnly: parseHardReadOnly(process.env.MASTERCAM_MCP_HARD_READ_ONLY),
+    toolAllowlist: process.env.MASTERCAM_MCP_TOOLS === undefined
+      ? undefined
+      : parseStringArray(process.env.MASTERCAM_MCP_TOOLS),
     backend: process.env.MASTERCAM_MCP_BACKEND ?? "auto",
     pipe: process.env.MASTERCAM_MCP_PIPE ?? "\\\\.\\pipe\\mastercam-mcp-default",
     audit: {

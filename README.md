@@ -85,6 +85,9 @@ These limits protect the meaning of the output. A useful review can flag concern
 
 ## Learn more
 
+[Local models](docs/LOCAL-MODELS.md) explains how to select a smaller tool catalog
+for a client connected to a local model, including an 8 GB hardware evaluation checklist.
+
 [Installation steps](docs/INSTALLATION.md) explain setup on Windows, macOS, Linux.
 
 [Shop workflows](docs/SHOP-FLOOR.md) explain setup notes, tool lists, NC comparisons, machine checks.

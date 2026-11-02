@@ -112,16 +112,28 @@ function approvalStateMatches(
  * advertises an unverified Mastercam operation mapping.
  */
 export function advertisedToolDefinitions(
-  backendKind: "mock" | "live"
+  backendKind: "mock" | "live",
+  toolAllowlist?: readonly string[]
 ): ToolDefinition[] {
-  if (backendKind === "mock") return TOOL_DEFINITIONS;
   const stageB = stageBReadsEnabled();
-  return TOOL_DEFINITIONS.filter(
+  const available = backendKind === "mock" ? TOOL_DEFINITIONS : TOOL_DEFINITIONS.filter(
     definition =>
       LIVE_NATIVE_STAGE_A_TOOL_NAMES.has(definition.name) ||
       (stageB && LIVE_NATIVE_STAGE_B_READ_TOOL_NAMES.has(definition.name)) ||
       SERVER_LOCAL_TOOL_NAMES.has(definition.name)
   );
+  if (toolAllowlist === undefined) return available;
+
+  // Selection only narrows the existing execution surface. A configured name
+  // cannot enable a forbidden tool or a native mapping the backend hides.
+  const registered = new Set(TOOL_DEFINITIONS.map(definition => definition.name));
+  for (const name of toolAllowlist) {
+    if (!registered.has(name)) {
+      throw new Error(`MASTERCAM_MCP_TOOLS contains an unknown or unregistered tool: ${name}`);
+    }
+  }
+  const selected = new Set(toolAllowlist);
+  return available.filter(definition => selected.has(definition.name));
 }
 
 function envelope(result: ToolResult, schema: z.ZodType = ToolEnvelopeSchema) {
@@ -159,10 +171,11 @@ function deadlineFor(category: ReturnType<typeof categoryOf>): number {
 export function createMcpServer(
   backend: Backend,
   profile: Profile = DEFAULT_PROFILE,
-  hardReadOnly = true
+  hardReadOnly = true,
+  toolAllowlist?: readonly string[]
 ) {
   const backendKind: "mock" | "live" = backend instanceof LiveBackend ? "live" : "mock";
-  const definitions = advertisedToolDefinitions(backendKind);
+  const definitions = advertisedToolDefinitions(backendKind, toolAllowlist);
   const server = new McpServer(
     { name: "mastercam-mcp", version: VERSION },
     {
