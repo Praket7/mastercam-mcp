@@ -90,12 +90,8 @@ try {
 
   const tools = await Promise.race([client.listTools(), timeout(10000, 'tools/list')]);
   const status = await Promise.race([
-    client.callTool({ name: 'mastercam_status', arguments: {} }),
+    client.callTool({ name: 'get_server_readiness', arguments: {} }),
     timeout(10000, 'status')
-  ]);
-  const capabilities = await Promise.race([
-    client.callTool({ name: 'mastercam_capabilities', arguments: {} }),
-    timeout(10000, 'capabilities')
   ]);
   await client.close().catch(() => undefined);
 
@@ -109,17 +105,15 @@ try {
     ready: true,
     protocolEra: client.getProtocolEra(),
     toolCount: tools.tools.length,
-    hasStatus: tools.tools.some(tool => tool.name === 'mastercam_status'),
+    hasStatus: tools.tools.some(tool => tool.name === 'get_server_readiness'),
     statusOk: status.structuredContent?.ok === true,
-    capabilitiesOk: capabilities.structuredContent?.ok === true,
     chunkedBodyLimitStatus: overflowStatus
   };
   console.log(JSON.stringify(result, null, 2));
   if (
     !result.hasStatus ||
     !result.statusOk ||
-    !result.capabilitiesOk ||
-    result.toolCount <= 30 ||
+    result.toolCount !== 24 ||
     result.chunkedBodyLimitStatus !== 413
   ) {
     process.exitCode = 1;

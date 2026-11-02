@@ -39,11 +39,11 @@ try {
 
   const tools = await Promise.race([client.listTools(), timeout(10000, 'tools/list')]);
   result.toolCount = tools.tools.length;
-  result.hasStatus = tools.tools.some(t => t.name === 'mastercam_status');
+  result.hasStatus = tools.tools.some(t => t.name === 'get_server_readiness');
   result.hasPreview = tools.tools.some(t => t.name === 'preview_operation_parameters');
 
   const status = await Promise.race([
-    client.callTool({ name: 'mastercam_status', arguments: {} }),
+    client.callTool({ name: 'get_server_readiness', arguments: {} }),
     timeout(10000, 'status')
   ]);
   result.status = status.structuredContent;

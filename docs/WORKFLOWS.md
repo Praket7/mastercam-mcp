@@ -16,9 +16,9 @@ The fixture marks geometry, kinematics, workholding, simulation, and collision i
 
 ## Inspection
 
-Use `discover_capabilities` first. Call `mastercam_doctor`, then inspect the active part and the capabilities actually advertised by the connected backend. In fixture mode, useful reads include `get_active_part`, `list_operations`, `get_machine_context`, `get_operation_risks`, and `find_operations` before passing an exact operation ID to another tool.
+Start with `get_server_readiness` for prerequisites, connection, compatibility, and write-protection state. Use `get_job_context` to gather the part, geometry, machine, stock, WCS, post, operations, or tools you need in one call. Each section reports whether the active adapter supplied it. Use `find_operations` to locate a candidate and pass its exact ID to `get_operation` before an operation-specific action. Set `MASTERCAM_MCP_TOOLSET=full` if you need specialist reads such as `get_operation_risks`.
 
-On a live Stage-A adapter, only `mastercam_status` and `mastercam_capabilities` are currently mapped. Other live inspection calls remain unavailable until release-specific SDK mappings pass licensed acceptance.
+The readiness report combines the native connection and capability checks. Live operation context remains limited by the installed release adapter. Stage-B is opt-in, and its operation snapshot remains an IMPLEMENTED candidate until licensed acceptance passes.
 
 ## Safe parameter editing
 

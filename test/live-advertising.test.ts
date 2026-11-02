@@ -6,8 +6,9 @@ import {
   LIVE_NATIVE_STAGE_B_READ_TOOL_NAMES,
   SERVER_LOCAL_TOOL_NAMES
 } from "../src/execution-surface.js";
+import { TOOL_DEFINITIONS } from "../src/mcp/registry.js";
 
-test("Stage-A native surface remains exactly the verified environment tools", () => {
+test("Stage-A native bridge calls remain exactly the environment checks", () => {
   assert.deepEqual(
     [...LIVE_NATIVE_STAGE_A_TOOL_NAMES].sort(),
     ["mastercam_capabilities", "mastercam_status"]
@@ -15,17 +16,17 @@ test("Stage-A native surface remains exactly the verified environment tools", ()
 });
 
 test("live MCP discovery contains only Stage-A native tools plus server-local utilities", () => {
-  const advertised = new Set(
-    advertisedToolDefinitions("live").map(definition => definition.name)
-  );
-  const expected = new Set([
-    ...LIVE_NATIVE_STAGE_A_TOOL_NAMES,
-    ...SERVER_LOCAL_TOOL_NAMES
-  ]);
+  const advertised = new Set(advertisedToolDefinitions("live", undefined, "full").map(definition => definition.name));
+  const registered = new Set(TOOL_DEFINITIONS.map(definition => definition.name));
+  const expected = new Set([...SERVER_LOCAL_TOOL_NAMES, ...LIVE_NATIVE_STAGE_A_TOOL_NAMES].filter(name => registered.has(name)));
   assert.deepEqual([...advertised].sort(), [...expected].sort());
+  assert.equal(advertised.has("get_server_readiness"), true);
+  assert.equal(advertised.has("get_job_context"), true);
 
   for (const unavailableNativeTool of [
     "get_active_part",
+    "get_programming_context",
+    "mastercam_status",
     "list_operations",
     "preview_operation_parameters",
     "apply_operation_parameter_preview",
@@ -54,16 +55,19 @@ test("Stage-B native reads are hidden by default and opt-in explicitly", () => {
   const previous = process.env.MASTERCAM_MCP_ENABLE_STAGE_B_READS;
   try {
     delete process.env.MASTERCAM_MCP_ENABLE_STAGE_B_READS;
-    const defaultNames = new Set(advertisedToolDefinitions("live").map(definition => definition.name));
-    for (const name of LIVE_NATIVE_STAGE_B_READ_TOOL_NAMES) {
+    const registered = new Set(TOOL_DEFINITIONS.map(definition => definition.name));
+    const publicStageB = [...LIVE_NATIVE_STAGE_B_READ_TOOL_NAMES].filter(name => registered.has(name));
+    const defaultNames = new Set(advertisedToolDefinitions("live", undefined, "full").map(definition => definition.name));
+    for (const name of publicStageB) {
       assert.equal(defaultNames.has(name), false, `${name} must remain hidden without explicit Stage-B opt-in`);
     }
 
     process.env.MASTERCAM_MCP_ENABLE_STAGE_B_READS = "1";
-    const enabledNames = new Set(advertisedToolDefinitions("live").map(definition => definition.name));
-    for (const name of LIVE_NATIVE_STAGE_B_READ_TOOL_NAMES) {
+    const enabledNames = new Set(advertisedToolDefinitions("live", undefined, "full").map(definition => definition.name));
+    for (const name of publicStageB) {
       assert.equal(enabledNames.has(name), true, `${name} must be advertised after explicit Stage-B opt-in`);
     }
+    assert.equal(enabledNames.has("get_programming_context"), false, "the raw overlapping context call stays internal");
   } finally {
     if (previous === undefined) delete process.env.MASTERCAM_MCP_ENABLE_STAGE_B_READS;
     else process.env.MASTERCAM_MCP_ENABLE_STAGE_B_READS = previous;

@@ -1,10 +1,10 @@
 import { Client } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 
-const selectedTools = ['mastercam_help', 'discover_capabilities', 'analyze_nc_program', 'calculate_thread_tap'];
+const selectedTools = ['get_server_readiness', 'get_job_context', 'analyze_nc_program', 'calculate_thread_tap'];
 const measurements = [];
 
-for (const selection of [undefined, selectedTools.join(',')]) {
+for (const catalog of ['compact', 'full', 'selected']) {
   const env = {
     ...process.env,
     MASTERCAM_MCP_BACKEND: 'mock',
@@ -13,7 +13,8 @@ for (const selection of [undefined, selectedTools.join(',')]) {
     MASTERCAM_MCP_HARD_READ_ONLY: '1'
   };
   delete env.MASTERCAM_MCP_TOOLS;
-  if (selection !== undefined) env.MASTERCAM_MCP_TOOLS = selection;
+  env.MASTERCAM_MCP_TOOLSET = catalog === 'full' ? 'full' : 'compact';
+  if (catalog === 'selected') env.MASTERCAM_MCP_TOOLS = selectedTools.join(',');
 
   const transport = new StdioClientTransport({
     command: process.execPath, args: ['dist/server.js'], env
@@ -25,11 +26,11 @@ for (const selection of [undefined, selectedTools.join(',')]) {
   try {
     await client.connect(transport);
     const { tools } = await client.listTools();
-    if (selection !== undefined && JSON.stringify(tools.map(tool => tool.name)) !== JSON.stringify(selectedTools)) {
+    if (catalog === 'selected' && JSON.stringify(tools.map(tool => tool.name)) !== JSON.stringify(selectedTools)) {
       throw new Error('Selected catalog does not match the requested tool names');
     }
     measurements.push({
-      catalog: selection === undefined ? 'full' : 'selected',
+      catalog,
       toolCount: tools.length,
       serializedToolBytes: Buffer.byteLength(JSON.stringify(tools), 'utf8')
     });

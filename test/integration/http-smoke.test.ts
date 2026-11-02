@@ -92,12 +92,12 @@ async function checkHttp(toolAllowlist?: string): Promise<void> {
         /not found|unknown|tool/i
       );
     } else {
-      assert.ok(tools.tools.length >= 40, `expected full tool registry, got ${tools.tools.length}`);
+      assert.equal(tools.tools.length, 24, `expected compact tool registry, got ${tools.tools.length}`);
     }
     const status = await withTimeout(
-      client.callTool({ name: "mastercam_status", arguments: {} }),
+      client.callTool({ name: "get_server_readiness", arguments: {} }),
       10_000,
-      "HTTP mastercam_status"
+      "HTTP get_server_readiness"
     );
     assert.equal((status.structuredContent as { ok?: boolean } | undefined)?.ok, true);
 
@@ -157,4 +157,4 @@ async function checkHttp(toolAllowlist?: string): Promise<void> {
 
 test("streamable http serves 2026-07-28 and keeps stateless legacy fallback", () => checkHttp());
 test("streamable http advertises and enforces a selected tool catalog", () =>
-  checkHttp("mastercam_status,mastercam_help,discover_capabilities"));
+  checkHttp("get_server_readiness,get_job_context"));

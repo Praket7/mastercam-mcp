@@ -127,7 +127,7 @@ The manufacturing-intelligence tools remain server-local, but Mastercam 2027 now
 
 With `MASTERCAM_MCP_ENABLE_STAGE_B_READS=1`, the native adapter runtime-probes the public `Mastercam.Support.SearchManager.GetOperations()` contract and builds one bounded, revisioned snapshot. The following live-read candidates are derived from that snapshot:
 
-- `get_programming_context`
+- `get_job_context`
 - `list_operations`
 - `get_operation`
 - `get_operation_parameters`

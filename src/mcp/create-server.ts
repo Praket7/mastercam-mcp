@@ -1,7 +1,7 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { createRequestStateCodec, inputRequired, inputResponse, McpServer } from "@modelcontextprotocol/server";
 import type * as z from "zod/v4";
-import { allowed, DEFAULT_PROFILE, categoryOf, SUPPORTED_PROTOCOL_REVISIONS, FORBIDDEN_TOOLS } from "../contracts.js";
+import { allowed, DEFAULT_PROFILE, categoryOf } from "../contracts.js";
 import type { Profile } from "../contracts.js";
 import type { Backend, ToolResult } from "../backend.js";
 import { LiveBackend } from "../live-backend.js";
@@ -30,6 +30,7 @@ import {
   planOdRoughFinish,
   recommendJobTooling,
   AnalyzeCycleTimeSchema,
+  CycleTimeToolSchema,
   AnalyzeToolpathRiskSchema,
   CalculateThreadTapSchema,
   GenerateOperationPacketSchema,
@@ -42,6 +43,7 @@ import type { ToolDefinition } from "./registry.js";
 import { mastercamError } from "../errors.js";
 import { loadShopToolLibrary, mergeActiveJobTools } from "../shop-tool-library.js";
 import { analyzeNcProgram, AnalyzeNcProgramSchema } from "../nc-program.js";
+import { COMPACT_TOOL_NAMES } from "../tool-manifest.js";
 
 const READ_DEADLINE_MS = 30_000;
 const WRITE_DEADLINE_MS = 90_000;
@@ -105,15 +107,12 @@ function approvalStateMatches(
     JSON.stringify(state.after) === JSON.stringify(preview.after));
 }
 
-/**
- * Portable/mock mode exposes the complete registered contract. Live mode
- * exposes only (a) native Stage-A capabilities that are genuinely mapped and
- * (b) utilities implemented entirely by the TypeScript server. It never
- * advertises an unverified Mastercam operation mapping.
- */
+/** Full mode exposes specialist tools; the compact default narrows that catalog. Live mode
+ * exposes only native mappings that exist and utilities implemented by this server. */
 export function advertisedToolDefinitions(
   backendKind: "mock" | "live",
-  toolAllowlist?: readonly string[]
+  toolAllowlist?: readonly string[],
+  toolset: "compact" | "full" = "compact"
 ): ToolDefinition[] {
   const stageB = stageBReadsEnabled();
   const available = backendKind === "mock" ? TOOL_DEFINITIONS : TOOL_DEFINITIONS.filter(
@@ -122,7 +121,9 @@ export function advertisedToolDefinitions(
       (stageB && LIVE_NATIVE_STAGE_B_READ_TOOL_NAMES.has(definition.name)) ||
       SERVER_LOCAL_TOOL_NAMES.has(definition.name)
   );
-  if (toolAllowlist === undefined) return available;
+  if (toolAllowlist === undefined) {
+    return toolset === "full" ? available : available.filter(definition => COMPACT_TOOL_NAMES.has(definition.name));
+  }
 
   // Selection only narrows the existing execution surface. A configured name
   // cannot enable a forbidden tool or a native mapping the backend hides.
@@ -172,20 +173,25 @@ export function createMcpServer(
   backend: Backend,
   profile: Profile = DEFAULT_PROFILE,
   hardReadOnly = true,
-  toolAllowlist?: readonly string[]
+  toolAllowlist?: readonly string[],
+  toolset: "compact" | "full" = "compact"
 ) {
   const backendKind: "mock" | "live" = backend instanceof LiveBackend ? "live" : "mock";
-  const definitions = advertisedToolDefinitions(backendKind, toolAllowlist);
+  const definitions = advertisedToolDefinitions(backendKind, toolAllowlist, toolset);
   const server = new McpServer(
     { name: "mastercam-mcp", version: VERSION },
     {
       requestState: { verify: operatorApprovalState.verify },
-      instructions:
+      instructions: [
+        toolset === "compact" && toolAllowlist === undefined ? "The compact toolset is active. Set MASTERCAM_MCP_TOOLSET=full to expose specialist inspection and analysis tools, or MASTERCAM_MCP_TOOLS to select a custom set." : "",
         backendKind === "live"
           ? stageBReadsEnabled()
-            ? "The native adapter has opt-in Stage-B read-only programming-context extraction enabled. It remains IMPLEMENTED, not LIVE_READ_VERIFIED, until licensed acceptance passes. Server-local manufacturing intelligence remains available without implying additional native mappings."
-            : "The native adapter is Stage A by default: only mastercam_status and mastercam_capabilities are native-backed. Stage-B programming-context extraction is installed but hidden until MASTERCAM_MCP_ENABLE_STAGE_B_READS=1 is set on a licensed acceptance workstation. Server-local manufacturing intelligence remains available."
-          : "Inspect before mutating. Ground tooling/process suggestions in supplied job state. Use toolpath-risk, cycle-time, thread/tap, manufacturing_preflight, and regression tools as deterministic review evidence. plan_od_rough_finish is non-executable preview only. Mutations require preview_operation_parameters, explicit MCP client operator approval of the displayed exact change, then apply_operation_parameter_preview with the returned approvalToken. Rollback uses the server-issued transactionId. Fixture data never proves live Mastercam behavior."
+            ? "Native Stage-B reads remain IMPLEMENTED, not LIVE_READ_VERIFIED, until licensed acceptance passes. Server-local analysis does not imply additional native mappings."
+            : "Only Stage-A connection reporting is native-backed by default. Enable MASTERCAM_MCP_ENABLE_STAGE_B_READS=1 on a licensed workstation to expose Stage-B read candidates."
+          : "Fixture results are synthetic and do not prove live Mastercam behavior.",
+        "Use get_job_context for a single bounded job snapshot. The report marks unavailable sections instead of treating missing data as zero. NC and toolpath analyses flag unknown motion and are not machine simulation.",
+        "Mutations require preview_operation_parameters, explicit MCP client approval of the exact change, then apply_operation_parameter_preview with its approvalToken. Use verify_change to reread values and rollback_change with the transactionId if needed. plan_od_rough_finish is a non-executable preview."
+      ].filter(Boolean).join(" ")
     }
   );
 
@@ -344,17 +350,43 @@ export function createMcpServer(
           }
 
           let result: ToolResult;
-          if (name === "mastercam_doctor") {
-            result = await doctor(process.env.MASTERCAM_MCP_PIPE ?? defaultPipe(), selectedBackend());
-          } else if (
-            name === "mastercam_help" ||
-            name === "list_tool_categories" ||
-            name === "mastercam_plan"
-          ) {
+          if (name === "get_server_readiness") {
+            const [diagnostics, connection, capabilities] = await Promise.all([
+              doctor(process.env.MASTERCAM_MCP_PIPE ?? defaultPipe(), selectedBackend()),
+              backend.call({ id: randomUUID(), tool: "mastercam_status", arguments: {} }, { signal: abortController.signal }),
+              backend.call({ id: randomUUID(), tool: "mastercam_capabilities", arguments: {} }, { signal: abortController.signal })
+            ]);
+            result = {
+              ok: diagnostics.ok && connection.ok && capabilities.ok,
+              tool: name,
+              data: {
+                diagnostics: diagnostics.data,
+                connection: connection.ok ? connection.data : { error: connection.error },
+                capabilities: capabilities.ok ? capabilities.data : { error: capabilities.error }
+              }
+            };
+          } else if (name === "get_job_context") {
+            const routes: Record<string, string> = {
+              part: "get_active_part", geometry: "get_geometry_summary", machine: "get_machine_context",
+              stock: "get_stock", wcs: "get_wcs", post: "get_post_processor",
+              operations: "get_programming_context", tools: "list_tools"
+            };
+            const sections = args.sections as string[];
+            const entries = await Promise.all(sections.map(async section => {
+              try {
+                const response = await backend.call({ id: randomUUID(), tool: routes[section]!, arguments: {} }, { signal: abortController.signal });
+                return [section, response.ok
+                  ? { status: "available", sourceTool: response.tool, live: response.live === true, data: response.data, ...(response.documentRevision ? { documentRevision: response.documentRevision } : {}) }
+                  : { status: "unavailable", error: response.error }] as const;
+              } catch (error) {
+                return [section, { status: "unavailable", error: { code: "BACKEND_UNAVAILABLE", message: error instanceof Error ? error.message : String(error) } }] as const;
+              }
+            }));
+            const context = Object.fromEntries(entries);
             result = {
               ok: true,
               tool: name,
-              data: helpPayload(name, profile, hardReadOnly, definitions, backendKind)
+              data: { sections: context, unavailable: entries.filter(([, value]) => value.status === "unavailable").map(([section]) => section) }
             };
           } else if (name === "discover_capabilities") {
             result = {
@@ -362,9 +394,6 @@ export function createMcpServer(
               tool: name,
               data: discoverCapabilitiesPayload(args, definitions, backendKind)
             };
-          } else if (name === "get_compatibility_matrix") {
-            const { compatibilityReport } = await import("../compatibility.js");
-            result = { ok: true, tool: name, data: compatibilityReport() };
           } else if (name === "generate_setup_sheet") {
             result = { ok: true, tool: name, data: setupSheet(args as never) };
           } else if (name === "compare_tool_databases") {
@@ -430,11 +459,15 @@ export function createMcpServer(
           } else if (name === "analyze_nc_program") {
             result = { ok: true, tool: name, data: analyzeNcProgram(AnalyzeNcProgramSchema.parse(args)) };
           } else if (name === "analyze_cycle_time") {
-            result = {
-              ok: true,
-              tool: name,
-              data: analyzeCycleTime(AnalyzeCycleTimeSchema.parse(args))
-            };
+            const parsed = CycleTimeToolSchema.parse(args);
+            if (parsed.source === "active_operations") {
+              result = await backend.call({
+                id: randomUUID(), tool: "estimate_cycle_time", arguments: { operationIds: parsed.operationIds }
+              }, { signal: abortController.signal });
+            } else {
+              const events = Object.fromEntries(Object.entries(parsed).filter(([key]) => key !== "source"));
+              result = { ok: true, tool: name, data: analyzeCycleTime(AnalyzeCycleTimeSchema.parse(events)) };
+            }
           } else if (name === "generate_operation_packet") {
             const parsed = GenerateOperationPacketSchema.parse(args);
             let operations = parsed.operations;
@@ -559,93 +592,6 @@ export function createMcpServer(
   }
 
   return server;
-}
-
-function namesByCategory(definitions: ToolDefinition[], category: ReturnType<typeof categoryOf>) {
-  return definitions
-    .filter(definition => categoryOf(definition.name) === category)
-    .map(definition => definition.name);
-}
-
-function helpPayload(
-  name: string,
-  profile: Profile,
-  hardReadOnly: boolean,
-  definitions: ToolDefinition[],
-  backendKind: "mock" | "live"
-) {
-  const mutationAvailable = definitions.some(
-    definition => definition.name === "apply_operation_parameter_preview"
-  );
-
-  if (name === "mastercam_plan") {
-    return mutationAvailable
-      ? {
-          steps: [
-            "inspect target",
-            "manufacturing_preflight for deterministic blockers and unknowns",
-            "preview_operation_parameters",
-            "apply_operation_parameter_preview with approvalToken",
-            "verify by rereading",
-            "analyze_regeneration_impact when dependency evidence is available",
-            "analyze_post_regression against an approved NC baseline before release",
-            "rollback_change with transactionId if needed"
-          ],
-          safeDefault: "read only",
-          profile,
-          hardReadOnly,
-          backend: backendKind
-        }
-      : {
-          steps: [
-            "mastercam_status",
-            "mastercam_capabilities",
-            "mastercam_doctor",
-            "use server-local manufacturing_preflight / regeneration / post-regression tools on supplied evidence",
-            "run acceptance --live on the licensed workstation before expecting operation mappings"
-          ],
-          safeDefault: "Stage A live environment only",
-          mutationAvailable: false,
-          profile,
-          hardReadOnly,
-          backend: backendKind
-        };
-  }
-
-  if (name === "list_tool_categories") {
-    return {
-      read: namesByCategory(definitions, "read"),
-      preview: namesByCategory(definitions, "preview"),
-      write: namesByCategory(definitions, "write"),
-      advanced: namesByCategory(definitions, "advanced"),
-      forbidden: FORBIDDEN_TOOLS,
-      profile,
-      backend: backendKind,
-      protocolRevisions: SUPPORTED_PROTOCOL_REVISIONS
-    };
-  }
-
-  return {
-    tools: definitions.map(definition => ({
-      name: definition.name,
-      description: definition.description,
-      annotations: definition.annotations,
-      execution:
-        SERVER_LOCAL_TOOL_NAMES.has(definition.name)
-          ? "server-local"
-          : backendKind === "live"
-            ? "native-stage-a"
-            : "fixture"
-    })),
-    profile,
-    hardReadOnly,
-    backend: backendKind,
-    protocolRevisions: SUPPORTED_PROTOCOL_REVISIONS,
-    safety:
-      backendKind === "live"
-        ? "Only native Stage-A tools are backed by Mastercam today; server-local deterministic evidence utilities do not imply live operation mappings or prove machine safety."
-        : "Fixture results never prove live Mastercam or machine safety; machine execution tools are permanently unavailable"
-  };
 }
 
 function discoverCapabilitiesPayload(
