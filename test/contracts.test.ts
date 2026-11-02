@@ -4,7 +4,8 @@ import { allowed } from "../src/contracts.js";
 import { ConfigSchema, loadConfig } from "../src/config.js";
 import { parseHardReadOnly, validateProfileConfig } from "../src/safety/policy.js";
 
-test("read tools are always allowed", () => assert.equal(allowed("mastercam_status", "read", true), true));
+test("read tools are always allowed", () => assert.equal(allowed("get_server_readiness", "read", true), true));
+test("internal bridge calls are not exposed as standalone tools", () => assert.equal(allowed("mastercam_status", "read", true), false));
 test("hard read only blocks writes", () => assert.equal(allowed("apply_operation_parameter_preview", "write", true), false));
 test("write profile still requires the explicit hard-read-only opt-out", () => assert.equal(allowed("apply_operation_parameter_preview", "write", ConfigSchema.parse({ profile: "write" }).hardReadOnly), false));
 test("posting is blocked by default", () => assert.equal(allowed("post_program", "all", false), false));

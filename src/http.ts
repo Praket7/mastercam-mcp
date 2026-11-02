@@ -63,7 +63,7 @@ let activeRequests = 0;
 let shuttingDown = false;
 
 const mcpHandler = createMcpHandler(
-  () => createMcpServer(backend, config.profile, config.hardReadOnly, config.toolAllowlist),
+  () => createMcpServer(backend, config.profile, config.hardReadOnly, config.toolAllowlist, config.toolset),
   {
     legacy: "stateless",
     responseMode: "auto",

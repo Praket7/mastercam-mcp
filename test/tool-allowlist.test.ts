@@ -5,25 +5,28 @@ import { advertisedToolDefinitions } from "../src/mcp/create-server.js";
 import { TOOL_DEFINITIONS } from "../src/mcp/registry.js";
 import { allowed } from "../src/contracts.js";
 
-test("an unset allowlist keeps the existing fixture catalog", () => {
-  assert.deepEqual(advertisedToolDefinitions("mock"), TOOL_DEFINITIONS);
+test("the default toolset is a curated compact catalog and full mode preserves specialists", () => {
+  const compact = advertisedToolDefinitions("mock");
+  assert.equal(compact.length, 24);
+  assert.deepEqual(advertisedToolDefinitions("mock", undefined, "full"), TOOL_DEFINITIONS);
   assert.equal(ConfigSchema.parse({}).toolAllowlist, undefined);
+  assert.equal(ConfigSchema.parse({}).toolset, "compact");
 });
 
 test("an allowlist selects only requested tools in canonical order without duplicates", () => {
   assert.deepEqual(
-    advertisedToolDefinitions("mock", ["calculate_thread_tap", "mastercam_status", "mastercam_status"])
+    advertisedToolDefinitions("mock", ["calculate_thread_tap", "get_server_readiness", "get_server_readiness"])
       .map(tool => tool.name),
-    ["mastercam_status", "calculate_thread_tap"]
+    ["get_server_readiness", "calculate_thread_tap"]
   );
   assert.deepEqual(advertisedToolDefinitions("mock", []), []);
 });
 
 test("selection cannot advertise a native mapping hidden by the live backend", () => {
   assert.deepEqual(
-    advertisedToolDefinitions("live", ["mastercam_status", "get_active_part", "apply_operation_parameter_preview"])
+    advertisedToolDefinitions("live", ["get_server_readiness", "list_operations", "apply_operation_parameter_preview"])
       .map(tool => tool.name),
-    ["mastercam_status"]
+    ["get_server_readiness"]
   );
 });
 
@@ -46,8 +49,8 @@ test("the environment trims names and keeps explicit empty selection distinct fr
   try {
     delete process.env.MASTERCAM_MCP_TOOLS;
     assert.equal(loadConfig().toolAllowlist, undefined);
-    process.env.MASTERCAM_MCP_TOOLS = " mastercam_status, calculate_thread_tap,mastercam_status ";
-    assert.deepEqual(loadConfig().toolAllowlist, ["mastercam_status", "calculate_thread_tap", "mastercam_status"]);
+    process.env.MASTERCAM_MCP_TOOLS = " get_server_readiness, calculate_thread_tap,get_server_readiness ";
+    assert.deepEqual(loadConfig().toolAllowlist, ["get_server_readiness", "calculate_thread_tap", "get_server_readiness"]);
     process.env.MASTERCAM_MCP_TOOLS = " , ";
     assert.deepEqual(loadConfig().toolAllowlist, []);
   } finally {

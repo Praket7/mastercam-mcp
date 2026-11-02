@@ -58,6 +58,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = TOOL_MANIFEST
   .filter(entry => entry.registered)
   .map(entry => ({
     name: entry.name,
+    title: entry.name.split("_").map(part => part[0]!.toUpperCase() + part.slice(1)).join(" "),
     description: entry.description,
     inputSchema: entry.inputSchema,
     outputSchema: outputEnvelope(entry.outputDataSchema),

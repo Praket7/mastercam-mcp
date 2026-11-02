@@ -33,6 +33,7 @@ async function withStdioClient(
       MASTERCAM_MCP_AUDIT: "0",
       MASTERCAM_MCP_PROFILE: "all",
       MASTERCAM_MCP_HARD_READ_ONLY: "0",
+      MASTERCAM_MCP_TOOLSET: "full",
       ...extraEnv
     }
   });
@@ -130,10 +131,52 @@ test("tools/list over stdio negotiates 2026-07-28 and returns schemas", async ()
   await withStdioClient(async client => {
     const { tools } = await client.listTools();
     assert.ok(tools.length >= TOOL_DEFINITIONS.length - 2, `expected full registry, got ${tools.length}`);
-    const status = tools.find(tool => tool.name === "mastercam_status");
+    const status = tools.find(tool => tool.name === "get_server_readiness");
     assert.ok(status);
     assert.ok(status.annotations, "tools/list must include annotations");
     assert.ok(status.inputSchema, "tools/list must include input schemas");
+  });
+});
+
+test("compact tools/list is focused and replaces overlapping setup and context calls", async () => {
+  await withStdioClient(async client => {
+    const { tools } = await client.listTools();
+    const names = tools.map(tool => tool.name);
+    assert.equal(names.length, 24);
+    assert.ok(names.includes("get_server_readiness"));
+    assert.ok(names.includes("get_job_context"));
+    for (const removed of ["get_machine_groups", "inspect", "measure", "assert", "mastercam_help", "list_tool_categories"]) {
+      assert.equal(names.includes(removed), false, `${removed} must not be advertised`);
+    }
+  }, { MASTERCAM_MCP_TOOLSET: "compact" });
+});
+
+test("composite readiness and job context return source-tagged section results", async () => {
+  await withStdioClient(async client => {
+    const status = await client.callTool({ name: "get_server_readiness", arguments: {} });
+    assert.equal((status.structuredContent as { ok: boolean }).ok, true);
+    const context = await client.callTool({ name: "get_job_context", arguments: { sections: ["part", "stock"] } });
+    const data = (context.structuredContent as { data: { sections: Record<string, { status: string }> } }).data;
+    assert.equal(data.sections.part?.status, "available");
+    assert.equal(data.sections.stock?.status, "available");
+  }, { MASTERCAM_MCP_TOOLSET: "compact" });
+});
+
+test("one cycle-time tool supports active operations and supplied motion evidence", async () => {
+  await withStdioClient(async client => {
+    const active = await client.callTool({
+      name: "analyze_cycle_time", arguments: { source: "active_operations", operationIds: [1] }
+    });
+    assert.equal((active.structuredContent?.data as { seconds: number }).seconds, 42);
+    const events = await client.callTool({
+      name: "analyze_cycle_time",
+      arguments: {
+        source: "motion_events",
+        machineRapidRate: 100,
+        events: [{ id: "move-1", kind: "move", motion: "rapid", start: { x: 0, y: 0, z: 0 }, end: { x: 0, y: 0, z: 10 } }]
+      }
+    });
+    assert.equal(events.structuredContent?.ok, true);
   });
 });
 
@@ -152,20 +195,19 @@ test("unknown tool call fails with a typed MCP error (BUG-02 contract)", async (
 });
 
 test("a selected stdio catalog limits discovery and rejects omitted tools", async () => {
-  const selected = ["mastercam_status", "mastercam_help", "discover_capabilities"];
+  const selected = ["get_server_readiness", "get_job_context", "analyze_nc_program"];
   await withStdioClient(async client => {
     const { tools } = await client.listTools();
     assert.deepEqual(tools.map(tool => tool.name), selected);
-    const result = await client.callTool({ name: "mastercam_status", arguments: {} });
+    const result = await client.callTool({ name: "get_server_readiness", arguments: {} });
     assert.equal(result.structuredContent?.ok, true);
 
-    for (const name of ["mastercam_help", "discover_capabilities"]) {
-      const result = await client.callTool({ name, arguments: {} });
-      const data = result.structuredContent?.data as { tools: { name: string }[] };
-      assert.deepEqual(data.tools.map(tool => tool.name), selected);
-    }
     await assert.rejects(
       () => client.callTool({ name: "list_operations", arguments: {} }),
+      /not found|unknown|tool/i
+    );
+    await assert.rejects(
+      () => client.callTool({ name: "mastercam_help", arguments: {} }),
       /not found|unknown|tool/i
     );
   }, { MASTERCAM_MCP_TOOLS: selected.join(",") });
@@ -183,7 +225,7 @@ test("an allowlisted mutation is still refused by hard read only", async () => {
 
 test("tool call returns structuredContent plus text content (ARCH-02)", async () => {
   await withStdioClient(async client => {
-    const result = await client.callTool({ name: "mastercam_status", arguments: {} });
+    const result = await client.callTool({ name: "get_server_readiness", arguments: {} });
     assert.ok(Array.isArray(result.content));
     assert.equal(result.content[0]?.type, "text");
     assert.equal((result.structuredContent as { ok?: boolean } | undefined)?.ok, true);

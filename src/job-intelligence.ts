@@ -1,5 +1,6 @@
 import * as z from "zod/v4";
 import { sha256Of } from "./audit/audit-log.js";
+import { OperationIdsSchema } from "./schemas/common.js";
 
 const Finite = z.number().finite();
 const Positive = z.number().finite().positive();
@@ -146,6 +147,14 @@ export const AnalyzeCycleTimeSchema = z.object({
   defaultToolChangeSeconds: Finite.nonnegative().default(8),
   opportunityThresholdSeconds: Finite.nonnegative().default(1)
 }).strict();
+
+export const CycleTimeToolSchema = z.discriminatedUnion("source", [
+  AnalyzeCycleTimeSchema.extend({ source: z.literal("motion_events") }),
+  z.object({
+    source: z.literal("active_operations"),
+    operationIds: OperationIdsSchema.optional().describe("Optional exact operation IDs. Omit to include all operations in the active job.")
+  }).strict()
+]);
 
 const OperationPacketOperationSchema = z.object({
   id: z.union([z.string().min(1).max(128), z.number().int()]),

@@ -44,9 +44,9 @@ export const getSelectionSchema = emptySchema;
 export const listMachineGroupsSchema = emptySchema;
 
 export const listOperationsSchema = z.object({
-  limit: z.number().int().min(1).max(500).default(100),
-  offset: z.number().int().min(0).default(0),
-  operationType: OptionalText(64)
+  limit: z.number().int().min(1).max(500).default(100).describe("Maximum operations to return, from 1 to 500."),
+  offset: z.number().int().min(0).default(0).describe("Number of matching operations to skip."),
+  operationType: OptionalText(64).describe("Optional exact operation-type filter.")
 }).strict();
 export const listOperationsOutputSchema = z.array(z.object({
   id: z.number(),
@@ -59,7 +59,7 @@ export const listOperationsOutputSchema = z.array(z.object({
   toolpathDirty: z.boolean().optional()
 }));
 
-export const getOperationSchema = z.object({ operationId: OperationIdSchema }).strict();
+export const getOperationSchema = z.object({ operationId: OperationIdSchema.describe("Exact Mastercam operation ID. No name or nearest-match fallback is used.") }).strict();
 export const getOperationOutputSchema = z.object({
   id: z.number(),
   name: z.string(),
@@ -72,7 +72,7 @@ export const getOperationOutputSchema = z.object({
   documentRevision: z.string(),
   operationFingerprint: z.string()
 });
-export const getOperationParametersSchema = z.object({ operationId: OperationIdSchema }).strict();
+export const getOperationParametersSchema = z.object({ operationId: OperationIdSchema.describe("Exact Mastercam operation ID whose mapped parameters should be returned.") }).strict();
 export const getOperationParametersOutputSchema = z.object({
   operationId: z.number(),
   parameters: z.record(z.string(), z.unknown()),
@@ -80,17 +80,17 @@ export const getOperationParametersOutputSchema = z.object({
 });
 
 export const findOperationsSchema = z.object({
-  query: OptionalText(256),
-  operationType: OptionalText(64),
-  toolNumber: z.number().int().min(1).max(2_147_483_647).optional(),
-  limit: z.number().int().min(1).max(200).default(50)
+  query: OptionalText(256).describe("Case-insensitive text matched against operation names."),
+  operationType: OptionalText(64).describe("Optional exact operation-type filter."),
+  toolNumber: z.number().int().min(1).max(2_147_483_647).optional().describe("Optional assigned tool number."),
+  limit: z.number().int().min(1).max(200).default(50).describe("Maximum matches to return, from 1 to 200.")
 }).strict();
 
 export const explainOperationSchema = z.object({ operationId: OperationIdSchema }).strict();
 export const getOperationRisksSchema = z.object({ operationId: OperationIdSchema }).strict();
 
-export const listToolsSchema = z.object({ limit: z.number().int().min(1).max(500).default(200) }).strict();
-export const getToolSchema = z.object({ toolId: ToolIdSchema }).strict();
+export const listToolsSchema = z.object({ limit: z.number().int().min(1).max(500).default(200).describe("Maximum referenced job tools to return, from 1 to 500. This is not a complete .TOOLDB listing.") }).strict();
+export const getToolSchema = z.object({ toolId: ToolIdSchema.describe("Exact identifier, tool number, or unique name of a tool referenced by the active job.") }).strict();
 
 export const getStockSchema = emptySchema;
 export const getWcsSchema = emptySchema;
@@ -100,10 +100,9 @@ export const getDirtyToolpathsSchema = z.object({ operationIds: optionalOperatio
 export const getSelectedEntitiesSchema = emptySchema;
 
 export const getToolpathStatusSchema = z.object({ operationId: OperationIdSchema }).strict();
-export const estimateCycleTimeSchema = z.object({ operationIds: optionalOperationIds }).strict();
 export const compareToolpathsSchema = z.object({
-  beforeOperationId: OperationIdSchema,
-  afterOperationId: OperationIdSchema
+  beforeOperationId: OperationIdSchema.describe("Exact operation ID for the earlier toolpath."),
+  afterOperationId: OperationIdSchema.describe("Exact operation ID for the later toolpath.")
 }).strict();
 
 export const captureViewSchema = z.object({
@@ -113,7 +112,32 @@ export const captureViewSchema = z.object({
 }).strict();
 
 export const getProgrammingContextSchema = z.object({
-  includeGeometry: z.boolean().default(false)
+  includeGeometry: z.boolean().default(false).describe("Include a bounded geometry summary when supported.")
+}).strict();
+
+export const getJobContextSchema = z.object({
+  sections: z.array(z.enum(["part", "geometry", "machine", "stock", "wcs", "post", "operations", "tools"]))
+    .min(1).max(8)
+    .default(["part", "geometry", "machine", "stock", "wcs", "post", "operations", "tools"])
+    .describe("Choose which context sections to gather. Each section reports unavailable data explicitly.")
+}).strict();
+export const getJobContextOutputSchema = z.object({
+  sections: z.record(z.string(), z.object({
+    status: z.enum(["available", "unavailable"]),
+    sourceTool: z.string().optional(),
+    live: z.boolean().optional(),
+    data: z.unknown().optional(),
+    documentRevision: z.string().optional(),
+    error: z.unknown().optional()
+  }).strict()),
+  unavailable: z.array(z.string())
+}).strict();
+
+export const getServerReadinessSchema = emptySchema;
+export const getServerReadinessOutputSchema = z.object({
+  diagnostics: z.unknown(),
+  connection: z.unknown(),
+  capabilities: z.unknown()
 }).strict();
 
 export const getVersionReportSchema = emptySchema;
@@ -123,26 +147,8 @@ export const listToolCategoriesSchema = emptySchema;
 export const discoverCapabilitiesSchema = z.object({ category: OptionalText(64) }).strict();
 export const getCompatibilityMatrixSchema = emptySchema;
 export const clientSetupCheckSchema = emptySchema;
-export const getAuditHistorySchema = z.object({ limit: z.number().int().min(1).max(500).default(50) }).strict();
+export const getAuditHistorySchema = z.object({ limit: z.number().int().min(1).max(500).default(50).describe("Maximum audit entries to return, from 1 to 500.") }).strict();
 export const getFixtureInfoSchema = emptySchema;
-export const getMachineGroupsSchema = listMachineGroupsSchema;
-
-export const inspectSchema = z.object({
-  operationId: OperationIdSchema,
-  path: OptionalText(256)
-}).strict();
-
-export const measureSchema = z.object({
-  operationId: OperationIdSchema,
-  path: z.string().min(1).max(256).default("operation.feed")
-}).strict();
-
-export const assertSchema = z.object({
-  operationId: OperationIdSchema,
-  path: z.string().min(1).max(256).default("operation.feed"),
-  equals: z.union([z.string().max(4096), z.number().finite(), z.boolean()]).optional()
-}).strict();
-
 export const compareNcFilesInput = {
   before: z.string().min(1).max(2_000_000),
   after: z.string().min(1).max(2_000_000)

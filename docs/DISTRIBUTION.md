@@ -2,7 +2,7 @@
 
 ## Current package status
 
-The GitHub source is version 0.3.0. The npm registry still reports version 0.2.0 as `latest`. It does not contain version 0.3.0. This source branch is open for review. Do not use an npm `latest` command to get the features in this branch.
+Install the latest published release from npm with `npm install --global mastercam-mcp@latest`. A source checkout may include changes that have not shipped yet. Check `mastercam-mcp --version` to confirm which release is installed.
 
 For a local source install, build the project with `pnpm install` and `pnpm run build`. Point your MCP client to `dist/cli.js` inside that checkout. Use the full path to the file.
 

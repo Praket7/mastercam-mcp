@@ -5,12 +5,9 @@
  * into advertising unverified native mappings.
  */
 export const SERVER_LOCAL_TOOL_NAMES = new Set([
-  "mastercam_help",
-  "list_tool_categories",
+  "get_server_readiness",
+  "get_job_context",
   "discover_capabilities",
-  "get_compatibility_matrix",
-  "mastercam_plan",
-  "mastercam_doctor",
   "generate_setup_sheet",
   "compare_tool_databases",
   "compare_nc_files",
@@ -27,16 +24,15 @@ export const SERVER_LOCAL_TOOL_NAMES = new Set([
   "plan_od_rough_finish"
 ]);
 
-/** Native capabilities implemented by the always-on Stage-A adapters. */
+/** Native bridge calls consumed internally by the combined readiness report. */
 export const LIVE_NATIVE_STAGE_A_TOOL_NAMES = new Set([
   "mastercam_status",
   "mastercam_capabilities"
 ]);
 
 /**
- * Opt-in Stage-B read-only mappings. These are IMPLEMENTED candidates, not
- * LIVE_READ_VERIFIED capabilities. They are advertised only when the operator
- * explicitly enables Stage-B reads on a licensed acceptance workstation.
+ * Internal Stage-B read-only bridge mappings. Job context invokes these as
+ * available; they are not separately advertised as overlapping context tools.
  */
 export const LIVE_NATIVE_STAGE_B_READ_TOOL_NAMES = new Set([
   "get_programming_context",

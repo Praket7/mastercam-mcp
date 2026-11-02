@@ -16,6 +16,8 @@ The local tools review job data that you provide. They compare tool lists. They 
 
 The turning plan is a proposal. It does not create a Mastercam operation. It does not make machine code. Thread guidance needs a confirmed thread size. Confirmed dimensions work too. NC review reports unknown moves when it cannot understand a command. An unknown result gives no safety conclusion. Mastercam Verify remains necessary. Machine simulation remains necessary. A shop prove out remains necessary.
 
+The default MCP catalog presents 24 tools for common workflows. One readiness report replaces several setup checks, and one job context report gathers part, geometry, machine, stock, coordinate, post, operation, and tool information while marking unavailable sections. Set `MASTERCAM_MCP_TOOLSET=full` to expose specialist workflows. The shorter catalog removes duplicate and vague choices without deleting those advanced tools.
+
 On a licensed Windows workstation, the native add in has a limited read path. Mastercam 2027 has an optional operation snapshot. That snapshot remains under acceptance testing. The older adapter reports the environment only. The server labels each capability with its tested level.
 
 ## Choose how to run it
@@ -44,20 +46,12 @@ Sample mode uses synthetic job data. It cannot modify a real Mastercam document.
 
 ## Install status
 
-The GitHub source contains work that is newer than the npm package. At the time this page was updated, npm `latest` resolves to 0.2.0. Version 0.3.0 is not available on npm. The npm latest command does not install the current source changes.
-
-Install GitHub CLI before running this source checkout command. On Windows, open PowerShell. On macOS, use Terminal. Linux users can use their usual terminal.
+Install the current npm release with the commands below. For development, clone the source instead.
 
 ```text
-gh repo clone Praket7/mastercam-mcp
-cd mastercam-mcp
-git switch feat/full-manufacturing-automation
-pnpm install
-pnpm run build
-node dist/cli.js serve
+npm install --global mastercam-mcp@latest
+mastercam-mcp serve
 ```
-
-The feature branch is under review. It may change before release. GitHub releases have a different download path than npm packages.
 
 ## Connect Mastercam on Windows
 
@@ -95,5 +89,7 @@ for a client connected to a local model, including an 8 GB hardware evaluation c
 [Capability status](docs/CAPABILITIES.md) lists each feature with its current evidence level.
 
 [Full readiness review](docs/FULL-AUTOMATION-READINESS.md) records release gaps, unverified features, remaining acceptance work.
+
+[Tool catalog guide](docs/TOOL-CATALOG.md) explains the compact default and how to expose specialist workflows.
 
 [Security policy](SECURITY.md) explains how to report a security issue.

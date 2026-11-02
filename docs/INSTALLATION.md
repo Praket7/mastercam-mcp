@@ -8,7 +8,14 @@
 | Mastercam Stage A | Windows, licensed Mastercam, matching local NET Hook files | Report the installed Mastercam environment |
 | Mastercam 2027 Stage B | Stage A items plus a supervised acceptance run | Read a limited operation snapshot |
 
-The npm registry currently serves version 0.2.0 as `latest`. Version 0.3.0 is not on npm. Use a source checkout to try this branch. Do not copy an old `npx ...@latest` command from an earlier guide.
+For a published release, install `mastercam-mcp` from npm. To try changes that have not shipped yet, build this checkout instead. The npm package does not include Mastercam's private SDK files, and portable mode uses sample data only.
+
+```sh
+npm install --global mastercam-mcp@latest
+mastercam-mcp --version
+```
+
+To run an unreleased checkout, use the source build steps below and point your MCP client at that checkout's `dist/cli.js`.
 
 ## Portable setup
 
