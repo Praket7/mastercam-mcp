@@ -17,6 +17,14 @@ export interface AuditEntry {
   [extra: string]: unknown;
 }
 
+export interface AuditHistory {
+  enabled: boolean;
+  integrity: "verified" | "disabled" | "failed";
+  lastSequence: number;
+  entries: Array<AuditEntry & { previousEntryHash: string; entryHash: string }>;
+  error?: string;
+}
+
 interface ChainState {
   sequence: number;
   previousEntryHash: string;
@@ -251,6 +259,62 @@ export class AuditLog {
   get isEnabled(): boolean { return this.enabled; }
   get location(): string { return this.path ?? "(memory)"; }
   get integrityError(): string | undefined { return this.startupError; }
+
+  async getRecentEntries(limit = 50): Promise<AuditHistory> {
+    const boundedLimit = Number.isInteger(limit) ? Math.max(1, Math.min(500, limit)) : 50;
+    await this.flush();
+
+    if (!this.enabled || !this.path) {
+      return { enabled: false, integrity: "disabled", lastSequence: 0, entries: [] };
+    }
+
+    try {
+      const recovered = recoverChain(this.path, this.maxRotatedFiles);
+      const entries: AuditHistory["entries"] = [];
+      const segments = [this.path, ...Array.from(
+        { length: this.maxRotatedFiles },
+        (_, index) => `${this.path}.${index + 1}`
+      )];
+
+      for (const segment of segments) {
+        let text: string;
+        try {
+          text = await readFile(segment, "utf8");
+        } catch (error) {
+          if (isEnoent(error)) continue;
+          throw error;
+        }
+
+        const records = text.split("\n").filter(line => line.trim());
+        for (let index = records.length - 1; index >= 0; index--) {
+          const record = JSON.parse(records[index]!) as Record<string, unknown>;
+          if (record.tool === "audit_rotation") continue;
+          if (typeof record.entryHash !== "string" || typeof record.previousEntryHash !== "string") {
+            throw new Error("AUDIT_CHAIN_CORRUPT: audit entry is missing its hash proof");
+          }
+          entries.push(record as AuditHistory["entries"][number]);
+          if (entries.length >= boundedLimit) break;
+        }
+        if (entries.length >= boundedLimit) break;
+      }
+
+      entries.reverse();
+      return {
+        enabled: true,
+        integrity: "verified",
+        lastSequence: recovered.chain.sequence,
+        entries
+      };
+    } catch (error) {
+      return {
+        enabled: true,
+        integrity: "failed",
+        lastSequence: this.chain.sequence,
+        entries: [],
+        error: error instanceof Error ? error.message : String(error)
+      };
+    }
+  }
 
   record(entry: Omit<AuditEntry, "sequence" | "timestamp">): AuditEntry {
     if (this.startupError) {

@@ -14,7 +14,11 @@ You can also run the portable tools without Mastercam. That mode uses sample dat
 
 The local tools review job data that you provide. They compare tool lists. They check supported moves in an NC program, which is machine code. They estimate time from listed moves. They calculate thread guidance from confirmed dimensions. They create setup notes. They suggest tools from a catalog you provide. They draft an outside diameter turning plan.
 
+When audit collection is enabled, a tool reads recent safety events and checks the retained log's integrity. It only covers events recorded by this MCP server.
+
 The turning plan is a proposal. It does not create a Mastercam operation. It does not make machine code. Thread guidance needs a confirmed thread size. Confirmed dimensions work too. NC review reports unknown moves when it cannot understand a command. An unknown result gives no safety conclusion. Mastercam Verify remains necessary. Machine simulation remains necessary. A shop prove out remains necessary.
+
+A setup sheet uses data supplied to that call. Use the job context tool first to gather the fields that the active backend can provide.
 
 The default MCP catalog presents 24 tools for common workflows. One readiness report replaces several setup checks, and one job context report gathers part, geometry, machine, stock, coordinate, post, operation, and tool information while marking unavailable sections. Set `MASTERCAM_MCP_TOOLSET=full` to expose specialist workflows. The shorter catalog removes duplicate and vague choices without deleting those advanced tools.
 

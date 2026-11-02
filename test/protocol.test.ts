@@ -162,6 +162,17 @@ test("composite readiness and job context return source-tagged section results",
   }, { MASTERCAM_MCP_TOOLSET: "compact" });
 });
 
+test("audit history reports disabled collection explicitly over MCP", async () => {
+  await withStdioClient(async client => {
+    const result = await client.callTool({ name: "get_audit_history", arguments: {} });
+    assert.equal((result.structuredContent as { ok: boolean }).ok, true);
+    const data = (result.structuredContent as { data: { enabled: boolean; integrity: string; entries: unknown[] } }).data;
+    assert.equal(data.enabled, false);
+    assert.equal(data.integrity, "disabled");
+    assert.deepEqual(data.entries, []);
+  }, { MASTERCAM_MCP_TOOLSET: "compact", MASTERCAM_MCP_AUDIT: "0" });
+});
+
 test("one cycle-time tool supports active operations and supplied motion evidence", async () => {
   await withStdioClient(async client => {
     const active = await client.callTool({

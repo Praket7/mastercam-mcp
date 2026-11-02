@@ -10,11 +10,11 @@ Counts: 47 capabilities declared, 40 fixture-supported, **0 live verified**.
 
 | Tool | Fixture supported | Risk | Backends | Tier | Notes |
 | --- | --- | --- | --- | --- | --- |
-| get_server_readiness | yes | read | server-local | IMPLEMENTED | Runs entirely in the TypeScript server and is available in fixture or live mode without implying Mastercam API coverage. |
-| get_job_context | yes | read | server-local | IMPLEMENTED | Runs entirely in the TypeScript server and is available in fixture or live mode without implying Mastercam API coverage. |
-| discover_capabilities | yes | read | server-local | IMPLEMENTED | Runs entirely in the TypeScript server and is available in fixture or live mode without implying Mastercam API coverage. |
+| get_server_readiness | yes | read | server-local | IMPLEMENTED | Handled by the TypeScript server. Composite tools may request backend data; local analyses use supplied inputs. This does not guarantee Mastercam data coverage. |
+| get_job_context | yes | read | server-local | IMPLEMENTED | Handled by the TypeScript server. Composite tools may request backend data; local analyses use supplied inputs. This does not guarantee Mastercam data coverage. |
+| discover_capabilities | yes | read | server-local | IMPLEMENTED | Handled by the TypeScript server. Composite tools may request backend data; local analyses use supplied inputs. This does not guarantee Mastercam data coverage. |
 | get_fixture_info | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares it. |
-| get_audit_history | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares it. |
+| get_audit_history | yes | read | server-local | IMPLEMENTED | Handled by the TypeScript server. Composite tools may request backend data; local analyses use supplied inputs. This does not guarantee Mastercam data coverage. |
 | get_selection | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares it. |
 | get_selected_entities | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares it. |
 | list_machine_groups | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares it. |
@@ -31,20 +31,20 @@ Counts: 47 capabilities declared, 40 fixture-supported, **0 live verified**.
 | get_tool | yes | read | mock+2027-adapter | IMPLEMENTED | Stage-B searches only the tools proven reachable from active operations; complete tool-library coverage is not claimed. Licensed LIVE_READ_VERIFIED acceptance is still required. |
 | capture_view | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares it. |
 | verify_change | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares it. |
-| generate_setup_sheet | yes | read | server-local | IMPLEMENTED | Runs entirely in the TypeScript server and is available in fixture or live mode without implying Mastercam API coverage. |
-| compare_tool_databases | yes | read | server-local | IMPLEMENTED | Runs entirely in the TypeScript server and is available in fixture or live mode without implying Mastercam API coverage. |
-| compare_nc_files | yes | read | server-local | IMPLEMENTED | Runs entirely in the TypeScript server and is available in fixture or live mode without implying Mastercam API coverage. |
-| validate_machine_profile | yes | read | server-local | IMPLEMENTED | Runs entirely in the TypeScript server and is available in fixture or live mode without implying Mastercam API coverage. |
-| manufacturing_preflight | yes | read | server-local | IMPLEMENTED | Runs entirely in the TypeScript server and is available in fixture or live mode without implying Mastercam API coverage. |
-| analyze_regeneration_impact | yes | read | server-local | IMPLEMENTED | Runs entirely in the TypeScript server and is available in fixture or live mode without implying Mastercam API coverage. |
-| analyze_post_regression | yes | read | server-local | IMPLEMENTED | Runs entirely in the TypeScript server and is available in fixture or live mode without implying Mastercam API coverage. |
-| recommend_job_tooling | yes | read | server-local | IMPLEMENTED | Runs entirely in the TypeScript server and is available in fixture or live mode without implying Mastercam API coverage. |
-| analyze_toolpath_risk | yes | read | server-local | IMPLEMENTED | Runs entirely in the TypeScript server and is available in fixture or live mode without implying Mastercam API coverage. |
-| analyze_nc_program | yes | read | server-local | IMPLEMENTED | Runs entirely in the TypeScript server and is available in fixture or live mode without implying Mastercam API coverage. |
-| analyze_cycle_time | yes | read | server-local | IMPLEMENTED | Runs entirely in the TypeScript server and is available in fixture or live mode without implying Mastercam API coverage. |
-| generate_operation_packet | yes | read | server-local | IMPLEMENTED | Runs entirely in the TypeScript server and is available in fixture or live mode without implying Mastercam API coverage. |
-| calculate_thread_tap | yes | read | server-local | IMPLEMENTED | Runs entirely in the TypeScript server and is available in fixture or live mode without implying Mastercam API coverage. |
-| plan_od_rough_finish | yes | read | server-local | IMPLEMENTED | Runs entirely in the TypeScript server and is available in fixture or live mode without implying Mastercam API coverage. |
+| generate_setup_sheet | yes | read | server-local | IMPLEMENTED | Handled by the TypeScript server. Composite tools may request backend data; local analyses use supplied inputs. This does not guarantee Mastercam data coverage. |
+| compare_tool_databases | yes | read | server-local | IMPLEMENTED | Handled by the TypeScript server. Composite tools may request backend data; local analyses use supplied inputs. This does not guarantee Mastercam data coverage. |
+| compare_nc_files | yes | read | server-local | IMPLEMENTED | Handled by the TypeScript server. Composite tools may request backend data; local analyses use supplied inputs. This does not guarantee Mastercam data coverage. |
+| validate_machine_profile | yes | read | server-local | IMPLEMENTED | Handled by the TypeScript server. Composite tools may request backend data; local analyses use supplied inputs. This does not guarantee Mastercam data coverage. |
+| manufacturing_preflight | yes | read | server-local | IMPLEMENTED | Handled by the TypeScript server. Composite tools may request backend data; local analyses use supplied inputs. This does not guarantee Mastercam data coverage. |
+| analyze_regeneration_impact | yes | read | server-local | IMPLEMENTED | Handled by the TypeScript server. Composite tools may request backend data; local analyses use supplied inputs. This does not guarantee Mastercam data coverage. |
+| analyze_post_regression | yes | read | server-local | IMPLEMENTED | Handled by the TypeScript server. Composite tools may request backend data; local analyses use supplied inputs. This does not guarantee Mastercam data coverage. |
+| recommend_job_tooling | yes | read | server-local | IMPLEMENTED | Handled by the TypeScript server. Composite tools may request backend data; local analyses use supplied inputs. This does not guarantee Mastercam data coverage. |
+| analyze_toolpath_risk | yes | read | server-local | IMPLEMENTED | Handled by the TypeScript server. Composite tools may request backend data; local analyses use supplied inputs. This does not guarantee Mastercam data coverage. |
+| analyze_nc_program | yes | read | server-local | IMPLEMENTED | Handled by the TypeScript server. Composite tools may request backend data; local analyses use supplied inputs. This does not guarantee Mastercam data coverage. |
+| analyze_cycle_time | yes | read | server-local | IMPLEMENTED | Handled by the TypeScript server. Composite tools may request backend data; local analyses use supplied inputs. This does not guarantee Mastercam data coverage. |
+| generate_operation_packet | yes | read | server-local | IMPLEMENTED | Handled by the TypeScript server. Composite tools may request backend data; local analyses use supplied inputs. This does not guarantee Mastercam data coverage. |
+| calculate_thread_tap | yes | read | server-local | IMPLEMENTED | Handled by the TypeScript server. Composite tools may request backend data; local analyses use supplied inputs. This does not guarantee Mastercam data coverage. |
+| plan_od_rough_finish | yes | read | server-local | IMPLEMENTED | Handled by the TypeScript server. Composite tools may request backend data; local analyses use supplied inputs. This does not guarantee Mastercam data coverage. |
 | preview_operation_parameters | yes | read | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares it. |
 | apply_operation_parameter_preview | yes | mutation | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares it. |
 | rollback_change | yes | mutation | mock | IMPLEMENTED | TypeScript/fixture implementation exists; no live Mastercam mapping is advertised until a release adapter declares it. |
@@ -61,7 +61,7 @@ Counts: 47 capabilities declared, 40 fixture-supported, **0 live verified**.
 ## Reading this table honestly
 
 - `IMPLEMENTED` means code exists and contract tests can exercise it. It is not proof that a real Mastercam release supports the tool.
-- `server-local` means the tool runs entirely in the TypeScript server and can be used alongside either backend; it does not imply a live Mastercam API mapping.
+- `server-local` means the TypeScript server handles the tool. Composite tools may request backend data; local analyses use supplied inputs. This does not guarantee Mastercam data coverage.
 - Native adapters default to Stage A. Mastercam 2027 also contains opt-in Stage-B read candidates derived from a runtime-probed programming snapshot; they remain `IMPLEMENTED`, not `LIVE_READ_VERIFIED`, until licensed acceptance passes.
 - Standalone regeneration is withheld until it is transaction-bound to the exact approved mutation rather than accepting operation ids alone.
 - Simulation and collision results from the fixture backend are synthetic and never prove machine safety.

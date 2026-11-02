@@ -12,6 +12,75 @@ function tempAudit(): AuditLog {
   return log;
 }
 
+test("operation listings and searches honor their documented filters and limits", async () => {
+  const backend = new MockBackend({ operations: [
+    { id: 1, name: "Rough outside", type: "turning_rough", tool: 3, feed: 30 },
+    { id: 2, name: "Finish outside", type: "turning_finish", tool: 4, feed: 40 },
+    { id: 3, name: "Rough pocket", type: "milling_rough", tool: 3, feed: 50 }
+  ] }, tempAudit());
+
+  const page = await backend.call({
+    id: "page-1",
+    tool: "list_operations",
+    arguments: { limit: 1, offset: 1, operationType: "turning" }
+  });
+  assert.deepEqual((page.data as Array<{ id: number }>).map(item => item.id), [2]);
+
+  const filtered = await backend.call({
+    id: "find-1",
+    tool: "find_operations",
+    arguments: { query: "outside", operationType: "rough", toolNumber: 3, limit: 1 }
+  });
+  assert.deepEqual((filtered.data as Array<{ id: number }>).map(item => item.id), [1]);
+});
+
+test("dirty-toolpath lookup honors an optional operation scope", async () => {
+  const backend = new MockBackend({ operations: [
+    { id: 1, name: "One", toolpathDirty: true },
+    { id: 2, name: "Two", toolpathDirty: true },
+    { id: 3, name: "Three", toolpathDirty: false }
+  ] }, tempAudit());
+  const result = await backend.call({
+    id: "dirty-scope",
+    tool: "get_dirty_toolpaths",
+    arguments: { operationIds: [2, 3] }
+  });
+  assert.deepEqual((result.data as { operationIds: number[] }).operationIds, [2]);
+});
+
+test("capability discovery rejects categories that cannot match registered tools", async () => {
+  const { TOOL_DEFINITIONS } = await import("../src/mcp/registry.js");
+  const discovery = TOOL_DEFINITIONS.find(tool => tool.name === "discover_capabilities");
+  assert.ok(discovery);
+  assert.equal(discovery.inputSchema.safeParse({ category: "read" }).success, true);
+  assert.equal(discovery.inputSchema.safeParse({ category: "inspection" }).success, false);
+});
+
+test("fixture capability status matches the public manifest and withheld tools", async () => {
+  const backend = new MockBackend({}, tempAudit());
+  const result = await backend.call({ id: "fixture-capabilities", tool: "mastercam_capabilities", arguments: {} });
+  const tools = (result.data as { tools: Array<{ name: string; supported: boolean }> }).tools;
+  const byName = new Map(tools.map(tool => [tool.name, tool]));
+  assert.equal(byName.get("analyze_nc_program")?.supported, true);
+  assert.equal(byName.get("regenerate_toolpath")?.supported, false);
+  assert.equal(byName.get("get_audit_history")?.supported, true);
+  assert.equal(byName.has("get_active_part"), false);
+});
+
+test("get_audit_history returns the latest verified audit entries", async () => {
+  const log = tempAudit();
+  log.record({ requestId: "history-old", tool: "preview_operation_parameters" });
+  log.record({ requestId: "history-new", tool: "apply_operation_parameter_preview", verified: false });
+  const backend = new MockBackend({}, log);
+
+  const result = await backend.call({ id: "history-read", tool: "get_audit_history", arguments: { limit: 1 } });
+  assert.equal(result.ok, true);
+  const data = result.data as { enabled: boolean; integrity: string; entries: Array<{ requestId: string }> };
+  assert.equal(data.enabled, true);
+  assert.equal(data.integrity, "verified");
+  assert.deepEqual(data.entries.map(entry => entry.requestId), ["history-new"]);
+});
+
 test("invalid operation id never mutates the first operation (BUG-01)", async () => {
   const backend = new MockBackend({ operations: [{ id: 1, name: "Facing", feed: 30 }, { id: 2, name: "Pocket", feed: 60 }] }, tempAudit());
   const result = await backend.call({ id: "t1", tool: "preview_operation_parameters", arguments: { operationId: 999, changes: { feedRate: { value: 50, unit: "mm/min" } } } });

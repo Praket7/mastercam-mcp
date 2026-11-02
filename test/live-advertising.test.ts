@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { advertisedToolDefinitions } from "../src/mcp/create-server.js";
+import { advertisedToolDefinitions, discoverCapabilitiesPayload } from "../src/mcp/create-server.js";
 import {
   LIVE_NATIVE_STAGE_A_TOOL_NAMES,
   LIVE_NATIVE_STAGE_B_READ_TOOL_NAMES,
@@ -13,6 +13,11 @@ test("Stage-A native bridge calls remain exactly the environment checks", () => 
     [...LIVE_NATIVE_STAGE_A_TOOL_NAMES].sort(),
     ["mastercam_capabilities", "mastercam_status"]
   );
+});
+
+test("the local audit-history tool is available in live mode without a Mastercam mapping", () => {
+  assert.equal(SERVER_LOCAL_TOOL_NAMES.has("get_audit_history"), true);
+  assert.equal(advertisedToolDefinitions("live", undefined, "full").some(tool => tool.name === "get_audit_history"), true);
 });
 
 test("live MCP discovery contains only Stage-A native tools plus server-local utilities", () => {
@@ -68,6 +73,26 @@ test("Stage-B native reads are hidden by default and opt-in explicitly", () => {
       assert.equal(enabledNames.has(name), true, `${name} must be advertised after explicit Stage-B opt-in`);
     }
     assert.equal(enabledNames.has("get_programming_context"), false, "the raw overlapping context call stays internal");
+  } finally {
+    if (previous === undefined) delete process.env.MASTERCAM_MCP_ENABLE_STAGE_B_READS;
+    else process.env.MASTERCAM_MCP_ENABLE_STAGE_B_READS = previous;
+  }
+});
+
+test("live capability discovery identifies Stage-B reads and keeps verification limits explicit", () => {
+  const previous = process.env.MASTERCAM_MCP_ENABLE_STAGE_B_READS;
+  try {
+    process.env.MASTERCAM_MCP_ENABLE_STAGE_B_READS = "1";
+    const definitions = advertisedToolDefinitions("live", undefined, "full");
+    const report = discoverCapabilitiesPayload({}, definitions, "live") as {
+      tools: Array<{ name: string; execution: string }>;
+      nativeStage: string;
+      note: string;
+    };
+    assert.equal(report.tools.find(tool => tool.name === "list_operations")?.execution, "native-stage-b");
+    assert.equal(report.tools.find(tool => tool.name === "analyze_nc_program")?.execution, "server-local");
+    assert.match(report.nativeStage, /Stage B/i);
+    assert.match(report.note, /IMPLEMENTED/i);
   } finally {
     if (previous === undefined) delete process.env.MASTERCAM_MCP_ENABLE_STAGE_B_READS;
     else process.env.MASTERCAM_MCP_ENABLE_STAGE_B_READS = previous;

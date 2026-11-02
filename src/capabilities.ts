@@ -33,7 +33,7 @@ function backendLabel(entry: typeof TOOL_MANIFEST[number]): string {
 
 function evidenceFor(entry: typeof TOOL_MANIFEST[number]): string {
   if (SERVER_LOCAL_TOOL_NAMES.has(entry.name)) {
-    return "Runs entirely in the TypeScript server and is available in fixture or live mode without implying Mastercam API coverage.";
+    return "Handled by the TypeScript server. Composite tools may request backend data; local analyses use supplied inputs. This does not guarantee Mastercam data coverage.";
   }
   return entry.tierEvidence;
 }
@@ -78,7 +78,7 @@ ${rows.join("\n")}
 ## Reading this table honestly
 
 - \`IMPLEMENTED\` means code exists and contract tests can exercise it. It is not proof that a real Mastercam release supports the tool.
-- \`server-local\` means the tool runs entirely in the TypeScript server and can be used alongside either backend; it does not imply a live Mastercam API mapping.
+- \`server-local\` means the TypeScript server handles the tool. Composite tools may request backend data; local analyses use supplied inputs. This does not guarantee Mastercam data coverage.
 - Native adapters default to Stage A. Mastercam 2027 also contains opt-in Stage-B read candidates derived from a runtime-probed programming snapshot; they remain \`IMPLEMENTED\`, not \`LIVE_READ_VERIFIED\`, until licensed acceptance passes.
 - Standalone regeneration is withheld until it is transaction-bound to the exact approved mutation rather than accepting operation ids alone.
 - Simulation and collision results from the fixture backend are synthetic and never prove machine safety.

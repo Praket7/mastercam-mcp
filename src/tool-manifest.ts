@@ -140,9 +140,9 @@ export const TOOL_MANIFEST: readonly ToolManifestEntry[] = [
     tier: "IMPLEMENTED",
     tierEvidence: "The combined reader calls bounded native section reads, with the optional Mastercam 2027 operation snapshot behind MASTERCAM_MCP_ENABLE_STAGE_B_READS=1. Individual section availability is returned; licensed LIVE_READ_VERIFIED acceptance is still required."
   }),
-  read("discover_capabilities", "Show available capabilities grouped by workflow stage", inspection.discoverCapabilitiesSchema),
+  read("discover_capabilities", "List tools available in the current backend and their execution source. Filter by read, preview, write, or advanced category.", inspection.discoverCapabilitiesSchema),
   read("get_fixture_info", "Describe the active fixture backend and its limitations", inspection.getFixtureInfoSchema),
-  read("get_audit_history", "Describe the append-only audit log and current document revision", inspection.getAuditHistorySchema),
+  read("get_audit_history", "Read recent redacted safety events recorded by this MCP server, with their integrity status and whether collection is enabled. It does not include actions outside this server.", inspection.getAuditHistorySchema, { outputDataSchema: inspection.getAuditHistoryOutputSchema }),
 
   read("get_selection", "Report currently selected operations", inspection.getSelectionSchema),
   read("get_selected_entities", "Report selected entities grouped by type", inspection.getSelectedEntitiesSchema),
@@ -164,7 +164,7 @@ export const TOOL_MANIFEST: readonly ToolManifestEntry[] = [
 
   read("verify_change", "Reread one exact operation and compare its current feed and spindle values with expected values after an approved change. It does not verify toolpath regeneration or machine safety.", mutations.VerifyChangeSchema, { outputDataSchema: mutations.verifyChangeOutputSchema, requiresExactTarget: true }),
 
-  read("generate_setup_sheet", "Create a setup sheet from supplied or gathered part, machine, stock, WCS, operation, tool, and note data. Missing inputs remain identified as missing.", inspection.GenerateSetupSheetSchema),
+  read("generate_setup_sheet", "Create a draft setup sheet from data supplied to this call. Omitted sections remain blank; use get_job_context first to gather available job data.", inspection.GenerateSetupSheetSchema),
   read("compare_tool_databases", "Compare two tool database snapshots semantically", inspection.CompareToolDatabasesSchema),
   read("compare_nc_files", "Compare two supplied NC programs by sequence and supported modal changes. This is static review and does not replace a controller-specific simulation.", z.object(inspection.compareNcFilesInput).strict()),
   read("validate_machine_profile", "Validate an operation against a declared machine profile", inspection.ValidateMachineProfileSchema, { outputDataSchema: machine.ValidateMachineProfileOutputSchema }),
@@ -174,7 +174,7 @@ export const TOOL_MANIFEST: readonly ToolManifestEntry[] = [
   read("recommend_job_tooling", "Rank supplied shop or ISO 13399 catalog tool records against grounded job features and material", RecommendJobToolingSchema),
   read("analyze_toolpath_risk", "Review supplied toolpath segments for travel limits, rapid moves, fixture-envelope proximity, and approach angles. Supply the machine and fixture limits; unknown limits are not assumed safe.", AnalyzeToolpathRiskSchema),
   read("analyze_nc_program", "Review supported linear and planar arc G-code for over-travel, rapid, feed, and spindle risks. Unsupported motion is returned as unknown; this static parser does not simulate the controller.", AnalyzeNcProgramSchema),
-  read("analyze_cycle_time", "Estimate cycle time either from exact active-job operations or from supplied motion events. Use active_operations to request Mastercam-backed estimates, or motion_events for a transparent local breakdown and possible air-time reductions. Unsupported or missing motion stays unknown.", CycleTimeToolSchema),
+  read("analyze_cycle_time", "Estimate cycle time from supplied motion events, or request a backend estimate for active operations when that backend supports it. Fixture estimates are synthetic; current native adapters do not provide cycle-time estimates. Unsupported or missing motion stays unknown.", CycleTimeToolSchema),
   read("generate_operation_packet", "Generate setup and operation notes from the supplied operation tree and tool records", GenerateOperationPacketSchema),
   read("calculate_thread_tap", "Calculate metric or unified thread and tapping guidance from explicit part dimensions and callouts. It does not extract thread features from CAD or replace the insert and tap-maker data.", CalculateThreadTapSchema),
   preview("plan_od_rough_finish", "Draft a non-executable OD roughing and finishing plan from the supplied profile, material, machine limits, and available tool records. It does not create a Mastercam operation or posted code.", PlanOdRoughFinishSchema),
