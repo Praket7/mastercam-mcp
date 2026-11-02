@@ -273,6 +273,31 @@ test("unified thread callout parses fractional diameter and TPI", () => {
   assert.ok(Math.abs((result.cutting.feedRate ?? 0) - 50) < 1e-9);
 });
 
+test("malformed thread callouts cannot produce zero, infinite, or non-finite geometry", () => {
+  for (const [system, callout] of [
+    ["metric", "M10x0"],
+    ["metric", "M0x1.5"],
+    ["unified", "1/4-0"],
+    ["unified", "1/0-20"]
+  ] as const) {
+    const result = calculateThreadTap({ system, geometry: { callout } });
+    assert.equal(result.status, "INSUFFICIENT_GEOMETRY", callout);
+    assert.doesNotMatch(JSON.stringify(result), /null/, "invalid geometry is not serialized as a non-finite number");
+  }
+  assert.throws(() => calculateThreadTap({
+    system: "metric",
+    geometry: { nominalDiameter: 10, pitch: Number.MIN_VALUE }
+  }), /Too small|too small|min/i, "subnormal pitches are rejected before reciprocal conversion");
+  assert.equal(calculateThreadTap({
+    system: "unified",
+    geometry: { nominalDiameter: 0.25, pitch: 0.05, tpi: 10 }
+  }).status, "INVALID_GEOMETRY", "conflicting pitch and TPI must not be mixed in one calculation");
+  assert.throws(() => calculateThreadTap({
+    system: "metric",
+    geometry: { nominalDiameter: Number.MAX_VALUE, pitch: 1 }
+  }), /Too big|too big|max/i, "physically absurd magnitudes are rejected by the input bounds");
+});
+
 test("form-tap calculation refuses to invent a generic drill recommendation", () => {
   const result = calculateThreadTap({
     system: "metric",
@@ -344,6 +369,66 @@ test("OD plan blocks when shop tooling cannot support finish operation", () => {
   });
   assert.equal(result.status, "BLOCKED");
   assert.ok(result.blockers.some(item => item.includes("finish-turning")));
+});
+
+test("OD planning bounds pathological pass previews instead of allocating without limit", () => {
+  const result = planOdRoughFinish({
+    intent: "check extreme pass count",
+    units: "mm",
+    material: "steel",
+    stockDiameter: 1_000_000_000_000_000,
+    profile: [{ z: 0, diameter: 10 }, { z: -10, diameter: 10 }],
+    finishAllowanceRadial: 0,
+    roughDepthRadial: 1e-9,
+    tools: [
+      { name: "rough", operations: ["turning rough"], materials: ["steel"] },
+      { name: "finish", operations: ["turning finish"], materials: ["steel"] }
+    ]
+  });
+  assert.equal(result.status, "BLOCKED");
+  assert.ok(result.blockers.some(item => item.includes("pass preview")));
+  assert.equal(result.plan.roughPassCount, null);
+  assert.equal(result.plan.roughPasses.length, 0);
+  assert.equal(result.plan.roughPassesTruncated, true);
+
+  const boundedPreview = planOdRoughFinish({
+    intent: "preview the pass limit",
+    units: "mm",
+    material: "steel",
+    stockDiameter: 2012,
+    profile: [{ z: 0, diameter: 10 }, { z: -10, diameter: 10 }],
+    finishAllowanceRadial: 0,
+    roughDepthRadial: 1,
+    tools: [
+      { name: "rough", operations: ["turning rough"], materials: ["steel"] },
+      { name: "finish", operations: ["turning finish"], materials: ["steel"] }
+    ]
+  });
+  assert.equal(boundedPreview.plan.roughPassCount, 1001);
+  assert.equal(boundedPreview.plan.roughPasses.length, 1000);
+  assert.equal(boundedPreview.plan.roughPassesTruncated, true);
+});
+
+test("toolpath-risk rejects inverted bounds and values outside the numeric safety envelope", () => {
+  const base = {
+    segments: [{
+      id: "s1", motion: "feed" as const,
+      start: { x: 0, y: 0, z: 0 }, end: { x: 1, y: 1, z: 1 }
+    }],
+    machine: { travel: { min: { x: 0, y: 0, z: 0 }, max: { x: 10, y: 10, z: 10 } } }
+  };
+  assert.throws(() => analyzeToolpathRisk({
+    ...base,
+    machine: { travel: { min: { x: 2, y: 0, z: 0 }, max: { x: 1, y: 10, z: 10 } } }
+  }), /Minimum x bound/i);
+  assert.throws(() => analyzeToolpathRisk({
+    ...base,
+    segments: [{
+      id: "s1", motion: "feed",
+      start: { x: Number.MAX_VALUE, y: 0, z: 0 }, end: { x: 1, y: 1, z: 1 }
+    }]
+  }), /too big|max/i);
+  assert.throws(() => analyzeCycleTime({ events: [], machineRapidRate: Number.MIN_VALUE }), /Too small|too small|min/i);
 });
 
 test("new intelligence tools are server-local and registered", () => {

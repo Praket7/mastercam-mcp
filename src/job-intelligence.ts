@@ -2,8 +2,11 @@ import * as z from "zod/v4";
 import { sha256Of } from "./audit/audit-log.js";
 import { OperationIdsSchema } from "./schemas/common.js";
 
-const Finite = z.number().finite();
-const Positive = z.number().finite().positive();
+// Manufacturing inputs outside these bounds are almost certainly unit mistakes.
+// Bound them before geometry and time arithmetic so IEEE-754 overflow cannot
+// turn an unsafe result into Infinity, NaN, or a misleading empty finding set.
+const Finite = z.number().finite().min(-1_000_000_000_000).max(1_000_000_000_000);
+const Positive = z.number().finite().min(1e-9).max(1_000_000_000_000_000);
 
 export const Vector3Schema = z.object({
   x: Finite,
@@ -14,7 +17,13 @@ export const Vector3Schema = z.object({
 export const Bounds3Schema = z.object({
   min: Vector3Schema,
   max: Vector3Schema
-}).strict();
+}).strict().superRefine((bounds, context) => {
+  for (const axis of ["x", "y", "z"] as const) {
+    if (bounds.min[axis] > bounds.max[axis]) {
+      context.addIssue({ code: "custom", message: `Minimum ${axis} bound must not exceed its maximum`, path: ["min", axis] });
+    }
+  }
+});
 
 const ProvenanceSchema = z.object({
   source: z.string().min(1).max(256),
@@ -772,14 +781,23 @@ export function generateOperationPacket(input: z.infer<typeof GenerateOperationP
 
 function parseFraction(value: string): number | undefined {
   const trimmed = value.trim();
-  if (/^\d+(?:\.\d+)?$/.test(trimmed)) return Number(trimmed);
+  if (/^\d+(?:\.\d+)?$/.test(trimmed)) {
+    const parsed = Number(trimmed);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+  }
   const mixed = trimmed.match(/^(\d+)?\s*(\d+)\/(\d+)$/);
   if (!mixed) return undefined;
   const whole = mixed[1] ? Number(mixed[1]) : 0;
   const numerator = Number(mixed[2]);
   const denominator = Number(mixed[3]);
   if (!denominator) return undefined;
-  return whole + numerator / denominator;
+  const parsed = whole + numerator / denominator;
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+function parsePositiveNumber(value: string): number | undefined {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
 }
 
 function resolveThreadGeometry(input: z.infer<typeof CalculateThreadTapSchema>) {
@@ -791,8 +809,8 @@ function resolveThreadGeometry(input: z.infer<typeof CalculateThreadTapSchema>) 
   if (callout && input.system === "metric") {
     const match = callout.match(/^M\s*(\d+(?:\.\d+)?)\s*[xX×]\s*(\d+(?:\.\d+)?)/i);
     if (match) {
-      nominalDiameter ??= Number(match[1]);
-      pitch ??= Number(match[2]);
+      nominalDiameter ??= parsePositiveNumber(match[1] ?? "");
+      pitch ??= parsePositiveNumber(match[2] ?? "");
     }
   }
 
@@ -800,7 +818,7 @@ function resolveThreadGeometry(input: z.infer<typeof CalculateThreadTapSchema>) 
     const match = callout.match(/^([\d./\s]+)\s*-\s*(\d+(?:\.\d+)?)/i);
     if (match) {
       nominalDiameter ??= parseFraction(match[1] ?? "");
-      tpi ??= Number(match[2]);
+      tpi ??= parsePositiveNumber(match[2] ?? "");
     }
   }
 
@@ -813,6 +831,15 @@ function resolveThreadGeometry(input: z.infer<typeof CalculateThreadTapSchema>) 
 export function calculateThreadTap(input: z.infer<typeof CalculateThreadTapSchema>) {
   input = CalculateThreadTapSchema.parse(input);
   const resolved = resolveThreadGeometry(input);
+  const coreGeometry = [resolved.nominalDiameter, resolved.pitch, resolved.tpi];
+  if (coreGeometry.some(value => value !== undefined && (!Number.isFinite(value) || value <= 0))) {
+    return {
+      schema: "mastercam-mcp/thread-tap/v1",
+      status: "INVALID_GEOMETRY",
+      callout: resolved.callout,
+      reason: "The supplied thread dimensions produce a non-finite or non-positive pitch/diameter."
+    };
+  }
   if (resolved.nominalDiameter === undefined || resolved.pitch === undefined) {
     return {
       schema: "mastercam-mcp/thread-tap/v1",
@@ -827,6 +854,21 @@ export function calculateThreadTap(input: z.infer<typeof CalculateThreadTapSchem
 
   const d = resolved.nominalDiameter;
   const p = resolved.pitch;
+  const expectedPitch = resolved.tpi === undefined
+    ? undefined
+    : input.system === "metric" ? 25.4 / resolved.tpi : 1 / resolved.tpi;
+  const pitchTolerance = expectedPitch === undefined
+    ? 0
+    : Math.max(1e-12, Math.max(p, expectedPitch) * 1e-3);
+  if (p >= d || (expectedPitch !== undefined &&
+      Math.abs(p - expectedPitch) > pitchTolerance)) {
+    return {
+      schema: "mastercam-mcp/thread-tap/v1",
+      status: "INVALID_GEOMETRY",
+      callout: resolved.callout,
+      reason: "Pitch must be smaller than nominal diameter, and supplied pitch/TPI values must agree."
+    };
+  }
   const warnings: string[] = [];
   let tapDrill: number | undefined;
 
@@ -852,6 +894,17 @@ export function calculateThreadTap(input: z.infer<typeof CalculateThreadTapSchem
       ? rpm * p
       : rpm / (resolved.tpi ?? (1 / p))
     : undefined;
+
+  if ([pitchDiameter, basicInternalMinorDiameter, tapDrill, rpm, feedRate].some(
+    value => value !== undefined && !Number.isFinite(value)
+  ) || pitchDiameter <= 0 || basicInternalMinorDiameter <= 0 || (tapDrill !== undefined && tapDrill <= 0)) {
+    return {
+      schema: "mastercam-mcp/thread-tap/v1",
+      status: "INVALID_GEOMETRY",
+      callout: resolved.callout,
+      reason: "The supplied dimensions or cutting inputs produce invalid derived thread values."
+    };
+  }
 
   return {
     schema: "mastercam-mcp/thread-tap/v1",
@@ -905,6 +958,7 @@ function operationToolCandidates(
 }
 
 export function planOdRoughFinish(input: z.infer<typeof PlanOdRoughFinishSchema>) {
+  const maxRoughPassPreview = 1000;
   input = PlanOdRoughFinishSchema.parse(input);
   const minProfileDiameter = Math.min(...input.profile.map(point => point.diameter));
   const maxProfileDiameter = Math.max(...input.profile.map(point => point.diameter));
@@ -932,8 +986,15 @@ export function planOdRoughFinish(input: z.infer<typeof PlanOdRoughFinishSchema>
   }
 
   const roughRemoval = Math.max(0, radialRemoval - input.finishAllowanceRadial);
-  const passCount = roughDepth !== undefined && roughDepth > 0 ? Math.ceil(roughRemoval / roughDepth) : 0;
-  const roughPasses = Array.from({ length: passCount }, (_, index) => {
+  const calculatedPassCount = roughDepth !== undefined && roughDepth > 0
+    ? Math.ceil(roughRemoval / roughDepth)
+    : 0;
+  const passCount = Number.isSafeInteger(calculatedPassCount) ? calculatedPassCount : null;
+  const roughPassesTruncated = passCount === null || passCount > maxRoughPassPreview;
+  if (roughPassesTruncated) {
+    blockers.push(`Roughing plan exceeds the ${maxRoughPassPreview}-pass preview limit; adjust stock or verified roughing depth before planning.`);
+  }
+  const roughPasses = Array.from({ length: passCount === null ? 0 : Math.min(passCount, maxRoughPassPreview) }, (_, index) => {
     const remainingBeforeFinish = Math.max(
       input.finishAllowanceRadial,
       roughRemoval - roughDepth! * (index + 1) + input.finishAllowanceRadial
@@ -979,6 +1040,7 @@ export function planOdRoughFinish(input: z.infer<typeof PlanOdRoughFinishSchema>
       roughDepthRadial: roughDepth,
       roughPassCount: passCount,
       roughPasses,
+      roughPassesTruncated,
       finishPass: {
         profileRadialOffset: 0,
         profile: input.profile

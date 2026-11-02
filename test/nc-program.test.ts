@@ -105,6 +105,13 @@ test("maps explicitly supplied work offsets to machine travel and fails closed f
   assert.ok(missing.findings.some(item => item.code === "work_offset_missing"));
   assert.ok(!missing.risk?.findings.some(item => item.id === "machine_overtravel"));
   assert.ok(!missing.risk?.findings.some(item => item.id === "fixture_intersection"), "fixture checks are skipped in untransformed coordinates");
+
+  const translatedOutOfRange = analyzeNcProgram({
+    ...input,
+    workOffsets: { G54: { x: 1_000_000_000_000, y: 0, z: 0 } }
+  });
+  assert.equal(translatedOutOfRange.status, "REVIEW");
+  assert.ok(translatedOutOfRange.findings.some(item => item.code === "coordinate_range"));
 });
 
 test("requires explicit motion mode and keeps G95 feed timing unknown", () => {
@@ -118,4 +125,35 @@ test("requires explicit motion mode and keeps G95 feed timing unknown", () => {
   assert.ok(result.findings.some(item => item.code === "motion_mode_unknown"));
   assert.ok(result.findings.some(item => item.code === "feed_per_revolution"));
   assert.ok(result.findings.some(item => item.code === "feed_unknown"));
+});
+
+test("stops at non-finite NC words and marks the unparsed suffix unknown", () => {
+  const oversizedCoordinate = "9".repeat(400);
+  const result = analyzeNcProgram({
+    program: `G21 G90 G0 X${oversizedCoordinate}\nG1 X20 F100`,
+    units: "mm",
+    coordinateFrame: "machine",
+    initialPosition: { x: 0, y: 0, z: 50 },
+    machine
+  });
+  assert.equal(result.status, "REVIEW");
+  assert.equal(result.summary.parsedLinearSegments, 0);
+  assert.ok(result.findings.some(item => item.code === "non_finite_word"));
+  assert.match(result.findings.find(item => item.code === "non_finite_word")?.message ?? "", /remaining program is not analyzed/i);
+});
+
+test("stops before cumulative incremental coordinates exceed the supported envelope", () => {
+  const result = analyzeNcProgram({
+    program: "G21 G91 G0 X1000000000000\nX1000000000000\nX1",
+    units: "mm",
+    coordinateFrame: "machine",
+    initialPosition: { x: 0, y: 0, z: 50 },
+    machine: {
+      ...machine,
+      travel: { min: { x: -1_000_000_000_000, y: -200, z: -200 }, max: { x: 1_000_000_000_000, y: 200, z: 200 } }
+    }
+  });
+  assert.equal(result.status, "REVIEW");
+  assert.equal(result.summary.parsedLinearSegments, 1);
+  assert.ok(result.findings.some(item => item.code === "coordinate_range"));
 });

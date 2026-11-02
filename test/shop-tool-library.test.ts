@@ -65,3 +65,27 @@ test("maps publisher ISO 13399 tool records without inventing cutting data", () 
     rmSync(directory, { recursive: true, force: true });
   }
 });
+
+test("converts inch-only ISO dimensions to the library's millimeter unit", () => {
+  const directory = mkdtempSync(join(tmpdir(), "mastercam-iso-inch-catalog-"));
+  try {
+    const path = join(directory, "catalog.json");
+    writeFileSync(path, JSON.stringify({
+      schemaVersion: "1.1",
+      publisher: "Test Toolmaker",
+      tools: [{
+        toolNbr: "EM-050",
+        name: "Half inch end mill",
+        toolTypes: ["End Mill"],
+        specs: { DC: { in: 0.5 }, APMX: { in: 1 }, OAL: { in: 3 } }
+      }]
+    }));
+    const library = loadShopToolLibrary(path);
+    assert.equal(library?.units, "mm");
+    assert.equal(library?.tools[0]?.diameter, 12.7);
+    assert.equal(library?.tools[0]?.fluteLength, 25.4);
+    assert.ok(Math.abs((library?.tools[0]?.overallLength ?? 0) - 76.2) < 1e-10);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});

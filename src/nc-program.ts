@@ -2,8 +2,9 @@ import * as z from "zod/v4";
 import { analyzeCycleTime, analyzeToolpathRisk, AnalyzeCycleTimeSchema, Bounds3Schema, Vector3Schema } from "./job-intelligence.js";
 import { sha256Of } from "./audit/audit-log.js";
 
-const Positive = z.number().finite().positive();
-const Nonnegative = z.number().finite().nonnegative();
+const Positive = z.number().finite().min(1e-9).max(1_000_000_000_000_000);
+const Nonnegative = z.number().finite().min(0).max(1_000_000_000_000);
+const MAX_NC_WORD_MAGNITUDE = 1_000_000_000_000;
 
 export const AnalyzeNcProgramSchema = z.object({
   program: z.string().min(1).max(1_000_000),
@@ -179,13 +180,21 @@ export function analyzeNcProgram(input: Input) {
   const unknown = (line: number, code: string, message: string) => findings.push({ line, code, message });
 const supportedG = new Set([0, 1, 2, 3, 4, 17, 18, 19, 20, 21, 28, 30, 40, 41, 42, 43, 49, 53, 54, 55, 56, 57, 58, 59, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 90.1, 91, 91.1, 94, 95, 96, 97]);
 
-  for (const [index, raw] of input.program.split(/\r?\n/).entries()) {
+  programLines: for (const [index, raw] of input.program.split(/\r?\n/).entries()) {
     const lineNumber = index + 1;
     const text = stripComments(raw).replace(/^\s*%\s*$/, "");
     if (!text) continue;
     if (/[#=\x5B\x5D]/.test(text)) unknown(lineNumber, "macro_or_expression", "Macro/expression syntax is not evaluated; affected motion is not verified");
 
     const parsed = words(text);
+    const invalidWords = [...parsed.entries()].flatMap(([letter, values]) =>
+      values.filter(value => !Number.isFinite(value) || Math.abs(value) > MAX_NC_WORD_MAGNITUDE)
+        .map(value => `${letter}${String(value)}`)
+    );
+    if (invalidWords.length > 0) {
+      unknown(lineNumber, "non_finite_word", `NC word(s) exceed the supported numeric range (${invalidWords.join(", ")}); remaining program is not analyzed`);
+      break;
+    }
     const gCodes = parsed.get("G") ?? [];
     const mCodes = parsed.get("M") ?? [];
     const unsupportedG = gCodes.filter(code => !supportedG.has(code));
@@ -265,7 +274,13 @@ const supportedG = new Set([0, 1, 2, 3, 4, 17, 18, 19, 20, 21, 28, 30, 40, 41, 4
       const value = last(parsed, axis);
       if (value === undefined) continue;
       const scaled = value * scale;
-      position[axis.toLowerCase() as "x" | "y" | "z"] = absolute ? scaled : position[axis.toLowerCase() as "x" | "y" | "z"] + scaled;
+      const key = axis.toLowerCase() as "x" | "y" | "z";
+      const next = absolute ? scaled : position[key] + scaled;
+      if (!Number.isFinite(next) || Math.abs(next) > MAX_NC_WORD_MAGNITUDE) {
+        unknown(lineNumber, "coordinate_range", `Transformed ${axis} position exceeds the supported coordinate range; remaining program is not analyzed`);
+        break programLines;
+      }
+      position[key] = next;
     }
     const end = { ...position };
     const cycleLine = gCodes.some(code => Math.trunc(code) >= 81 && Math.trunc(code) <= 89);
@@ -327,11 +342,16 @@ const supportedG = new Set([0, 1, 2, 3, 4, 17, 18, 19, 20, 21, 28, 30, 40, 41, 4
         y: point.y + workOffset.y,
         z: point.z + workOffset.z
       } : point;
+      const machinePoints = arc.points.map(toMachine);
+      if (machinePoints.some(point => !Vector3Schema.safeParse(point).success)) {
+        unknown(lineNumber, "coordinate_range", "Translated arc exceeds the supported coordinate range; remaining program is not analyzed");
+        break programLines;
+      }
       for (let i = 1; i < arc.points.length; i++) segments.push({
         id: `${id}.${i}`,
         motion: "feed",
-        start: toMachine(arc.points[i - 1]!),
-        end: toMachine(arc.points[i]!),
+        start: machinePoints[i - 1]!,
+        end: machinePoints[i]!,
         feedRate: feed,
         ...(spindle !== undefined && constantRpm ? { spindleRpm: spindle } : {}),
         engagement: "unknown",
@@ -341,15 +361,26 @@ const supportedG = new Set([0, 1, 2, 3, 4, 17, 18, 19, 20, 21, 28, 30, 40, 41, 4
       events.push({ id, kind: "move", motion: "feed", start, end, pathLength: arc.length, ...(feedPerMinute && feed !== undefined ? { feedRate: feed } : {}) });
       continue;
     }
+    const workOffset = input.coordinateFrame === "work" ? workOffsets[currentWorkOffset] : undefined;
+    const machineStart: Vec = workOffset ? {
+      x: start.x + workOffset.x,
+      y: start.y + workOffset.y,
+      z: start.z + workOffset.z
+    } : start;
+    const machineEnd: Vec = workOffset ? {
+      x: end.x + workOffset.x,
+      y: end.y + workOffset.y,
+      z: end.z + workOffset.z
+    } : end;
+    if (!Vector3Schema.safeParse(machineStart).success || !Vector3Schema.safeParse(machineEnd).success) {
+      unknown(lineNumber, "coordinate_range", "Translated move exceeds the supported coordinate range; remaining program is not analyzed");
+      break programLines;
+    }
     const segment: Segment = {
       id,
       motion,
-      start: input.coordinateFrame === "work" && workOffsets[currentWorkOffset]
-        ? { x: start.x + workOffsets[currentWorkOffset]!.x, y: start.y + workOffsets[currentWorkOffset]!.y, z: start.z + workOffsets[currentWorkOffset]!.z }
-        : start,
-      end: input.coordinateFrame === "work" && workOffsets[currentWorkOffset]
-        ? { x: end.x + workOffsets[currentWorkOffset]!.x, y: end.y + workOffsets[currentWorkOffset]!.y, z: end.z + workOffsets[currentWorkOffset]!.z }
-        : end,
+      start: machineStart,
+      end: machineEnd,
       ...(motion === "feed" && feed !== undefined ? { feedRate: feed } : {}),
       ...(spindle !== undefined && constantRpm ? { spindleRpm: spindle } : {}),
       engagement: "unknown",
