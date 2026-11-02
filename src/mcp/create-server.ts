@@ -388,17 +388,12 @@ export function createMcpServer(
               tool: name,
               data: { sections: context, unavailable: entries.filter(([, value]) => value.status === "unavailable").map(([section]) => section) }
             };
-          } else if (name === "mastercam_doctor") {
-            result = await doctor(process.env.MASTERCAM_MCP_PIPE ?? defaultPipe(), selectedBackend());
           } else if (name === "discover_capabilities") {
             result = {
               ok: true,
               tool: name,
               data: discoverCapabilitiesPayload(args, definitions, backendKind)
             };
-          } else if (name === "get_compatibility_matrix") {
-            const { compatibilityReport } = await import("../compatibility.js");
-            result = { ok: true, tool: name, data: compatibilityReport() };
           } else if (name === "generate_setup_sheet") {
             result = { ok: true, tool: name, data: setupSheet(args as never) };
           } else if (name === "compare_tool_databases") {

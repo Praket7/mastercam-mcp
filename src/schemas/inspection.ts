@@ -2,44 +2,8 @@ import * as z from "zod/v4";
 import { OperationIdSchema, OperationIdsSchema, ToolIdSchema, BoundedStringArray, OptionalText, emptySchema } from "./common.js";
 import { ValidateMachineProfileInputSchema } from "./machine.js";
 
-const optionalOperationId = OperationIdSchema.optional();
 const optionalOperationIds = OperationIdsSchema.optional();
 
-export const mastercamStatusSchema = emptySchema;
-export const mastercamStatusOutputSchema = z.object({
-  connected: z.boolean(),
-  backend: z.string(),
-  adapter: z.string(),
-  runtime: z.string(),
-  mastercamVersion: z.string(),
-  protocolVersion: z.number(),
-  stageBReadsEnabled: z.boolean().optional(),
-  stageBProgrammingContextProbe: z.object({
-    searchManagerFound: z.boolean(),
-    getOperationsFound: z.boolean(),
-    searchManagerAssembly: z.string().nullable().optional(),
-    getOperationsReturnType: z.string().nullable().optional(),
-    notes: z.array(z.string())
-  }).optional()
-});
-export const mastercamCapabilitiesSchema = z.object({ refresh: z.boolean().optional() }).strict();
-export const mastercamCapabilitiesOutputSchema = z.object({
-  adapterVersion: z.string(),
-  mastercamVersion: z.string(),
-  runtime: z.string(),
-  protocol: z.string(),
-  tools: z.array(z.unknown()),
-  note: z.string()
-});
-export const getActivePartSchema = emptySchema;
-export const getActivePartOutputSchema = z.object({
-  name: z.string(),
-  path: z.string(),
-  units: z.string(),
-  modified: z.boolean(),
-  documentRevision: z.string()
-});
-export const getGeometrySummarySchema = z.object({ operationId: optionalOperationId }).strict();
 export const getSelectionSchema = emptySchema;
 export const listMachineGroupsSchema = emptySchema;
 
@@ -92,10 +56,6 @@ export const getOperationRisksSchema = z.object({ operationId: OperationIdSchema
 export const listToolsSchema = z.object({ limit: z.number().int().min(1).max(500).default(200).describe("Maximum referenced job tools to return, from 1 to 500. This is not a complete .TOOLDB listing.") }).strict();
 export const getToolSchema = z.object({ toolId: ToolIdSchema.describe("Exact identifier, tool number, or unique name of a tool referenced by the active job.") }).strict();
 
-export const getStockSchema = emptySchema;
-export const getWcsSchema = emptySchema;
-export const getPostProcessorSchema = emptySchema;
-export const getMachineContextSchema = emptySchema;
 export const getDirtyToolpathsSchema = z.object({ operationIds: optionalOperationIds }).strict();
 export const getSelectedEntitiesSchema = emptySchema;
 
@@ -109,10 +69,6 @@ export const captureViewSchema = z.object({
   width: z.number().int().min(64).max(1920).default(1024),
   height: z.number().int().min(64).max(1080).default(768),
   format: z.enum(["png", "jpeg"]).default("png")
-}).strict();
-
-export const getProgrammingContextSchema = z.object({
-  includeGeometry: z.boolean().default(false).describe("Include a bounded geometry summary when supported.")
 }).strict();
 
 export const getJobContextSchema = z.object({
@@ -134,19 +90,42 @@ export const getJobContextOutputSchema = z.object({
 }).strict();
 
 export const getServerReadinessSchema = emptySchema;
+const DoctorCheckSchema = z.object({
+  ok: z.boolean(),
+  value: z.unknown(),
+  required: z.string().optional()
+}).strict();
+const NativeReadResultSchema = <T extends z.ZodType>(dataSchema: T) => z.union([
+  dataSchema,
+  z.object({ error: z.unknown() }).strict()
+]);
 export const getServerReadinessOutputSchema = z.object({
-  diagnostics: z.unknown(),
-  connection: z.unknown(),
-  capabilities: z.unknown()
+  diagnostics: z.object({
+    checks: z.record(z.string(), DoctorCheckSchema),
+    backend: z.string(),
+    installations: z.array(z.unknown()),
+    compatibility: z.unknown(),
+    guidance: z.string()
+  }).strict(),
+  connection: NativeReadResultSchema(z.object({
+    connected: z.boolean(),
+    backend: z.string(),
+    adapter: z.string(),
+    runtime: z.string(),
+    mastercamVersion: z.string(),
+    protocolVersion: z.number()
+  })),
+  capabilities: NativeReadResultSchema(z.object({
+    adapterVersion: z.string(),
+    mastercamVersion: z.string(),
+    runtime: z.string(),
+    protocol: z.string(),
+    tools: z.array(z.unknown()),
+    note: z.string()
+  }))
 }).strict();
 
-export const getVersionReportSchema = emptySchema;
-export const mastercamDoctorSchema = emptySchema;
-export const mastercamHelpSchema = emptySchema;
-export const listToolCategoriesSchema = emptySchema;
 export const discoverCapabilitiesSchema = z.object({ category: OptionalText(64) }).strict();
-export const getCompatibilityMatrixSchema = emptySchema;
-export const clientSetupCheckSchema = emptySchema;
 export const getAuditHistorySchema = z.object({ limit: z.number().int().min(1).max(500).default(50).describe("Maximum audit entries to return, from 1 to 500.") }).strict();
 export const getFixtureInfoSchema = emptySchema;
 export const compareNcFilesInput = {
@@ -172,5 +151,3 @@ export const GenerateSetupSheetSchema = z.object({
 }).strict();
 
 export const SHOP_TOOLS = ["generate_setup_sheet", "compare_tool_databases", "compare_nc_files", "validate_machine_profile"] as const;
-export const Bounded = { BoundedStringArray, OptionalText };
-export const _internal = { optionalOperationId, optionalOperationIds, emptySchema };
