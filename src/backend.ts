@@ -7,6 +7,8 @@ import { Scheduler } from "./scheduler/request-scheduler.js";
 import { feedToMmPerMinute, sameFeed, formatFeed, formatSpindle } from "./schemas/units.js";
 import type { FeedRate, SpindleSpeed } from "./schemas/units.js";
 import type { QuantitySnapshot } from "./safety/approval.js";
+import { TOOL_MANIFEST } from "./tool-manifest.js";
+import { CAPABILITY_REGISTRY } from "./capabilities.js";
 
 /** Envelope returned by every backend tool call. */
 export interface ToolResult {
@@ -74,6 +76,17 @@ function operationFeed(operation: Record<string, unknown>): FeedRate {
 
 function operationSpeed(operation: Record<string, unknown>): SpindleSpeed {
   return toSpeed(operation.spindleSpeed);
+}
+
+function boundedInteger(value: unknown, fallback: number, min: number, max: number): number {
+  return typeof value === "number" && Number.isInteger(value)
+    ? Math.max(min, Math.min(max, value))
+    : fallback;
+}
+
+function operationListing(operation: Record<string, unknown>): Record<string, unknown> {
+  const feedRate = operationFeed(operation);
+  return { ...operation, feed: feedRate, feedRate, spindleSpeed: operationSpeed(operation) };
 }
 
 function errorResult(tool: string, error: MastercamErrorImpl | Error): ToolResult {
@@ -155,16 +168,29 @@ export class MockBackend implements Backend {
     if (tool === "get_geometry_summary") return this.ok(request, { solids: 1, surfaces: 6, curves: 12, boundingBox: { x: 100, y: 80, z: 25, unit: "mm" }, units: "mm" });
     if (tool === "get_selection") return this.ok(request, { operationIds: this.selected, count: this.selected.length });
     if (tool === "list_machine_groups" || tool === "get_machine_groups") return this.ok(request, [{ id: "mill", name: "Mill machine group", type: "mill" }]);
-    if (tool === "list_operations") return this.ok(request, this.operations.map(item => {
-      const feedRate = operationFeed(item);
-      return { ...item, feed: feedRate, feedRate, spindleSpeed: operationSpeed(item) };
-    }));
+    if (tool === "list_operations") {
+      const limit = boundedInteger(args.limit, 100, 1, 500);
+      const offset = boundedInteger(args.offset, 0, 0, Number.MAX_SAFE_INTEGER);
+      const operationType = typeof args.operationType === "string" ? args.operationType.trim().toLowerCase() : "";
+      const matching = this.operations.filter(item =>
+        !operationType || String(item.type ?? "").toLowerCase().includes(operationType)
+      );
+      return this.ok(request, matching.slice(offset, offset + limit).map(operationListing));
+    }
     if (tool === "find_operations") {
-      const query = String(args.query ?? "").toLowerCase();
-      return this.ok(request, this.operations.filter(item => !query || JSON.stringify(item).toLowerCase().includes(query)).map(item => {
-        const feedRate = operationFeed(item);
-        return { ...item, feed: feedRate, feedRate, spindleSpeed: operationSpeed(item) };
-      }));
+      const query = typeof args.query === "string" ? args.query.trim().toLowerCase() : "";
+      const operationType = typeof args.operationType === "string" ? args.operationType.trim().toLowerCase() : "";
+      const toolNumber = typeof args.toolNumber === "number" ? args.toolNumber : undefined;
+      const limit = boundedInteger(args.limit, 50, 1, 200);
+      const matches = this.operations.filter(item => {
+        const name = String(item.name ?? "").toLowerCase();
+        const type = String(item.type ?? "").toLowerCase();
+        const assignedTool = Number(item.tool ?? item.toolNumber);
+        return (!query || name.includes(query) || type.includes(query)) &&
+          (!operationType || type.includes(operationType)) &&
+          (toolNumber === undefined || assignedTool === toolNumber);
+      });
+      return this.ok(request, matches.slice(0, limit).map(operationListing));
     }
     if (tool === "get_operation" || tool === "inspect") {
       const op = this.resolveTarget(args);
@@ -212,7 +238,16 @@ export class MockBackend implements Backend {
       const op = this.resolveTarget(args);
       return this.ok(request, { operationId: op.id, generated: op.toolpathDirty !== true, valid: true, collisionState: "not_checked" });
     }
-    if (tool === "get_dirty_toolpaths") return this.ok(request, { operationIds: this.operations.filter(op => op.toolpathDirty === true).map(op => op.id) });
+    if (tool === "get_dirty_toolpaths") {
+      const requested = Array.isArray(args.operationIds)
+        ? new Set((args.operationIds as unknown[]).map(Number))
+        : undefined;
+      return this.ok(request, {
+        operationIds: this.operations
+          .filter(op => op.toolpathDirty === true && (!requested || requested.has(Number(op.id))))
+          .map(op => op.id)
+      });
+    }
     if (tool === "get_selected_entities") return this.ok(request, { operationIds: this.selected, count: this.selected.length });
     if (tool === "get_post_processor") return this.ok(request, { name: "fixture-post", extension: ".nc", machine: "mock-mill" });
     if (tool === "get_machine_context") return this.ok(request, { machine: { name: "fixture mill", type: "mill", axes: 3 }, stock: { x: 110, y: 90, z: 30, unit: "mm" }, workholding: { state: "fixture_placeholder", verified: false }, wcs: "WCS 1", safety: "not_verified" });
@@ -319,7 +354,9 @@ export class MockBackend implements Backend {
 
     if (tool === "get_version_report") return this.ok(request, { mastercam: "fixture", netHook: "fixture", supported: ["mock"], liveMappingsVerified: false });
     if (tool === "get_fixture_info") return this.ok(request, { backend: "mock", fixture: true, replayable: true, liveMastercamRequired: false, limitations: ["Geometry and kinematics are synthetic", "Collision results are not evidence of machine safety"] });
-    if (tool === "get_audit_history") return this.ok(request, { note: "Audit entries are append-only on disk; see MASTERCAM_MCP_AUDIT_PATH", documentRevision: this.revision });
+    if (tool === "get_audit_history") {
+      return this.ok(request, await this.audit.getRecentEntries(boundedInteger(args.limit, 50, 1, 500)));
+    }
 
     return { ok: false, tool, error: { code: "UNSUPPORTED_TOOL", message: `Tool ${tool} is not implemented by the mock backend`, remediation: "See mastercam_capabilities for supported tools" } };
   }
@@ -577,36 +614,31 @@ export class MockBackend implements Backend {
   }
 
   private capabilities() {
-    const tools = [
-      ...["mastercam_status", "mastercam_capabilities", "get_active_part", "list_operations", "get_operation", "find_operations", "explain_operation", "get_operation_risks", "get_operation_parameters", "get_stock", "get_wcs", "list_tools", "get_machine_context", "get_programming_context", "get_dirty_toolpaths"].map(name => ({
-        name, supported: true, riskClass: "read", tier: "IMPLEMENTED", mappingVersion: 1
-      })),
-      ...["preview_operation_parameters", "apply_operation_parameter_preview", "rollback_change", "regenerate_toolpath"].map(name => ({
-        name, supported: true, riskClass: "mutation", tier: "IMPLEMENTED", mappingVersion: 1
-      }))
-    ];
+    const tools = CAPABILITY_REGISTRY.map(({ name, supported, riskClass, tier, mappingVersion, backend, reason }) => ({
+      name, supported, riskClass, tier, mappingVersion, backend, reason
+    }));
     return {
       adapterVersion: "fixture",
       mastercamVersion: "fixture",
       runtime: `node-${process.version}`,
       protocol: "bridge-v2",
       tools,
-      note: "Fixture data is synthetic and cannot prove live Mastercam behavior"
+      note: "This status follows the public MCP capability registry. Fixture data is synthetic and cannot prove live Mastercam behavior."
     };
   }
 
   private discoverCapabilities(args: Record<string, unknown>) {
-    const groups: Record<string, string[]> = {
-      connection: ["mastercam_status", "mastercam_capabilities"],
-      inspection: ["get_active_part", "list_operations", "get_operation", "get_operation_parameters", "get_stock", "get_wcs", "list_tools"],
-      planning: ["mastercam_plan", "preview_operation_parameters", "apply_operation_parameter_preview"],
-      safety: ["get_operation_risks", "run_simulation", "detect_collisions"],
-      targeting: ["find_operations", "get_selection"],
-      administration: ["mastercam_doctor", "get_version_report", "get_fixture_info"]
+    const category = typeof args.category === "string" ? args.category : undefined;
+    const tools = TOOL_MANIFEST
+      .filter(entry => entry.registered && entry.mockSupport && (!category || entry.category === category))
+      .map(entry => ({ name: entry.name, category: entry.category, execution: "fixture" }));
+    return {
+      backend: "mock",
+      ...(category ? { category } : {}),
+      tools,
+      nativeStage: "fixture",
+      note: "Fixture capabilities are synthetic contract implementations, not live Mastercam verification."
     };
-    const category = typeof args.category === "string" ? args.category : "";
-    if (category && groups[category]) return { category, tools: groups[category], nextAction: "Inspect the active part before planning a change" };
-    return { groups, nextAction: "Inspect the active part before planning a change", safeDefaults: { liveWrites: false, posting: false } };
   }
 
   private programmingContext() {

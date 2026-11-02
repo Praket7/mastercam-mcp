@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -13,6 +13,31 @@ function auditFixture() {
   const path = join(dir, "audit.jsonl");
   return { path, log: new AuditLog({ path, enabled: true }) };
 }
+
+test("recent audit history crosses retained rotations and omits rotation markers", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "mcam-audit-history-"));
+  const log = new AuditLog({ path: join(dir, "audit.jsonl"), enabled: true, maxFileBytes: 350, maxRotatedFiles: 2 });
+  for (let index = 1; index <= 8; index++) {
+    log.record({ requestId: `history-${index}`, tool: "preview_operation_parameters" });
+  }
+
+  const history = await log.getRecentEntries(3);
+  assert.equal(history.integrity, "verified");
+  assert.deepEqual(history.entries.map(entry => entry.requestId), ["history-6", "history-7", "history-8"]);
+  assert.equal(history.entries.some(entry => entry.tool === "audit_rotation"), false);
+});
+
+test("recent audit history fails closed if a retained entry is modified", async () => {
+  const { path, log } = auditFixture();
+  log.record({ requestId: "tamper-check", tool: "preview_operation_parameters" });
+  await log.flush();
+  const content = readFileSync(path, "utf8");
+  writeFileSync(path, content.replace("preview_operation_parameters", "changed_tool_name"));
+
+  const history = await log.getRecentEntries(10);
+  assert.equal(history.integrity, "failed");
+  assert.deepEqual(history.entries, []);
+});
 
 test("apply is audited as unverified and reread verification is a separate linked event", async () => {
   const { path, log } = auditFixture();

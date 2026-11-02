@@ -1,12 +1,12 @@
 /**
- * Tools implemented entirely by the TypeScript server. They do not invoke a
- * Mastercam adapter and are therefore available in both fixture and live
- * modes. Keep this list small and explicit so live discovery cannot drift
- * into advertising unverified native mappings.
+ * Tools whose MCP handlers are implemented by the TypeScript server. Some
+ * perform local analysis; composite workflows may also request backend reads.
+ * Their presence does not imply that every underlying data section is mapped.
  */
 export const SERVER_LOCAL_TOOL_NAMES = new Set([
   "get_server_readiness",
   "get_job_context",
+  "get_audit_history",
   "discover_capabilities",
   "generate_setup_sheet",
   "compare_tool_databases",

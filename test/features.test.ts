@@ -39,8 +39,10 @@ test("fixture feed changes stay scoped to the selected operation", async () => {
 
 test("fixture exposes capability discovery, explanation, risks, and machine context", async () => {
   const backend = testBackend({ operations: [{ id: 7, name: "Pocket rough", type: "roughing", feedRate: { value: 60, unit: "mm/min" } }] });
-  const discovery = await backend.call({ id: "7a", tool: "discover_capabilities", arguments: { category: "inspection" } });
-  assert.deepEqual((discovery as any).data.tools.slice(0, 2), ["get_active_part", "list_operations"]);
+  const discovery = await backend.call({ id: "7a", tool: "discover_capabilities", arguments: { category: "read" } });
+  const discoveredNames = (discovery as any).data.tools.map((tool: { name: string }) => tool.name);
+  assert.ok(discoveredNames.includes("list_operations"));
+  assert.equal(discoveredNames.includes("get_active_part"), false);
   const explanation = await backend.call({ id: "7b", tool: "explain_operation", arguments: { operationId: 7 } });
   assert.equal((explanation as any).data.operationId, 7);
   const risks = await backend.call({ id: "7c", tool: "get_operation_risks", arguments: { operationId: 7 } });

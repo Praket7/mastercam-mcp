@@ -37,7 +37,7 @@ const backend: Backend =
       });
 
 const handle = serveStdio(
-  () => createMcpServer(backend, config.profile, config.hardReadOnly, config.toolAllowlist, config.toolset),
+  () => createMcpServer(backend, config.profile, config.hardReadOnly, config.toolAllowlist, config.toolset, audit),
   {
     legacy: "serve",
     onerror: error => {

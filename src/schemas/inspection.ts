@@ -10,7 +10,7 @@ export const listMachineGroupsSchema = emptySchema;
 export const listOperationsSchema = z.object({
   limit: z.number().int().min(1).max(500).default(100).describe("Maximum operations to return, from 1 to 500."),
   offset: z.number().int().min(0).default(0).describe("Number of matching operations to skip."),
-  operationType: OptionalText(64).describe("Optional exact operation-type filter.")
+  operationType: OptionalText(64).describe("Optional case-insensitive substring filter for operation types.")
 }).strict();
 export const listOperationsOutputSchema = z.array(z.object({
   id: z.number(),
@@ -44,8 +44,8 @@ export const getOperationParametersOutputSchema = z.object({
 });
 
 export const findOperationsSchema = z.object({
-  query: OptionalText(256).describe("Case-insensitive text matched against operation names."),
-  operationType: OptionalText(64).describe("Optional exact operation-type filter."),
+  query: OptionalText(256).describe("Case-insensitive substring matched against operation names or types."),
+  operationType: OptionalText(64).describe("Optional case-insensitive substring filter for operation types."),
   toolNumber: z.number().int().min(1).max(2_147_483_647).optional().describe("Optional assigned tool number."),
   limit: z.number().int().min(1).max(200).default(50).describe("Maximum matches to return, from 1 to 200.")
 }).strict();
@@ -125,8 +125,18 @@ export const getServerReadinessOutputSchema = z.object({
   }))
 }).strict();
 
-export const discoverCapabilitiesSchema = z.object({ category: OptionalText(64) }).strict();
-export const getAuditHistorySchema = z.object({ limit: z.number().int().min(1).max(500).default(50).describe("Maximum audit entries to return, from 1 to 500.") }).strict();
+export const discoverCapabilitiesSchema = z.object({
+  category: z.enum(["read", "preview", "write", "advanced"]).optional()
+    .describe("Optional tool category filter.")
+}).strict();
+export const getAuditHistorySchema = z.object({ limit: z.number().int().min(1).max(500).default(50).describe("Maximum recent audit entries to return, from 1 to 500.") }).strict();
+export const getAuditHistoryOutputSchema = z.object({
+  enabled: z.boolean(),
+  integrity: z.enum(["verified", "disabled", "failed"]),
+  lastSequence: z.number().int().nonnegative(),
+  entries: z.array(z.record(z.string(), z.unknown())),
+  error: z.string().optional()
+}).strict();
 export const getFixtureInfoSchema = emptySchema;
 export const compareNcFilesInput = {
   before: z.string().min(1).max(2_000_000),

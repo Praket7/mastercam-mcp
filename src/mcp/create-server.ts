@@ -1,6 +1,7 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { createRequestStateCodec, inputRequired, inputResponse, McpServer } from "@modelcontextprotocol/server";
 import type * as z from "zod/v4";
+import type { AuditLog } from "../audit/audit-log.js";
 import { allowed, DEFAULT_PROFILE, categoryOf } from "../contracts.js";
 import type { Profile } from "../contracts.js";
 import type { Backend, ToolResult } from "../backend.js";
@@ -174,7 +175,8 @@ export function createMcpServer(
   profile: Profile = DEFAULT_PROFILE,
   hardReadOnly = true,
   toolAllowlist?: readonly string[],
-  toolset: "compact" | "full" = "compact"
+  toolset: "compact" | "full" = "compact",
+  auditLog?: AuditLog
 ) {
   const backendKind: "mock" | "live" = backend instanceof LiveBackend ? "live" : "mock";
   const definitions = advertisedToolDefinitions(backendKind, toolAllowlist, toolset);
@@ -388,6 +390,22 @@ export function createMcpServer(
               tool: name,
               data: { sections: context, unavailable: entries.filter(([, value]) => value.status === "unavailable").map(([section]) => section) }
             };
+          } else if (name === "get_audit_history") {
+            if (auditLog) {
+              result = {
+                ok: true,
+                tool: name,
+                data: await auditLog.getRecentEntries(typeof args.limit === "number" ? args.limit : 50)
+              };
+            } else if (backendKind === "mock") {
+              result = await backend.call({ id: randomUUID(), tool: name, arguments: args }, { signal: abortController.signal });
+            } else {
+              result = {
+                ok: false,
+                tool: name,
+                error: mastercamError("CAPABILITY_UNAVAILABLE", "The server did not provide its audit log reader")
+              };
+            }
           } else if (name === "discover_capabilities") {
             result = {
               ok: true,
@@ -594,18 +612,21 @@ export function createMcpServer(
   return server;
 }
 
-function discoverCapabilitiesPayload(
+export function discoverCapabilitiesPayload(
   args: Record<string, unknown>,
   definitions: ToolDefinition[],
   backendKind: "mock" | "live"
 ) {
   const category = typeof args.category === "string" ? args.category : undefined;
+  const stageBEnabled = backendKind === "live" && stageBReadsEnabled();
   const available = definitions.map(definition => ({
     name: definition.name,
     category: categoryOf(definition.name),
     execution:
       SERVER_LOCAL_TOOL_NAMES.has(definition.name)
         ? "server-local"
+        : backendKind === "live" && LIVE_NATIVE_STAGE_B_READ_TOOL_NAMES.has(definition.name)
+          ? "native-stage-b"
         : backendKind === "live"
           ? "native-stage-a"
           : "fixture"
@@ -618,10 +639,16 @@ function discoverCapabilitiesPayload(
     backend: backendKind,
     ...(category ? { category } : {}),
     tools: filtered,
-    nativeStage: backendKind === "live" ? "Stage A environment only" : "fixture",
+    nativeStage: backendKind === "live"
+      ? stageBEnabled
+        ? "Stage A environment checks with opt-in Stage B read candidates"
+        : "Stage A environment checks only"
+      : "fixture",
     note:
       backendKind === "live"
-        ? "Server-local deterministic evidence utilities remain available, but only mastercam_status and mastercam_capabilities are native-backed until licensed acceptance promotes additional mappings."
+        ? stageBEnabled
+          ? "Stage-B read candidates are enabled and labeled separately from TypeScript-handled workflows. They remain IMPLEMENTED, not LIVE_READ_VERIFIED, until licensed acceptance passes. Composite workflows may still report unavailable sections."
+          : "Only Stage-A environment checks are native-backed by default. TypeScript-handled workflows may request backend data and report unavailable sections when no mapping exists."
         : "Fixture capabilities are synthetic contract implementations, not live Mastercam verification."
   };
 }
