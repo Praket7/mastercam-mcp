@@ -41,10 +41,12 @@ import {
 import { defaultPipe, selectedBackend } from "../platform.js";
 import { TOOL_DEFINITIONS, ToolEnvelopeSchema } from "./registry.js";
 import type { ToolDefinition } from "./registry.js";
-import { mastercamError } from "../errors.js";
+import { ERROR_CODES, mastercamError, MastercamErrorImpl, isMastercamError, type ErrorCode } from "../errors.js";
+import { ZodError } from "zod/v4";
 import { loadShopToolLibrary, mergeActiveJobTools } from "../shop-tool-library.js";
 import { analyzeNcProgram, AnalyzeNcProgramSchema } from "../nc-program.js";
 import { COMPACT_TOOL_NAMES } from "../tool-manifest.js";
+import { capability } from "../capabilities.js";
 
 const READ_DEADLINE_MS = 30_000;
 const WRITE_DEADLINE_MS = 90_000;
@@ -168,6 +170,32 @@ function deadlineFor(category: ReturnType<typeof categoryOf>): number {
   if (category === "write") return WRITE_DEADLINE_MS;
   if (category === "advanced") return ADVANCED_DEADLINE_MS;
   return READ_DEADLINE_MS;
+}
+
+function errorForToolFailure(error: unknown, timedOut: boolean, aborted: boolean) {
+  const message = error instanceof Error ? error.message : String(error);
+  if (timedOut || message.startsWith("TIMEOUT")) {
+    return mastercamError("TIMEOUT", "Request deadline expired before completion");
+  }
+  if (aborted || message.startsWith("CANCELLED")) {
+    return mastercamError("CANCELLED", "Request was cancelled before completion");
+  }
+  if (isMastercamError(error)) {
+    return mastercamError(error.code, error.message, {
+      retryable: error.retryable,
+      ...(error.remediation ? { remediation: error.remediation } : {})
+    });
+  }
+  if (error instanceof ZodError) {
+    const details = error.issues.map(issue => `${issue.path.join(".") || "input"}: ${issue.message}`).join("; ");
+    return mastercamError("VALIDATION_FAILED", details);
+  }
+  const prefixed = message.match(/^([A-Z][A-Z0-9_]+):\s*(.*)$/);
+  const code = prefixed?.[1];
+  if (code && ERROR_CODES.includes(code as ErrorCode)) {
+    return mastercamError(code as ErrorCode, prefixed?.[2] || code);
+  }
+  return mastercamError("BACKEND_UNAVAILABLE", message);
 }
 
 export function createMcpServer(
@@ -461,7 +489,11 @@ export function createMcpServer(
               ? parsed.tools
               : mergeActiveJobTools(library, activeTools)?.tools ?? [];
             if (parsed.units && library?.units && parsed.units !== library.units) {
-              throw new Error(`Job units (${parsed.units}) do not match configured shop tool-library units (${library.units})`);
+              throw new MastercamErrorImpl(
+                "VALIDATION_FAILED",
+                `Job units (${parsed.units}) do not match configured shop tool-library units (${library.units})`,
+                { remediation: "Use one unit system for the job and configured shop tool catalog, or supply tool records in the job units." }
+              );
             }
             result = {
               ok: true,
@@ -549,7 +581,11 @@ export function createMcpServer(
             if (tools.length === 0) {
               const library = loadShopToolLibrary();
               if (library?.units && parsed.units !== library.units) {
-                throw new Error(`Job units (${parsed.units}) do not match configured shop tool-library units (${library.units})`);
+                throw new MastercamErrorImpl(
+                  "VALIDATION_FAILED",
+                  `Job units (${parsed.units}) do not match configured shop tool-library units (${library.units})`,
+                  { remediation: "Use one unit system for the job and configured shop tool catalog, or supply tool records in the job units." }
+                );
               }
               const active = await backend.call({ id: randomUUID(), tool: "list_tools", arguments: {} }, { signal: abortController.signal });
               tools = mergeActiveJobTools(library, active.ok && Array.isArray(active.data) ? active.data : [])?.tools ?? [];
@@ -583,7 +619,6 @@ export function createMcpServer(
           return envelope(result, definition.outputSchema);
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
-          const isTimeout = timedOut || message.startsWith("TIMEOUT");
           const isAbort =
             signal.aborted ||
             abortController.signal.aborted ||
@@ -593,11 +628,7 @@ export function createMcpServer(
             {
               ok: false,
               tool: name,
-              error: isTimeout
-                ? mastercamError("TIMEOUT", "Request deadline expired before completion")
-                : isAbort
-                  ? mastercamError("CANCELLED", "Request was cancelled before completion")
-                  : mastercamError("BACKEND_UNAVAILABLE", message)
+              error: errorForToolFailure(error, timedOut, isAbort)
             },
             definition.outputSchema
           );
@@ -619,18 +650,25 @@ export function discoverCapabilitiesPayload(
 ) {
   const category = typeof args.category === "string" ? args.category : undefined;
   const stageBEnabled = backendKind === "live" && stageBReadsEnabled();
-  const available = definitions.map(definition => ({
-    name: definition.name,
-    category: categoryOf(definition.name),
-    execution:
-      SERVER_LOCAL_TOOL_NAMES.has(definition.name)
-        ? "server-local"
-        : backendKind === "live" && LIVE_NATIVE_STAGE_B_READ_TOOL_NAMES.has(definition.name)
-          ? "native-stage-b"
-        : backendKind === "live"
-          ? "native-stage-a"
-          : "fixture"
-  }));
+  const available = definitions.map(definition => {
+    const metadata = capability(definition.name);
+    return {
+      name: definition.name,
+      category: categoryOf(definition.name),
+      readsActiveDocument: metadata?.readsActiveDocument ?? false,
+      requiresActiveDocument: metadata?.requiresActiveDocument ?? false,
+      requiresApproval: metadata?.requiresApproval ?? false,
+      requiresRegeneration: metadata?.requiresRegeneration ?? false,
+      execution:
+        SERVER_LOCAL_TOOL_NAMES.has(definition.name)
+          ? "server-local"
+          : backendKind === "live" && LIVE_NATIVE_STAGE_B_READ_TOOL_NAMES.has(definition.name)
+            ? "native-stage-b"
+            : backendKind === "live"
+              ? "native-stage-a"
+              : "fixture"
+    };
+  });
   const filtered = category
     ? available.filter(item => item.category === category)
     : available;

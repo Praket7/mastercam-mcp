@@ -7,6 +7,7 @@ import {
   SERVER_LOCAL_TOOL_NAMES
 } from "../src/execution-surface.js";
 import { TOOL_DEFINITIONS } from "../src/mcp/registry.js";
+import { capability } from "../src/capabilities.js";
 
 test("Stage-A native bridge calls remain exactly the environment checks", () => {
   assert.deepEqual(
@@ -85,16 +86,68 @@ test("live capability discovery identifies Stage-B reads and keeps verification 
     process.env.MASTERCAM_MCP_ENABLE_STAGE_B_READS = "1";
     const definitions = advertisedToolDefinitions("live", undefined, "full");
     const report = discoverCapabilitiesPayload({}, definitions, "live") as {
-      tools: Array<{ name: string; execution: string }>;
+      tools: Array<{
+        name: string;
+        execution: string;
+        readsActiveDocument: boolean;
+        requiresActiveDocument: boolean;
+        requiresApproval: boolean;
+      }>;
       nativeStage: string;
       note: string;
     };
     assert.equal(report.tools.find(tool => tool.name === "list_operations")?.execution, "native-stage-b");
     assert.equal(report.tools.find(tool => tool.name === "analyze_nc_program")?.execution, "server-local");
+    assert.equal(report.tools.find(tool => tool.name === "list_operations")?.readsActiveDocument, true);
+    assert.equal(report.tools.find(tool => tool.name === "list_operations")?.requiresActiveDocument, false);
+    const fixtureReport = discoverCapabilitiesPayload({}, TOOL_DEFINITIONS, "mock") as typeof report;
+    assert.equal(fixtureReport.tools.find(tool => tool.name === "apply_operation_parameter_preview")?.requiresApproval, true);
     assert.match(report.nativeStage, /Stage B/i);
     assert.match(report.note, /IMPLEMENTED/i);
   } finally {
     if (previous === undefined) delete process.env.MASTERCAM_MCP_ENABLE_STAGE_B_READS;
     else process.env.MASTERCAM_MCP_ENABLE_STAGE_B_READS = previous;
+  }
+});
+
+test("capability metadata separates document reads from hard document requirements", () => {
+  for (const name of [
+    "get_selection",
+    "get_selected_entities",
+    "list_machine_groups",
+    "list_operations",
+    "list_tools",
+    "get_tool",
+    "capture_view"
+  ]) {
+    assert.equal(capability(name)?.readsActiveDocument, true, `${name} reads the active document`);
+    assert.equal(capability(name)?.requiresActiveDocument, false, `${name} reports unavailable data without a document`);
+  }
+
+  for (const name of [
+    "get_operation",
+    "get_operation_parameters",
+    "explain_operation",
+    "get_operation_risks",
+    "get_toolpath_status",
+    "compare_toolpaths",
+    "verify_change",
+    "preview_operation_parameters",
+    "apply_operation_parameter_preview",
+    "rollback_change",
+    "update_stock",
+    "run_simulation",
+    "detect_collisions"
+  ]) {
+    assert.equal(capability(name)?.requiresActiveDocument, true, `${name} needs an exact document target`);
+    assert.equal(capability(name)?.readsActiveDocument, true, `${name} reads the active document`);
+  }
+
+  assert.equal(capability("get_server_readiness")?.readsActiveDocument, false);
+  assert.equal(capability("get_server_readiness")?.requiresActiveDocument, false);
+  assert.equal(capability("apply_operation_parameter_preview")?.requiresRegeneration, true);
+
+  for (const removed of ["get_active_part", "get_stock", "get_wcs"]) {
+    assert.equal(capability(removed), undefined, `${removed} must not appear as a current capability`);
   }
 });

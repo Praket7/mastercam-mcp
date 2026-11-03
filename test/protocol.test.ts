@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { TOOL_DEFINITIONS } from "../src/mcp/registry.js";
+import { SUPPORTED_PROTOCOL_REVISIONS, CURRENT_PROTOCOL_REVISION } from "../src/contracts.js";
 
 const tsx = "node_modules/tsx/dist/cli.mjs";
 
@@ -22,7 +23,8 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
 async function withStdioClient(
   run: (client: Client) => Promise<void>,
   extraEnv: Record<string, string> = {},
-  operatorApproval = false
+  operatorApproval = false,
+  protocolVersion = CURRENT_PROTOCOL_REVISION
 ) {
   const transport = new StdioClientTransport({
     command: process.execPath,
@@ -40,7 +42,10 @@ async function withStdioClient(
   const client = new Client(
     { name: "protocol-test", version: "1.0" },
     {
-      versionNegotiation: { mode: { pin: "2026-07-28" } },
+      supportedProtocolVersions: [protocolVersion],
+      versionNegotiation: protocolVersion === CURRENT_PROTOCOL_REVISION
+        ? { mode: { pin: protocolVersion } }
+        : { mode: "legacy" },
       ...(operatorApproval ? { capabilities: { elicitation: { form: {} } } } : {})
     }
   );
@@ -53,7 +58,9 @@ async function withStdioClient(
   }
 
   await withTimeout(client.connect(transport), 15_000, "stdio MCP connect");
-  assert.equal(client.getProtocolEra(), "modern");
+  if (protocolVersion === CURRENT_PROTOCOL_REVISION) {
+    assert.equal(client.getProtocolEra(), "modern");
+  }
   try {
     await withTimeout(run(client), 30_000, "stdio MCP test body");
   } finally {
@@ -131,11 +138,23 @@ test("tools/list over stdio negotiates 2026-07-28 and returns schemas", async ()
   await withStdioClient(async client => {
     const { tools } = await client.listTools();
     assert.ok(tools.length >= TOOL_DEFINITIONS.length - 2, `expected full registry, got ${tools.length}`);
+    assert.deepEqual(tools.map(tool => tool.name), TOOL_DEFINITIONS.map(tool => tool.name));
     const status = tools.find(tool => tool.name === "get_server_readiness");
     assert.ok(status);
     assert.ok(status.annotations, "tools/list must include annotations");
     assert.ok(status.inputSchema, "tools/list must include input schemas");
   });
+});
+
+test("every declared MCP protocol revision can list and call tools over stdio", async () => {
+  for (const protocolVersion of SUPPORTED_PROTOCOL_REVISIONS) {
+    await withStdioClient(async client => {
+      const { tools } = await client.listTools();
+      assert.ok(tools.some(tool => tool.name === "get_server_readiness"), `readiness tool missing at ${protocolVersion}`);
+      const result = await client.callTool({ name: "get_server_readiness", arguments: {} });
+      assert.equal((result.structuredContent as { ok?: boolean } | undefined)?.ok, true, protocolVersion);
+    }, {}, false, protocolVersion);
+  }
 });
 
 test("compact tools/list is focused and replaces overlapping setup and context calls", async () => {
@@ -189,6 +208,35 @@ test("one cycle-time tool supports active operations and supplied motion evidenc
     });
     assert.equal(events.structuredContent?.ok, true);
   });
+});
+
+test("tool catalog unit mismatches return actionable validation errors", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "mastercam-mcp-unit-error-"));
+  const catalogPath = join(directory, "tools.json");
+  writeFileSync(catalogPath, JSON.stringify({
+    schema: "mastercam-mcp/tool-library/v1",
+    units: "mm",
+    tools: [{ number: 1, name: "OD turning insert", type: "turning insert" }]
+  }));
+  try {
+    await withStdioClient(async client => {
+      const result = await client.callTool({
+        name: "plan_od_rough_finish",
+        arguments: {
+          intent: "Rough and finish the supplied OD profile",
+          units: "inch",
+          material: "6061 aluminum",
+          stockDiameter: 2,
+          profile: [{ z: 0, diameter: 1.8 }, { z: 1, diameter: 1.2 }],
+          finishAllowanceRadial: 0.01
+        }
+      });
+      assert.equal(result.isError, true);
+      assert.equal((result.structuredContent?.error as { code?: string }).code, "VALIDATION_FAILED");
+    }, { MASTERCAM_MCP_TOOL_LIBRARY: catalogPath });
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 test("unknown tool call fails with a typed MCP error (BUG-02 contract)", async () => {

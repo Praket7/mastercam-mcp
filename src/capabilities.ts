@@ -7,8 +7,10 @@ export interface CapabilityEntry {
   name: string;
   supported: boolean;
   riskClass: "read" | "mutation" | "advanced";
-  requiresActiveDocument?: boolean;
-  requiresRegeneration?: boolean;
+  readsActiveDocument: boolean;
+  requiresActiveDocument: boolean;
+  requiresApproval: boolean;
+  requiresRegeneration: boolean;
   backend: string;
   tier: CapabilityTier;
   reason?: string;
@@ -42,9 +44,9 @@ export const CAPABILITY_REGISTRY: CapabilityEntry[] = TOOL_MANIFEST.map(entry =>
   name: entry.name,
   supported: entry.registered && entry.mockSupport,
   riskClass: riskClass(entry.category),
-  requiresActiveDocument:
-    entry.requiresExactTarget ||
-    ["get_active_part", "get_stock", "get_wcs", "list_operations"].includes(entry.name),
+  readsActiveDocument: entry.readsActiveDocument,
+  requiresActiveDocument: entry.requiresActiveDocument,
+  requiresApproval: entry.requiresApproval,
   requiresRegeneration: entry.requiresRegeneration,
   backend: backendLabel(entry),
   tier: entry.tier,
@@ -54,7 +56,7 @@ export const CAPABILITY_REGISTRY: CapabilityEntry[] = TOOL_MANIFEST.map(entry =>
 
 export function renderCapabilitiesDoc(): string {
   const rows = CAPABILITY_REGISTRY.map(entry =>
-    `| ${entry.name} | ${entry.supported ? "yes" : "no"} | ${entry.riskClass} | ${entry.backend} | ${entry.tier} | ${entry.reason ?? ""} |`
+    `| ${entry.name} | ${entry.supported ? "yes" : "no"} | ${entry.riskClass} | ${entry.readsActiveDocument ? "yes" : "no"} | ${entry.requiresActiveDocument ? "yes" : "no"} | ${entry.backend} | ${entry.tier} | ${entry.reason ?? ""} |`
   );
   const counts = {
     total: CAPABILITY_REGISTRY.length,
@@ -71,8 +73,8 @@ A tier is raised only after a licensed live acceptance run against the matching 
 
 Counts: ${counts.total} capabilities declared, ${counts.supported} fixture-supported, **${counts.liveVerified} live verified**.
 
-| Tool | Fixture supported | Risk | Backends | Tier | Notes |
-| --- | --- | --- | --- | --- | --- |
+| Tool | Fixture supported | Risk | Reads active document | Requires active document | Backends | Tier | Notes |
+| --- | --- | --- | --- | --- | --- | --- | --- |
 ${rows.join("\n")}
 
 ## Reading this table honestly

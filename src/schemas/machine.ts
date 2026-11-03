@@ -101,8 +101,8 @@ export const OperationForValidationSchema = z.object({
 export type OperationForValidation = z.infer<typeof OperationForValidationSchema>;
 
 export const ValidateMachineProfileInputSchema = z.object({
-  operation: OperationForValidationSchema,
-  profile: MachineProfileSchema
+  operation: OperationForValidationSchema.describe("Operation parameters and tool data to check against the machine limits."),
+  profile: MachineProfileSchema.describe("Machine, controller, travel, spindle, feed, and accessory limits. Supply only verified values.")
 }).strict();
 
 export const ValidateMachineProfileOutputSchema = z.object({

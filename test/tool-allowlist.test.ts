@@ -58,3 +58,18 @@ test("the environment trims names and keeps explicit empty selection distinct fr
     else process.env.MASTERCAM_MCP_TOOLS = previous;
   }
 });
+
+test("boolean environment settings are case-insensitive and reject invalid values", () => {
+  const previous = process.env.MASTERCAM_MCP_HTTP_ALLOW_REMOTE;
+  try {
+    process.env.MASTERCAM_MCP_HTTP_ALLOW_REMOTE = "FALSE";
+    assert.equal(loadConfig().http.allowRemote, false);
+    process.env.MASTERCAM_MCP_HTTP_ALLOW_REMOTE = " 1 ";
+    assert.equal(loadConfig().http.allowRemote, true);
+    process.env.MASTERCAM_MCP_HTTP_ALLOW_REMOTE = "truue";
+    assert.throws(() => loadConfig(), /MASTERCAM_MCP_HTTP_ALLOW_REMOTE.*true.*false/i);
+  } finally {
+    if (previous === undefined) delete process.env.MASTERCAM_MCP_HTTP_ALLOW_REMOTE;
+    else process.env.MASTERCAM_MCP_HTTP_ALLOW_REMOTE = previous;
+  }
+});

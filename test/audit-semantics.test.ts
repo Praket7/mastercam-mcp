@@ -27,6 +27,19 @@ test("recent audit history crosses retained rotations and omits rotation markers
   assert.equal(history.entries.some(entry => entry.tool === "audit_rotation"), false);
 });
 
+test("AuditLog uses the same case-insensitive audit setting as server config", () => {
+  const previous = process.env.MASTERCAM_MCP_AUDIT;
+  try {
+    process.env.MASTERCAM_MCP_AUDIT = "FALSE";
+    assert.equal(new AuditLog({ path: join(tmpdir(), "unused-audit.jsonl") }).isEnabled, false);
+    process.env.MASTERCAM_MCP_AUDIT = "1";
+    assert.equal(new AuditLog({ path: join(tmpdir(), "unused-audit.jsonl") }).isEnabled, true);
+  } finally {
+    if (previous === undefined) delete process.env.MASTERCAM_MCP_AUDIT;
+    else process.env.MASTERCAM_MCP_AUDIT = previous;
+  }
+});
+
 test("recent audit history fails closed if a retained entry is modified", async () => {
   const { path, log } = auditFixture();
   log.record({ requestId: "tamper-check", tool: "preview_operation_parameters" });
