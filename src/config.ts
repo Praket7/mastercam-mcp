@@ -1,6 +1,7 @@
 import * as z from "zod/v4";
 import type { Profile } from "./contracts.js";
 import { parseHardReadOnly } from "./safety/policy.js";
+import { parseBooleanEnvironmentVariable } from "./env.js";
 
 export const ConfigSchema = z.object({
   profile: z.enum(["read", "write", "all"]).default("read"),
@@ -39,11 +40,6 @@ export const ConfigSchema = z.object({
 
 export type Config = z.infer<typeof ConfigSchema>;
 
-function parseBoolean(value: string | undefined, defaultValue: boolean): boolean {
-  if (value === undefined) return defaultValue;
-  return value !== "0" && value !== "false" && value !== "";
-}
-
 function parseNumber(value: string | undefined, defaultValue: number, min: number, max: number): number {
   if (value === undefined) return defaultValue;
   const parsed = Number(value);
@@ -69,7 +65,7 @@ export function loadConfig(): Config {
     backend: process.env.MASTERCAM_MCP_BACKEND ?? "auto",
     pipe: process.env.MASTERCAM_MCP_PIPE ?? "\\\\.\\pipe\\mastercam-mcp-default",
     audit: {
-      enabled: parseBoolean(process.env.MASTERCAM_MCP_AUDIT, true),
+      enabled: parseBooleanEnvironmentVariable(process.env.MASTERCAM_MCP_AUDIT, true, "MASTERCAM_MCP_AUDIT"),
       path: process.env.MASTERCAM_MCP_AUDIT_PATH,
       maxFileBytes: parseNumber(process.env.MASTERCAM_MCP_AUDIT_MAX_BYTES, 10 * 1024 * 1024, 1024, 100 * 1024 * 1024),
       maxRotatedFiles: parseNumber(process.env.MASTERCAM_MCP_AUDIT_MAX_FILES, 5, 1, 100)
@@ -79,7 +75,7 @@ export function loadConfig(): Config {
       port: parseNumber(process.env.MASTERCAM_MCP_HTTP_PORT, 8787, 1, 65535),
       token: process.env.MASTERCAM_MCP_HTTP_TOKEN,
       allowedOrigins: parseStringArray(process.env.MASTERCAM_MCP_ALLOWED_ORIGINS),
-      allowRemote: parseBoolean(process.env.MASTERCAM_MCP_HTTP_ALLOW_REMOTE, false),
+      allowRemote: parseBooleanEnvironmentVariable(process.env.MASTERCAM_MCP_HTTP_ALLOW_REMOTE, false, "MASTERCAM_MCP_HTTP_ALLOW_REMOTE"),
       maxRequestBodyBytes: parseNumber(process.env.MASTERCAM_MCP_HTTP_MAX_BODY_BYTES, 2 * 1024 * 1024, 1024, 100 * 1024 * 1024),
       maxConcurrency: parseNumber(process.env.MASTERCAM_MCP_HTTP_MAX_CONCURRENCY, 32, 1, 1000),
       requestTimeoutMs: parseNumber(process.env.MASTERCAM_MCP_HTTP_REQUEST_TIMEOUT_MS, 120_000, 1000, 600_000)

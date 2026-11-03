@@ -33,6 +33,8 @@ export interface ToolManifestEntry {
   legacySupport: boolean;
   mc2027Support: boolean;
   requiresExactTarget: boolean;
+  requiresActiveDocument: boolean;
+  readsActiveDocument: boolean;
   requiresApproval: boolean;
   requiresRegeneration: boolean;
   idempotent: boolean;
@@ -47,6 +49,8 @@ interface ToolOptions {
   legacySupport?: boolean;
   mc2027Support?: boolean;
   requiresExactTarget?: boolean;
+  requiresActiveDocument?: boolean;
+  readsActiveDocument?: boolean;
   requiresApproval?: boolean;
   requiresRegeneration?: boolean;
   idempotent?: boolean;
@@ -74,6 +78,8 @@ function defineTool(
     legacySupport: options.legacySupport ?? liveEnvironment,
     mc2027Support: options.mc2027Support ?? liveEnvironment,
     requiresExactTarget: options.requiresExactTarget ?? false,
+    requiresActiveDocument: options.requiresActiveDocument ?? options.requiresExactTarget ?? false,
+    readsActiveDocument: options.readsActiveDocument ?? options.requiresActiveDocument ?? options.requiresExactTarget ?? false,
     requiresApproval: options.requiresApproval ?? category === "write",
     requiresRegeneration: options.requiresRegeneration ?? false,
     idempotent: options.idempotent ?? category === "read",
@@ -135,6 +141,7 @@ export const TOOL_MANIFEST: readonly ToolManifestEntry[] = [
   read("get_server_readiness", "Check local prerequisites, Mastercam connection, supported features, compatibility, and write-protection state in one report. Use this instead of combining the separate doctor, version, and connection checks.", inspection.getServerReadinessSchema, { outputDataSchema: inspection.getServerReadinessOutputSchema }),
   read("get_job_context", "Gather selected part, geometry, machine, stock, work coordinate system, post, operations, and referenced tools in one bounded report. Each section returns its source and availability; missing data is never filled in with guessed values.", inspection.getJobContextSchema, {
     outputDataSchema: inspection.getJobContextOutputSchema,
+    readsActiveDocument: true,
     legacySupport: false,
     mc2027Support: true,
     tier: "IMPLEMENTED",
@@ -144,23 +151,23 @@ export const TOOL_MANIFEST: readonly ToolManifestEntry[] = [
   read("get_fixture_info", "Describe the active fixture backend and its limitations", inspection.getFixtureInfoSchema),
   read("get_audit_history", "Read recent redacted safety events recorded by this MCP server, with their integrity status and whether collection is enabled. It does not include actions outside this server.", inspection.getAuditHistorySchema, { outputDataSchema: inspection.getAuditHistoryOutputSchema }),
 
-  read("get_selection", "Report currently selected operations", inspection.getSelectionSchema),
-  read("get_selected_entities", "Report selected entities grouped by type", inspection.getSelectedEntitiesSchema),
-  read("list_machine_groups", "List machine groups in the document", inspection.listMachineGroupsSchema),
+  read("get_selection", "Report currently selected operations", inspection.getSelectionSchema, { readsActiveDocument: true }),
+  read("get_selected_entities", "Report selected entities grouped by type", inspection.getSelectedEntitiesSchema, { readsActiveDocument: true }),
+  read("list_machine_groups", "List machine groups in the document", inspection.listMachineGroupsSchema, { readsActiveDocument: true }),
 
-  read("list_operations", "List operations in document order with pagination and an optional type filter. Use find_operations when you have a name or tool-number criterion.", inspection.listOperationsSchema, { outputDataSchema: inspection.listOperationsOutputSchema, legacySupport: false, mc2027Support: true, tier: "IMPLEMENTED", tierEvidence: "Stage-B derives this read from the runtime-probed programming snapshot; licensed LIVE_READ_VERIFIED acceptance is still required." }),
+  read("list_operations", "List operations in document order with pagination and an optional type filter. Use find_operations when you have a name or tool-number criterion.", inspection.listOperationsSchema, { outputDataSchema: inspection.listOperationsOutputSchema, readsActiveDocument: true, legacySupport: false, mc2027Support: true, tier: "IMPLEMENTED", tierEvidence: "Stage-B derives this read from the runtime-probed programming snapshot; licensed LIVE_READ_VERIFIED acceptance is still required." }),
   read("get_operation", "Retrieve one operation's mapped summary by exact ID, including its revision and fingerprint. No name or nearest-match fallback is used; use find_operations when the ID is unknown.", inspection.getOperationSchema, { outputDataSchema: inspection.getOperationOutputSchema, requiresExactTarget: true, legacySupport: false, mc2027Support: true, tier: "IMPLEMENTED", tierEvidence: "Stage-B requires stable unique numeric operation IDs from the runtime snapshot and fails closed otherwise; licensed LIVE_READ_VERIFIED acceptance is still required." }),
   read("get_operation_parameters", "Retrieve only the parameters proven readable for one exact operation ID. The returned mapping may be partial; use get_operation for the compact operation summary.", inspection.getOperationParametersSchema, { outputDataSchema: inspection.getOperationParametersOutputSchema, requiresExactTarget: true, legacySupport: false, mc2027Support: true, tier: "IMPLEMENTED", tierEvidence: "Stage-B returns only runtime-reflected fields with mapping evidence and marks the parameter set partial; licensed LIVE_READ_VERIFIED acceptance is still required." }),
-  read("find_operations", "Search operations by name text, operation type, or assigned tool number. Use list_operations when you need an unfiltered paginated listing.", inspection.findOperationsSchema, { legacySupport: false, mc2027Support: true, tier: "IMPLEMENTED", tierEvidence: "Stage-B derives search results from the bounded programming snapshot; licensed LIVE_READ_VERIFIED acceptance is still required." }),
+  read("find_operations", "Search operations by name text, operation type, or assigned tool number. Use list_operations when you need an unfiltered paginated listing.", inspection.findOperationsSchema, { readsActiveDocument: true, legacySupport: false, mc2027Support: true, tier: "IMPLEMENTED", tierEvidence: "Stage-B derives search results from the bounded programming snapshot; licensed LIVE_READ_VERIFIED acceptance is still required." }),
   read("explain_operation", "Explain an operation from its actual returned parameters", inspection.explainOperationSchema, { requiresExactTarget: true }),
   read("get_operation_risks", "Report verification scope and concrete risks for an operation", inspection.getOperationRisksSchema, { requiresExactTarget: true }),
-  read("get_dirty_toolpaths", "List operations whose mapped dirty state requires regeneration and preserve unknown state", inspection.getDirtyToolpathsSchema, { legacySupport: false, mc2027Support: true, tier: "IMPLEMENTED", tierEvidence: "Stage-B reports dirty state only when a runtime member is mapped; unknown state is never treated as current. Licensed LIVE_READ_VERIFIED acceptance is still required." }),
+  read("get_dirty_toolpaths", "List operations whose mapped dirty state requires regeneration and preserve unknown state", inspection.getDirtyToolpathsSchema, { readsActiveDocument: true, legacySupport: false, mc2027Support: true, tier: "IMPLEMENTED", tierEvidence: "Stage-B reports dirty state only when a runtime member is mapped; unknown state is never treated as current. Licensed LIVE_READ_VERIFIED acceptance is still required." }),
   read("get_toolpath_status", "Report mapped toolpath dirty/current/unknown state for an operation", inspection.getToolpathStatusSchema, { requiresExactTarget: true, legacySupport: false, mc2027Support: true, tier: "IMPLEMENTED", tierEvidence: "Stage-B derives status from a mapped dirty/regeneration member and returns unknown when no member is proven; licensed LIVE_READ_VERIFIED acceptance is still required." }),
-  read("compare_toolpaths", "Compare two operations' toolpaths", inspection.compareToolpathsSchema),
+  read("compare_toolpaths", "Compare toolpath evidence for two exact operation IDs in the active document", inspection.compareToolpathsSchema, { requiresExactTarget: true }),
 
-  read("list_tools", "List tool records referenced by active operations. This is not a complete shop library or proprietary .TOOLDB reader; use the configured catalog for broader tooling recommendations.", inspection.listToolsSchema, { legacySupport: false, mc2027Support: true, tier: "IMPLEMENTED", tierEvidence: "Stage-B extracts referenced tool records from active operation objects. Complete .TOOLDB/library coverage is not claimed; licensed LIVE_READ_VERIFIED acceptance is still required." }),
-  read("get_tool", "Retrieve one tool referenced by the active job using its exact ID, number, or unique name. Use list_tools for the job's referenced tool list.", inspection.getToolSchema, { legacySupport: false, mc2027Support: true, tier: "IMPLEMENTED", tierEvidence: "Stage-B searches only the tools proven reachable from active operations; complete tool-library coverage is not claimed. Licensed LIVE_READ_VERIFIED acceptance is still required." }),
-  read("capture_view", "Capture a bounded view image of the Mastercam graphics window", inspection.captureViewSchema),
+  read("list_tools", "List tool records referenced by active operations. This is not a complete shop library or proprietary .TOOLDB reader; use the configured catalog for broader tooling recommendations.", inspection.listToolsSchema, { readsActiveDocument: true, legacySupport: false, mc2027Support: true, tier: "IMPLEMENTED", tierEvidence: "Stage-B extracts referenced tool records from active operation objects. Complete .TOOLDB/library coverage is not claimed; licensed LIVE_READ_VERIFIED acceptance is still required." }),
+  read("get_tool", "Retrieve one tool referenced by the active job using its exact ID, number, or unique name. Use list_tools for the job's referenced tool list.", inspection.getToolSchema, { readsActiveDocument: true, legacySupport: false, mc2027Support: true, tier: "IMPLEMENTED", tierEvidence: "Stage-B searches only the tools proven reachable from active operations; complete tool-library coverage is not claimed. Licensed LIVE_READ_VERIFIED acceptance is still required." }),
+  read("capture_view", "Capture a bounded view image of the Mastercam graphics window", inspection.captureViewSchema, { readsActiveDocument: true }),
 
   read("verify_change", "Reread one exact operation and compare its current feed and spindle values with expected values after an approved change. It does not verify toolpath regeneration or machine safety.", mutations.VerifyChangeSchema, { outputDataSchema: mutations.verifyChangeOutputSchema, requiresExactTarget: true }),
 
@@ -180,8 +187,8 @@ export const TOOL_MANIFEST: readonly ToolManifestEntry[] = [
   preview("plan_od_rough_finish", "Draft a non-executable OD roughing and finishing plan from the supplied profile, material, machine limits, and available tool records. It does not create a Mastercam operation or posted code.", PlanOdRoughFinishSchema),
 
   preview("preview_operation_parameters", "Preview a feed or spindle edit on one exact operation and return a short-lived, single-use approval token. This step does not change the Mastercam document.", mutations.PreviewOperationParametersSchema, { outputDataSchema: mutations.previewOperationParametersOutputSchema, requiresExactTarget: true }),
-  write("apply_operation_parameter_preview", "Apply only the exact, current preview identified by approvalToken after the connected MCP client obtains operator approval. Stale or mismatched previews are refused.", mutations.ApplyOperationParameterPreviewSchema, { outputDataSchema: mutations.applyOperationParameterPreviewOutputSchema, requiresRegeneration: true }),
-  write("rollback_change", "Roll back one applied transaction using its server-issued transactionId. The operation must still match the recorded post-change state.", mutations.RollbackChangeSchema, { outputDataSchema: mutations.rollbackChangeOutputSchema }),
+  write("apply_operation_parameter_preview", "Apply only the exact, current preview identified by approvalToken after the connected MCP client obtains operator approval. Stale or mismatched previews are refused.", mutations.ApplyOperationParameterPreviewSchema, { outputDataSchema: mutations.applyOperationParameterPreviewOutputSchema, requiresActiveDocument: true, requiresRegeneration: true }),
+  write("rollback_change", "Roll back one applied transaction using its server-issued transactionId. The operation must still match the recorded post-change state.", mutations.RollbackChangeSchema, { outputDataSchema: mutations.rollbackChangeOutputSchema, requiresActiveDocument: true }),
   write("change_tool", "Change the tool assigned to one operation", mutations.ChangeToolSchema, {
     registered: false,
     mockSupport: false,
@@ -207,12 +214,13 @@ export const TOOL_MANIFEST: readonly ToolManifestEntry[] = [
     legacySupport: false,
     mc2027Support: false,
     requiresRegeneration: true,
+    requiresActiveDocument: true,
     tier: "UNAVAILABLE",
     tierEvidence: "Direct stock mutation is not exposed until it has a preview/approval workflow and a verified backend mapping."
   }),
 
-  advanced("run_simulation", "Run Mastercam simulation and return provenance-tagged evidence", emptySchema),
-  advanced("detect_collisions", "Run collision detection for selected operations", emptySchema),
+  advanced("run_simulation", "Run Mastercam simulation and return provenance-tagged evidence", emptySchema, { requiresActiveDocument: true }),
+  advanced("detect_collisions", "Run collision detection for selected operations", emptySchema, { requiresActiveDocument: true }),
 
   forbidden("post_program", "NC release is intentionally outside project scope for safety"),
   forbidden("cycle_start", "Machine execution is intentionally outside project scope for safety"),

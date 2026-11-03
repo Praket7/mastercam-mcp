@@ -7,29 +7,32 @@ const Nonnegative = z.number().finite().min(0).max(1_000_000_000_000);
 const MAX_NC_WORD_MAGNITUDE = 1_000_000_000_000;
 
 export const AnalyzeNcProgramSchema = z.object({
-  program: z.string().min(1).max(1_000_000),
-  units: z.enum(["mm", "inch"]),
-  coordinateFrame: z.enum(["machine", "work"]),
-  initialWorkOffset: z.enum(["G54", "G55", "G56", "G57", "G58", "G59"]).default("G54"),
-  workOffsets: z.partialRecord(z.enum(["G54", "G55", "G56", "G57", "G58", "G59"]), Vector3Schema).optional(),
-  initialPosition: Vector3Schema,
-  initialMotion: z.enum(["rapid", "feed"]).optional(),
+  program: z.string().min(1).max(1_000_000).describe("NC program text to statically review. Unsupported commands are reported as unknown."),
+  units: z.enum(["mm", "inch"]).describe("Program length unit for coordinates, offsets, travel, stock, fixtures, and tool dimensions."),
+  coordinateFrame: z.enum(["machine", "work"]).describe("Frame used by the coordinates in this program. Work-frame checks need the matching offsets."),
+  initialWorkOffset: z.enum(["G54", "G55", "G56", "G57", "G58", "G59"]).default("G54").describe("Active work offset before the first program move."),
+  workOffsets: z.partialRecord(z.enum(["G54", "G55", "G56", "G57", "G58", "G59"]), Vector3Schema).optional().describe("Known origins for the listed work offsets, in the selected length unit. Missing offsets make affected travel checks unknown."),
+  initialPosition: Vector3Schema.describe("Confirmed machine or work position before the first parsed move, matching coordinateFrame."),
+  initialMotion: z.enum(["rapid", "feed"]).optional().describe("Known modal motion before the first coordinate-only block. Omit if the program explicitly establishes motion first."),
   machine: z.object({
-    travel: Bounds3Schema,
-    rapidRate: Positive,
-    maxFeedRate: Positive.optional(),
-    maxSpindleRpm: Positive.optional()
-  }).strict(),
-  stock: Bounds3Schema.optional(),
-  fixtures: z.array(z.object({ id: z.string().min(1).max(128), bounds: Bounds3Schema }).strict()).max(100).default([]),
-  safeZ: z.number().finite().optional(),
-  toolRadius: Nonnegative.default(0),
-  holderRadius: Nonnegative.default(0),
-  safetyMargin: Nonnegative.default(0),
-  defaultToolChangeSeconds: Nonnegative.default(8),
-  arcChordError: Positive.optional(),
-  maxArcSegments: z.number().int().min(8).max(10000).default(2048),
-  dwellPMilliseconds: z.boolean().default(false)
+    travel: Bounds3Schema.describe("Machine travel limits in the selected coordinate frame and length unit."),
+    rapidRate: Positive.describe("Machine rapid rate in the selected length unit per minute."),
+    maxFeedRate: Positive.optional().describe("Maximum feed in the selected length unit per minute."),
+    maxSpindleRpm: Positive.optional().describe("Maximum spindle speed in revolutions per minute.")
+  }).strict().describe("Verified machine travel and operating limits."),
+  stock: Bounds3Schema.optional().describe("Stock bounds in the selected coordinate frame and length unit."),
+  fixtures: z.array(z.object({
+    id: z.string().min(1).max(128).describe("Stable fixture identifier shown in any finding."),
+    bounds: Bounds3Schema.describe("Fixture bounds in the selected coordinate frame and length unit.")
+  }).strict()).max(100).default([]).describe("Known clamps and fixture envelopes. An empty list means no fixtures were supplied, not that the machine is fixture-free."),
+  safeZ: z.number().finite().optional().describe("Verified safe Z threshold in the selected coordinate frame and length unit."),
+  toolRadius: Nonnegative.default(0).describe("Cutting tool radius in the selected length unit."),
+  holderRadius: Nonnegative.default(0).describe("Maximum holder radius in the selected length unit."),
+  safetyMargin: Nonnegative.default(0).describe("Extra clearance around stock and fixtures in the selected length unit."),
+  defaultToolChangeSeconds: Nonnegative.default(8).describe("Fallback tool-change time in seconds when the program does not provide a measured value."),
+  arcChordError: Positive.optional().describe("Maximum chord error used to approximate supported planar arcs, in the selected length unit."),
+  maxArcSegments: z.number().int().min(8).max(10000).default(2048).describe("Maximum line segments used to approximate one supported planar arc."),
+  dwellPMilliseconds: z.boolean().default(false).describe("Set true only when this controller interprets the P word in a dwell as milliseconds.")
 }).strict();
 
 type Input = z.infer<typeof AnalyzeNcProgramSchema>;

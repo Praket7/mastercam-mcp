@@ -4,6 +4,7 @@ import { access, constants, mkdir } from "node:fs/promises";
 import { detectInstallations, compatibilityReport } from "./compatibility.js";
 import { VERSION } from "./version.js";
 import { parseHardReadOnly } from "./safety/policy.js";
+import { parseBooleanEnvironmentVariable } from "./env.js";
 
 export interface DoctorCheck { ok: boolean; value: unknown; required?: string }
 
@@ -46,7 +47,7 @@ async function auditDirectoryWritable(): Promise<boolean> {
     await access(path, constants.W_OK);
     return true;
   } catch {
-    return process.env.MASTERCAM_MCP_AUDIT === "0";
+    return !parseBooleanEnvironmentVariable(process.env.MASTERCAM_MCP_AUDIT, true, "MASTERCAM_MCP_AUDIT");
   }
 }
 

@@ -614,8 +614,30 @@ export class MockBackend implements Backend {
   }
 
   private capabilities() {
-    const tools = CAPABILITY_REGISTRY.map(({ name, supported, riskClass, tier, mappingVersion, backend, reason }) => ({
-      name, supported, riskClass, tier, mappingVersion, backend, reason
+    const tools = CAPABILITY_REGISTRY.map(({
+      name,
+      supported,
+      riskClass,
+      readsActiveDocument,
+      requiresActiveDocument,
+      requiresApproval,
+      requiresRegeneration,
+      tier,
+      mappingVersion,
+      backend,
+      reason
+    }) => ({
+      name,
+      supported,
+      riskClass,
+      readsActiveDocument,
+      requiresActiveDocument,
+      requiresApproval,
+      requiresRegeneration,
+      tier,
+      mappingVersion,
+      backend,
+      reason
     }));
     return {
       adapterVersion: "fixture",

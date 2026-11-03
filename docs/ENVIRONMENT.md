@@ -6,6 +6,12 @@ Node.js 24 was available through the bundled workspace runtime. Git was availabl
 
 No user name, license identifier, account identifier, or private machine path is stored here.
 
+## Boolean settings
+
+Boolean environment settings accept `true`, `false`, `1`, and `0` without regard to letter case. The HTTP remote access setting defaults to false. A misspelled value stops startup instead of silently changing the security setting. Keep remote access off unless you have configured the required bearer token and origin allowlist.
+
+Audit logging is enabled by default. Set `MASTERCAM_MCP_AUDIT` to `false` or `0` to turn it off. The configuration check and the audit logger use the same setting rules.
+
 ## Shop tool catalog
 
 Set `MASTERCAM_MCP_TOOL_LIBRARY` to an operator-maintained JSON tool catalog to ground recommendations and setup packets in shop inventory. The `mastercam-mcp/tool-library/v1` schema, supported fields, size limits, and live-reference merge behavior are documented in [Job Intelligence](JOB-INTELLIGENCE.md#tooling-recommendations). JSON export is supported; proprietary Mastercam `.TOOLDB` parsing is not.

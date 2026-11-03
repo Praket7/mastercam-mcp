@@ -5,19 +5,19 @@ import { compareNc } from "./shop.js";
 const ManufacturingRecord = z.record(z.string(), z.unknown());
 
 export const ManufacturingPreflightSchema = z.object({
-  part: ManufacturingRecord.optional(),
-  machine: ManufacturingRecord.optional(),
-  stock: ManufacturingRecord.optional(),
-  wcs: ManufacturingRecord.optional(),
-  post: ManufacturingRecord.optional(),
-  operations: z.array(ManufacturingRecord).max(500).default([]),
-  tools: z.array(ManufacturingRecord).max(500).default([]),
-  documentRevision: z.string().min(1).max(256).optional(),
+  part: ManufacturingRecord.optional().describe("Confirmed part identity and relevant geometry summary."),
+  machine: ManufacturingRecord.optional().describe("Verified machine configuration and limits."),
+  stock: ManufacturingRecord.optional().describe("Stock material, dimensions, and units."),
+  wcs: ManufacturingRecord.optional().describe("Work coordinate system identity and verified origin."),
+  post: ManufacturingRecord.optional().describe("Post processor identity and relevant settings."),
+  operations: z.array(ManufacturingRecord).max(500).default([]).describe("Operation records to check. Empty input is reported as a blocker."),
+  tools: z.array(ManufacturingRecord).max(500).default([]).describe("Tool records assigned to the supplied operations."),
+  documentRevision: z.string().min(1).max(256).optional().describe("Source document revision for tracing this report to the inspected job."),
   verification: z.object({
-    simulationPassed: z.boolean().optional(),
-    collisionCheckPassed: z.boolean().optional(),
-    approvedPostBaselineAvailable: z.boolean().optional()
-  }).strict().optional()
+    simulationPassed: z.boolean().optional().describe("Whether an actual machine simulation was completed and passed."),
+    collisionCheckPassed: z.boolean().optional().describe("Whether a collision check was completed and passed."),
+    approvedPostBaselineAvailable: z.boolean().optional().describe("Whether an approved NC baseline is available for comparison.")
+  }).strict().optional().describe("Evidence from separate verification tools. Do not set these flags based on a model's estimate.")
 }).strict();
 
 export const RegenerationImpactSchema = z.object({
@@ -26,14 +26,15 @@ export const RegenerationImpactSchema = z.object({
     name: z.string().max(256).optional(),
     dependencies: z.array(z.union([z.number().int(), z.string().min(1).max(128)])).max(500).default([]),
     toolpathDirty: z.boolean().optional()
-  }).strict()).max(500),
+  }).strict()).max(500).describe("Operation dependency graph with exact IDs and downstream dependencies."),
   changedOperationIds: z.array(z.union([z.number().int(), z.string().min(1).max(128)])).min(1).max(500)
+    .describe("Exact IDs of operations changed by the programming edit.")
 }).strict();
 
 export const PostRegressionSchema = z.object({
-  before: z.string().min(1).max(2_000_000),
-  after: z.string().min(1).max(2_000_000),
-  displayLimit: z.number().int().min(0).max(1000).default(200)
+  before: z.string().min(1).max(2_000_000).describe("Approved baseline NC program text."),
+  after: z.string().min(1).max(2_000_000).describe("Newly posted NC program text to compare with the approved baseline."),
+  displayLimit: z.number().int().min(0).max(1000).default(200).describe("Maximum semantic differences to include in the response, from 0 to 1000.")
 }).strict();
 
 export type PreflightSeverity = "blocker" | "warning" | "pass" | "unknown";

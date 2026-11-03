@@ -2,6 +2,7 @@ import { createHash, randomUUID, type Hash } from "node:crypto";
 import { appendFile, mkdir, rename, readFile, rm } from "node:fs/promises";
 import * as fsSync from "node:fs";
 import { dirname, join } from "node:path";
+import { parseBooleanEnvironmentVariable } from "../env.js";
 
 export interface AuditEntry {
   sequence: number;
@@ -237,7 +238,7 @@ export class AuditLog {
   private currentFileHash: Hash = createHash("sha256");
 
   constructor(options: AuditLogOptions = {}) {
-    this.enabled = options.enabled ?? process.env.MASTERCAM_MCP_AUDIT !== "0";
+    this.enabled = options.enabled ?? parseBooleanEnvironmentVariable(process.env.MASTERCAM_MCP_AUDIT, true, "MASTERCAM_MCP_AUDIT");
     this.path = options.path
       ?? process.env.MASTERCAM_MCP_AUDIT_PATH
       ?? join(process.env.LOCALAPPDATA ?? process.env.XDG_DATA_HOME ?? process.env.TMPDIR ?? ".", "mastercam-mcp", "audit.jsonl");
