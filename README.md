@@ -68,6 +68,7 @@ Keep the server read only during initial checks. Run the live acceptance command
 ## Write protection
 
 The server starts read only. A write profile alone does not allow a change. Set `MASTERCAM_MCP_PROFILE` to `write`. Set `MASTERCAM_MCP_HARD_READ_ONLY` to `0` to opt in.
+The MCP tool list reflects both settings. A tool blocked by either setting does not appear in the list.
 
 Before a change, the server creates a preview tied to the operation plus document revision. The MCP client must show the exact before/after values to the operator. The server checks the document again before apply. If the connected client cannot show an approval request, the change is refused.
 

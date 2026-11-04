@@ -9,8 +9,10 @@ export interface CapabilityEntry {
   riskClass: "read" | "mutation" | "advanced";
   readsActiveDocument: boolean;
   requiresActiveDocument: boolean;
+  requiresExactTarget: boolean;
   requiresApproval: boolean;
   requiresRegeneration: boolean;
+  idempotent: boolean;
   backend: string;
   tier: CapabilityTier;
   reason?: string;
@@ -46,8 +48,10 @@ export const CAPABILITY_REGISTRY: CapabilityEntry[] = TOOL_MANIFEST.map(entry =>
   riskClass: riskClass(entry.category),
   readsActiveDocument: entry.readsActiveDocument,
   requiresActiveDocument: entry.requiresActiveDocument,
+  requiresExactTarget: entry.requiresExactTarget,
   requiresApproval: entry.requiresApproval,
   requiresRegeneration: entry.requiresRegeneration,
+  idempotent: entry.idempotent,
   backend: backendLabel(entry),
   tier: entry.tier,
   reason: evidenceFor(entry),
@@ -56,7 +60,7 @@ export const CAPABILITY_REGISTRY: CapabilityEntry[] = TOOL_MANIFEST.map(entry =>
 
 export function renderCapabilitiesDoc(): string {
   const rows = CAPABILITY_REGISTRY.map(entry =>
-    `| ${entry.name} | ${entry.supported ? "yes" : "no"} | ${entry.riskClass} | ${entry.readsActiveDocument ? "yes" : "no"} | ${entry.requiresActiveDocument ? "yes" : "no"} | ${entry.backend} | ${entry.tier} | ${entry.reason ?? ""} |`
+    `| ${entry.name} | ${entry.supported ? "yes" : "no"} | ${entry.riskClass} | ${entry.readsActiveDocument ? "yes" : "no"} | ${entry.requiresActiveDocument ? "yes" : "no"} | ${entry.requiresExactTarget ? "yes" : "no"} | ${entry.requiresApproval ? "yes" : "no"} | ${entry.requiresRegeneration ? "yes" : "no"} | ${entry.idempotent ? "yes" : "no"} | ${entry.backend} | ${entry.tier} | ${entry.reason ?? ""} |`
   );
   const counts = {
     total: CAPABILITY_REGISTRY.length,
@@ -73,8 +77,8 @@ A tier is raised only after a licensed live acceptance run against the matching 
 
 Counts: ${counts.total} capabilities declared, ${counts.supported} fixture-supported, **${counts.liveVerified} live verified**.
 
-| Tool | Fixture supported | Risk | Reads active document | Requires active document | Backends | Tier | Notes |
-| --- | --- | --- | --- | --- | --- | --- | --- |
+| Tool | Fixture supported | Risk | Reads active document | Requires active document | Exact target | Requires operator approval | Requires regeneration | Idempotent | Backends | Tier | Notes |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 ${rows.join("\n")}
 
 ## Reading this table honestly

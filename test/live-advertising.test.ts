@@ -7,7 +7,8 @@ import {
   SERVER_LOCAL_TOOL_NAMES
 } from "../src/execution-surface.js";
 import { TOOL_DEFINITIONS } from "../src/mcp/registry.js";
-import { capability } from "../src/capabilities.js";
+import { capability, renderCapabilitiesDoc } from "../src/capabilities.js";
+import { TOOL_MANIFEST } from "../src/tool-manifest.js";
 
 test("Stage-A native bridge calls remain exactly the environment checks", () => {
   assert.deepEqual(
@@ -91,7 +92,10 @@ test("live capability discovery identifies Stage-B reads and keeps verification 
         execution: string;
         readsActiveDocument: boolean;
         requiresActiveDocument: boolean;
+        requiresExactTarget: boolean;
         requiresApproval: boolean;
+        requiresRegeneration: boolean;
+        idempotent: boolean;
       }>;
       nativeStage: string;
       note: string;
@@ -100,8 +104,12 @@ test("live capability discovery identifies Stage-B reads and keeps verification 
     assert.equal(report.tools.find(tool => tool.name === "analyze_nc_program")?.execution, "server-local");
     assert.equal(report.tools.find(tool => tool.name === "list_operations")?.readsActiveDocument, true);
     assert.equal(report.tools.find(tool => tool.name === "list_operations")?.requiresActiveDocument, false);
+    assert.equal(report.tools.find(tool => tool.name === "get_operation")?.requiresExactTarget, true);
+    assert.equal(report.tools.find(tool => tool.name === "get_operation")?.idempotent, true);
     const fixtureReport = discoverCapabilitiesPayload({}, TOOL_DEFINITIONS, "mock") as typeof report;
     assert.equal(fixtureReport.tools.find(tool => tool.name === "apply_operation_parameter_preview")?.requiresApproval, true);
+    assert.equal(fixtureReport.tools.find(tool => tool.name === "apply_operation_parameter_preview")?.requiresRegeneration, true);
+    assert.equal(fixtureReport.tools.find(tool => tool.name === "preview_operation_parameters")?.idempotent, false);
     assert.match(report.nativeStage, /Stage B/i);
     assert.match(report.note, /IMPLEMENTED/i);
   } finally {
@@ -146,6 +154,16 @@ test("capability metadata separates document reads from hard document requiremen
   assert.equal(capability("get_server_readiness")?.readsActiveDocument, false);
   assert.equal(capability("get_server_readiness")?.requiresActiveDocument, false);
   assert.equal(capability("apply_operation_parameter_preview")?.requiresRegeneration, true);
+
+  for (const entry of TOOL_MANIFEST.filter(item => item.registered)) {
+    assert.equal(capability(entry.name)?.requiresExactTarget, entry.requiresExactTarget, `${entry.name} exact-target metadata`);
+    assert.equal(capability(entry.name)?.idempotent, entry.idempotent, `${entry.name} idempotency metadata`);
+  }
+
+  const capabilityDoc = renderCapabilitiesDoc();
+  assert.match(capabilityDoc, /Requires operator approval/);
+  assert.match(capabilityDoc, /Requires regeneration/);
+  assert.match(capabilityDoc, /Idempotent/);
 
   for (const removed of ["get_active_part", "get_stock", "get_wcs"]) {
     assert.equal(capability(removed), undefined, `${removed} must not appear as a current capability`);

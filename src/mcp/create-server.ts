@@ -207,13 +207,15 @@ export function createMcpServer(
   auditLog?: AuditLog
 ) {
   const backendKind: "mock" | "live" = backend instanceof LiveBackend ? "live" : "mock";
-  const definitions = advertisedToolDefinitions(backendKind, toolAllowlist, toolset);
+  const definitions = advertisedToolDefinitions(backendKind, toolAllowlist, toolset)
+    .filter(definition => allowed(definition.name, profile, hardReadOnly));
   const server = new McpServer(
     { name: "mastercam-mcp", version: VERSION },
     {
       requestState: { verify: operatorApprovalState.verify },
       instructions: [
         toolset === "compact" && toolAllowlist === undefined ? "The compact toolset is active. Set MASTERCAM_MCP_TOOLSET=full to expose specialist inspection and analysis tools, or MASTERCAM_MCP_TOOLS to select a custom set." : "",
+        "The tool list reflects the active server profile and hard-read-only setting. A selected tool appears only when both settings permit it.",
         backendKind === "live"
           ? stageBReadsEnabled()
             ? "Native Stage-B reads remain IMPLEMENTED, not LIVE_READ_VERIFIED, until licensed acceptance passes. Server-local analysis does not imply additional native mappings."
@@ -657,8 +659,10 @@ export function discoverCapabilitiesPayload(
       category: categoryOf(definition.name),
       readsActiveDocument: metadata?.readsActiveDocument ?? false,
       requiresActiveDocument: metadata?.requiresActiveDocument ?? false,
+      requiresExactTarget: metadata?.requiresExactTarget ?? false,
       requiresApproval: metadata?.requiresApproval ?? false,
       requiresRegeneration: metadata?.requiresRegeneration ?? false,
+      idempotent: metadata?.idempotent ?? false,
       execution:
         SERVER_LOCAL_TOOL_NAMES.has(definition.name)
           ? "server-local"
