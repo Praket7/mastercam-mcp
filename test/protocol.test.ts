@@ -146,6 +146,44 @@ test("tools/list over stdio negotiates 2026-07-28 and returns schemas", async ()
   });
 });
 
+test("tools/list exposes only tools permitted by the active profile and hard-read-only setting", async () => {
+  await withStdioClient(async client => {
+    const { tools } = await client.listTools();
+    const names = new Set(tools.map(tool => tool.name));
+    assert.equal(names.has("preview_operation_parameters"), true);
+    assert.equal(names.has("apply_operation_parameter_preview"), false);
+    assert.equal(names.has("rollback_change"), false);
+    assert.equal(names.has("run_simulation"), false);
+    assert.equal(names.has("detect_collisions"), false);
+  }, { MASTERCAM_MCP_PROFILE: "read", MASTERCAM_MCP_HARD_READ_ONLY: "1" });
+
+  await withStdioClient(async client => {
+    const { tools } = await client.listTools();
+    const names = new Set(tools.map(tool => tool.name));
+    assert.equal(names.has("apply_operation_parameter_preview"), true);
+    assert.equal(names.has("rollback_change"), true);
+    assert.equal(names.has("run_simulation"), false);
+  }, { MASTERCAM_MCP_PROFILE: "write", MASTERCAM_MCP_HARD_READ_ONLY: "0" });
+
+  await withStdioClient(async client => {
+    const { tools } = await client.listTools();
+    const names = new Set(tools.map(tool => tool.name));
+    assert.equal(names.has("apply_operation_parameter_preview"), true);
+    assert.equal(names.has("run_simulation"), true);
+    assert.equal(names.has("detect_collisions"), true);
+  }, { MASTERCAM_MCP_PROFILE: "all", MASTERCAM_MCP_HARD_READ_ONLY: "0" });
+});
+
+test("capability discovery matches the active tools/list catalog", async () => {
+  await withStdioClient(async client => {
+    const listed = await client.listTools();
+    const discovered = await client.callTool({ name: "discover_capabilities", arguments: {} });
+    const data = discovered.structuredContent?.data as { tools: Array<{ name: string; requiresApproval: boolean }> };
+    assert.deepEqual(data.tools.map(tool => tool.name), listed.tools.map(tool => tool.name));
+    assert.equal(data.tools.find(tool => tool.name === "apply_operation_parameter_preview")?.requiresApproval, true);
+  });
+});
+
 test("every declared MCP protocol revision can list and call tools over stdio", async () => {
   for (const protocolVersion of SUPPORTED_PROTOCOL_REVISIONS) {
     await withStdioClient(async client => {
@@ -272,14 +310,15 @@ test("a selected stdio catalog limits discovery and rejects omitted tools", asyn
   }, { MASTERCAM_MCP_TOOLS: selected.join(",") });
 });
 
-test("an allowlisted mutation is still refused by hard read only", async () => {
+test("a hard-read-only server does not advertise an allowlisted mutation", async () => {
   await withStdioClient(async client => {
-    const result = await client.callTool({
-      name: "apply_operation_parameter_preview", arguments: { approvalToken: "not-an-approval" }
-    });
-    assert.equal(result.isError, true);
-    assert.equal((result.structuredContent?.error as { code: string }).code, "PROFILE_DENIED");
-  }, { MASTERCAM_MCP_TOOLS: "apply_operation_parameter_preview", MASTERCAM_MCP_HARD_READ_ONLY: "1" });
+    const { tools } = await client.listTools();
+    assert.equal(tools.some(tool => tool.name === "apply_operation_parameter_preview"), false);
+    await assert.rejects(
+      () => client.callTool({ name: "apply_operation_parameter_preview", arguments: { approvalToken: "not-an-approval" } }),
+      /not found|unknown|tool/i
+    );
+  }, { MASTERCAM_MCP_TOOLS: "apply_operation_parameter_preview,get_server_readiness", MASTERCAM_MCP_HARD_READ_ONLY: "1" });
 });
 
 test("tool call returns structuredContent plus text content (ARCH-02)", async () => {
