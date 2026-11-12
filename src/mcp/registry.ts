@@ -19,19 +19,19 @@ export interface ToolDefinition {
 }
 
 export const ToolEnvelopeSchema = z.object({
-  ok: z.boolean(),
-  tool: z.string(),
-  data: z.unknown().optional(),
+  ok: z.boolean().describe("True when the tool completed successfully; false when the result contains an error."),
+  tool: z.string().describe("Canonical MCP tool name that produced this response."),
+  data: z.unknown().optional().describe("Tool-specific result data. Its shape is defined by the selected tool's output schema."),
   error: z.object({
-    code: z.string(),
-    message: z.string(),
-    retryable: z.boolean().optional(),
-    remediation: z.string().optional()
-  }).optional(),
-  receipt: z.unknown().optional(),
-  live: z.boolean().optional(),
-  documentRevision: z.string().optional(),
-  operationFingerprint: z.string().optional()
+    code: z.string().describe("Stable machine-readable error code for handling or diagnostics."),
+    message: z.string().describe("Plain-language explanation of the failure."),
+    retryable: z.boolean().optional().describe("Whether retrying the same request may succeed without changing its inputs."),
+    remediation: z.string().optional().describe("Suggested action for resolving the reported failure, when available.")
+  }).optional().describe("Failure details present when the tool did not complete successfully."),
+  receipt: z.unknown().optional().describe("Server-issued transaction receipt when the tool applies a change."),
+  live: z.boolean().optional().describe("True when this result came from the live Mastercam backend rather than a fixture."),
+  documentRevision: z.string().optional().describe("Document revision associated with the result, when the backend exposes one."),
+  operationFingerprint: z.string().optional().describe("Fingerprint of the exact operation state associated with the result, when available.")
 }).strict();
 
 function outputEnvelope(dataSchema?: z.ZodType): z.ZodType {

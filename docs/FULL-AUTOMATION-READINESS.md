@@ -1,7 +1,9 @@
-# Mastercam MCP full automation research and readiness
+# Mastercam MCP full automation research and readiness audit
 
 Date: 2026-09-23
 Repository: `Praket7/mastercam-mcp`
+
+> Historical snapshot. This audit records the source and release state on 23 September 2026. It does not describe the current npm version or current `main` tool catalog. A fresh npm registry query on 12 November 2026 returned `0.4.0`. Use the README and `CAPABILITIES.md` for the current advertised tool surface. The manufacturing limits documented here still apply: fixture tests and schema improvements do not prove behavior on a licensed Mastercam workstation.
 
 ## Result
 
@@ -27,11 +29,11 @@ Repository: `Praket7/mastercam-mcp`
 - The MCP apply tool asks the client to collect operator approval for the exact preview. The prompt shows the before/after values, document revision, operation fingerprint, and expiry. A signed request state binds the response to that preview, expiry, and authenticated client or transport session. The backend checks the live document again. A token alone does not prove operator identity. The configured MCP client remains the trust boundary and must show the request to a human.
 - Full suite (149 tests), ESLint, TypeScript typecheck, build, package dry-run, and a live-source ISO 13399 loading check passed locally. Integration tests cover catalog-backed OD tool selection, translated work-offset checks, default read-only behavior, refusal without client approval, and an accepted approval round trip. GitHub CI for the branch is green as of this update.
 
-## Current distribution check
+## Distribution check recorded on 2026-09-23
 
-A fresh npm query on 23 September 2026 returned `mastercam-mcp@latest = 0.2.0`; `mastercam-mcp@0.3.0` returned E404. Do not use the npm quick start for this source revision. The authenticated publishing workflow still needs repair, then a clean install from the registry must be verified. A GitHub push or release cannot substitute for npm publication.
+A fresh npm query on 23 September 2026 returned `mastercam-mcp@latest = 0.2.0`; `mastercam-mcp@0.3.0` returned E404. At that time, the npm quick start did not match the checkout, and the authenticated publishing workflow still needed repair. Those statements describe the September 2026 state only.
 
-The current source branch has an open review at [PR 22](https://github.com/Praket7/mastercam-mcp/pull/22). It is not merged or a final release.
+At that time, the source branch had an open review at [PR 22](https://github.com/Praket7/mastercam-mcp/pull/22). It was not merged or a final release.
 
 ## Remaining hard blockers and evidence needed
 
@@ -40,7 +42,7 @@ The current source branch has an open review at [PR 22](https://github.com/Prake
 3. **Executable rough/finish path:** provide target machine, control, kinematics, stock/chuck/jaw/work offsets, approved release-specific post, insert/holder data, sample OD parts, and licensed Mastercam SDK/runtime. Then generate native operations, regenerate, simulate stock/collision, post, and compare semantic NC output on a known acceptance suite. Current OD output is a non-executable plan preview.
 4. **Comprehensive NC review:** translation-only G54-G59 is implemented when explicitly supplied, but define supported controller/post families and provide machine models, rotated WCS/rotary kinematics, canned-cycle/macro/subprogram semantics, compensation settings, and trusted simulation/prove-out references. Parser support must be controller-specific and tested against posted samples.
 
-## Release decision
+## Release decision in the 2026-09-23 audit
 
 The branch is a reviewable security and analysis improvement. It is not a completed full-automation release. Do not publish a version claiming the requested features until the acceptance inputs above exist and corresponding licensed live tests pass. GitHub source can be pushed for review after local verification. Merging or publishing a final automation release would misrepresent readiness.
 

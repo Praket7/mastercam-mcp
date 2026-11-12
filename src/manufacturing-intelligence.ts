@@ -22,10 +22,11 @@ export const ManufacturingPreflightSchema = z.object({
 
 export const RegenerationImpactSchema = z.object({
   operations: z.array(z.object({
-    id: z.union([z.number().int(), z.string().min(1).max(128)]),
-    name: z.string().max(256).optional(),
-    dependencies: z.array(z.union([z.number().int(), z.string().min(1).max(128)])).max(500).default([]),
-    toolpathDirty: z.boolean().optional()
+    id: z.union([z.number().int(), z.string().min(1).max(128)]).describe("Stable operation ID used by dependencies and change references."),
+    name: z.string().max(256).optional().describe("Optional operation name for readable impact reports."),
+    dependencies: z.array(z.union([z.number().int(), z.string().min(1).max(128)])).max(500).default([])
+      .describe("Exact IDs of upstream operations whose output this operation depends on."),
+    toolpathDirty: z.boolean().optional().describe("Mapped dirty-state value, when known. Omit when the source does not establish the state.")
   }).strict()).max(500).describe("Operation dependency graph with exact IDs and downstream dependencies."),
   changedOperationIds: z.array(z.union([z.number().int(), z.string().min(1).max(128)])).min(1).max(500)
     .describe("Exact IDs of operations changed by the programming edit.")

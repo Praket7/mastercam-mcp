@@ -143,6 +143,12 @@ test("tools/list over stdio negotiates 2026-07-28 and returns schemas", async ()
     assert.ok(status);
     assert.ok(status.annotations, "tools/list must include annotations");
     assert.ok(status.inputSchema, "tools/list must include input schemas");
+    assert.equal(status.outputSchema?.properties?.ok?.description, "True when the tool completed successfully; false when the result contains an error.");
+    const machineProfile = tools.find(tool => tool.name === "validate_machine_profile");
+    assert.equal(
+      machineProfile?.inputSchema.properties?.profile?.properties?.linearTravels?.properties?.x?.description,
+      "Maximum verified linear travel along X from the machine home reference."
+    );
   });
 });
 

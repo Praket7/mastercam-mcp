@@ -15,20 +15,20 @@ export const LengthUnitSchema = z.enum(["mm", "in"]);
 export type LengthUnit = z.infer<typeof LengthUnitSchema>;
 
 export const FeedRateSchema = z.object({
-  value: z.number().finite().positive().max(1_000_000),
-  unit: FeedUnitSchema
+  value: z.number().finite().positive().max(1_000_000).describe("Positive feed magnitude. Interpret it using the explicit unit in this object."),
+  unit: FeedUnitSchema.describe("Feed unit: linear distance per minute or distance per spindle revolution.")
 }).strict();
 export type FeedRate = z.infer<typeof FeedRateSchema>;
 
 export const SpindleSpeedSchema = z.object({
-  value: z.number().finite().positive().max(1_000_000),
-  unit: SpindleUnitSchema
+  value: z.number().finite().positive().max(1_000_000).describe("Positive spindle speed magnitude in the explicit unit in this object."),
+  unit: SpindleUnitSchema.describe("Spindle speed unit. Currently only revolutions per minute is accepted.")
 }).strict();
 export type SpindleSpeed = z.infer<typeof SpindleSpeedSchema>;
 
 export const LengthSchema = z.object({
-  value: z.number().finite(),
-  unit: LengthUnitSchema
+  value: z.number().finite().describe("Length value interpreted using the explicit unit in this object."),
+  unit: LengthUnitSchema.describe("Length unit used by the associated measurement.")
 }).strict();
 export type Length = z.infer<typeof LengthSchema>;
 

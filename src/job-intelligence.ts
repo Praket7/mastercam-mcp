@@ -38,7 +38,10 @@ export const JobToolSchema = z.object({
   type: z.string().min(1).max(128).optional().describe("Tool family, such as end mill, drill, boring bar, or turning holder."),
   holderStyle: z.string().max(128).optional().describe("Holder family or interface, when known."),
   machineLocation: z.string().max(128).optional().describe("Machine magazine or station location, when known."),
-  lengthOutOfHolder: z.object({ value: Positive, unit: z.enum(["mm", "in"]) }).strict().optional().describe("Confirmed tool stickout and its length unit."),
+  lengthOutOfHolder: z.object({
+    value: Positive.describe("Measured distance from the holder reference to the tool tip."),
+    unit: z.enum(["mm", "in"]).describe("Length unit used for the measured tool stickout.")
+  }).strict().optional().describe("Confirmed tool stickout and its length unit."),
   diameter: Positive.optional().describe("Tool cutting diameter in the feature's length unit."),
   cornerRadius: Finite.nonnegative().optional().describe("Cutting-edge corner radius in the feature's length unit."),
   fluteLength: Positive.optional().describe("Usable flute length in the feature's length unit."),
@@ -122,7 +125,7 @@ export const AnalyzeToolpathRiskSchema = z.object({
 
 const MoveEventSchema = z.object({
   id: z.string().min(1).max(128).describe("Stable move identifier used to report time savings."),
-  kind: z.literal("move"),
+  kind: z.literal("move").describe("Event type identifying this record as a motion move."),
   operationId: z.union([z.string().min(1).max(128), z.number().int()]).optional().describe("Source operation ID, when known."),
   motion: z.enum(["rapid", "feed"]).describe("Whether the move is rapid or feed motion."),
   start: Vector3Schema.describe("Start point. Coordinates and rates must use one consistent length unit."),
@@ -134,14 +137,14 @@ const MoveEventSchema = z.object({
 
 const DwellEventSchema = z.object({
   id: z.string().min(1).max(128).describe("Stable dwell identifier used to report review opportunities."),
-  kind: z.literal("dwell"),
+  kind: z.literal("dwell").describe("Event type identifying this record as a stationary dwell."),
   operationId: z.union([z.string().min(1).max(128), z.number().int()]).optional().describe("Source operation ID, when known."),
   seconds: Finite.nonnegative().describe("Dwell duration in seconds.")
 }).strict();
 
 const ToolChangeEventSchema = z.object({
   id: z.string().min(1).max(128).describe("Stable tool-change identifier used to report review opportunities."),
-  kind: z.literal("tool_change"),
+  kind: z.literal("tool_change").describe("Event type identifying this record as a tool change."),
   operationId: z.union([z.string().min(1).max(128), z.number().int()]).optional().describe("Source operation ID, when known."),
   seconds: Finite.nonnegative().optional().describe("Measured tool-change duration in seconds. Uses the configured default when omitted.")
 }).strict();
@@ -215,8 +218,8 @@ export const CalculateThreadTapSchema = z.object({
 }).strict();
 
 const OdPointSchema = z.object({
-  z: Finite,
-  diameter: Positive
+  z: Finite.describe("Axial Z coordinate in the selected profile length unit."),
+  diameter: Positive.describe("Finished outside diameter at this Z coordinate, in the selected length unit.")
 }).strict();
 
 export const PlanOdRoughFinishSchema = z.object({
